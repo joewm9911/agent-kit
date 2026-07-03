@@ -103,11 +103,11 @@ type eventBody struct {
 			} `json:"sender_id"`
 		} `json:"sender"`
 		Message struct {
-			MessageID   string          `json:"message_id"`
-			ChatID      string          `json:"chat_id"`
-			ChatType    string          `json:"chat_type"` // p2p | group
-			MessageType string          `json:"message_type"`
-			Content     string          `json:"content"`
+			MessageID   string            `json:"message_id"`
+			ChatID      string            `json:"chat_id"`
+			ChatType    string            `json:"chat_type"` // p2p | group
+			MessageType string            `json:"message_type"`
+			Content     string            `json:"content"`
 			Mentions    []json.RawMessage `json:"mentions"`
 		} `json:"message"`
 	} `json:"event"`

@@ -49,7 +49,7 @@ func (askRunner) Generate(ctx context.Context, _ []*schema.Message) (*schema.Mes
 	if err != nil {
 		return nil, err
 	}
-	return schema.AssistantMessage("已确认城市:" + ans, nil), nil
+	return schema.AssistantMessage("已确认城市:"+ans, nil), nil
 }
 
 func (r askRunner) Stream(ctx context.Context, msgs []*schema.Message) (*schema.StreamReader[*schema.Message], error) {

@@ -53,6 +53,24 @@ func GetInteractor(ctx context.Context) Interactor {
 	return i
 }
 
+type keyScope struct{}
+
+// WithScopePush 在执行域栈上追加一段(子 agent 调用、组件调用等),
+// 供按执行域隔离的运行时状态(todo 等)分键——子执行体不再与宿主
+// 共享同一份状态。段间以不可见分隔符相连,天然防拼接碰撞。
+func WithScopePush(ctx context.Context, seg string) context.Context {
+	if cur := Scope(ctx); cur != "" {
+		seg = cur + "\x1f" + seg
+	}
+	return context.WithValue(ctx, keyScope{}, seg)
+}
+
+// Scope 返回当前执行域,顶层为空串。
+func Scope(ctx context.Context) string {
+	s, _ := ctx.Value(keyScope{}).(string)
+	return s
+}
+
 // WithInput 注入本轮用户输入,供记忆自动召回等运行时组件做检索。
 func WithInput(ctx context.Context, input string) context.Context {
 	return context.WithValue(ctx, keyInput{}, input)

@@ -154,11 +154,16 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
 
+	// L1 变体:component 工具面上没有 todo,提示词不承诺不存在的工具。
+	loopPrompt := deps.LoopPrompt
+	if loopPrompt == "" {
+		loopPrompt = loop.DefaultLoopPromptNoTodo
+	}
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
 		Model:        m,
 		Capabilities: caps,
 		MaxSteps:     decl.MaxSteps,
-		Modifier:     loop.PromptLayers{Loop: deps.LoopPrompt}.Modifier(),
+		Modifier:     loop.PromptLayers{Loop: loopPrompt}.Modifier(),
 		Rewriter:     loop.Compactor(m, decl.Compaction), // 内部长循环可压缩
 		Prompts:      prompts,
 		Config:       engineConf,

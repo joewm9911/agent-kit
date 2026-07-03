@@ -382,7 +382,10 @@ func (a *Agent) AsLambda(ctx context.Context) (*compose.Lambda, error) {
 // invokeAsSub 作为子 agent 被调用:独立会话,不与上级会话串历史;
 // 内部过程不回流宿主上下文,只返回最终结果。使用点声明 context: fork
 // 时,以调用方对话快照 + 任务起步(背景无损继承,隔离方向不变)。
+// 压执行域:todo 等按域隔离的运行时状态与宿主分键,互不覆盖
+// (预算/审批刻意不分——治理归调用方的会话账本)。
 func (a *Agent) invokeAsSub(ctx context.Context, argsJSON string) (string, error) {
+	ctx = runctx.WithScopePush(ctx, "sub:"+a.name)
 	task := capability.ParseSingle(argsJSON, "task")
 	out, err := a.runner.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(task)))
 	if err != nil {

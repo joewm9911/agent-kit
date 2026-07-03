@@ -468,7 +468,8 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	}
 
 	// 内置能力 + 审批闸门
-	if ac.Todo == nil || *ac.Todo {
+	todoOn := ac.Todo == nil || *ac.Todo
+	if todoOn {
 		caps = append(caps, builtin.TodoCapabilities()...)
 	}
 	if ac.AskUser == nil || *ac.AskUser {
@@ -502,7 +503,10 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	caps = suspend.DurableEffects(caps)                              // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
 	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)
-	caps = loop.RecordTools(caps)  // 轨迹记录(最外层:记模型实际看到的)
+	if todoOn {
+		caps = builtin.NudgeTools(caps) // 计划卡住提醒(harness 强制纪律)
+	}
+	caps = loop.RecordTools(caps) // 轨迹记录(最外层:记模型实际看到的)
 
 	// 会话记忆(store 提前构建:L4 召回钩子需要它)
 	var store session.Store
@@ -523,6 +527,11 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		return nil, fmt.Errorf("resolve system_prompt: %w", err)
 	}
 	layers := loop.PromptLayers{Loop: loopTpl.Text, Persona: personaTpl.Text}
+	if todoOn {
+		layers.Plan = builtin.PlanSection // 计划每轮注入消息尾部(harness 强制可见)
+	} else if layers.Loop == "" {
+		layers.Loop = loop.DefaultLoopPromptNoTodo // 关闭 todo:提示词不承诺不存在的工具
+	}
 	if topK := ac.Memory.AutoRecall.TopK; topK > 0 {
 		layers.Memories = autoRecall(kv, store, ac.Memory.Window, topK)
 	}

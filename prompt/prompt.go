@@ -15,9 +15,9 @@ import (
 
 // Template 是一个已解析的提示词模板。
 type Template struct {
-	Name     string
-	Version  string // 平台侧实际版本号,打点回溯用
-	Text     string // 模板体,{var} 占位
+	Name    string
+	Version string // 平台侧实际版本号,打点回溯用
+	Text    string // 模板体,{var} 占位
 }
 
 // Render 渲染模板变量。

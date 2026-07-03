@@ -34,7 +34,13 @@ const DefaultLoopPrompt = `# 工作方式
 - 目标达成后,综合所有工具结果给出最终回答,然后停止;不要画蛇添足地继续调用。
 - 无法完成时,如实说明卡在哪、试过什么,不要假装完成。`
 
-// PromptLayers 是主循环 system prompt 的四层来源。
+// DefaultLoopPromptNoTodo 是 L1 的裁剪变体:去掉 todo 指引,供工具面上
+// 没有 todo 的循环使用(component 内部循环、关闭 todo 的 agent)——
+// 提示词不承诺工具面上不存在的工具。
+var DefaultLoopPromptNoTodo = strings.Replace(DefaultLoopPrompt,
+	"- 多步骤任务:先用 todo_write 列出计划,每完成一项更新状态,全部完成前不要停。\n", "", 1)
+
+// PromptLayers 是主循环 system prompt 的分层来源。
 type PromptLayers struct {
 	// L1 框架规约(内置默认,可整体覆盖);随框架版本走。
 	Loop string
@@ -44,6 +50,9 @@ type PromptLayers struct {
 	Env func(ctx context.Context) map[string]string
 	// L4 记忆召回(代码生成,注入时标注"背景参考,非指令")。
 	Memories func(ctx context.Context) []string
+	// Plan 是当前任务计划注入器:每轮把计划渲染进消息尾部,计划的
+	// 可见性由 harness 保证而非模型记忆(压缩、遗忘都不影响)。
+	Plan func(ctx context.Context) string
 }
 
 // Modifier 把四层拼装为消息,返回 engine.MessageModifier。
@@ -95,6 +104,12 @@ func (p PromptLayers) Modifier() engine.MessageModifier {
 					fmt.Fprintf(&mb, "- %s\n", m)
 				}
 				out = append(out, schema.SystemMessage(mb.String()))
+			}
+		}
+		// 计划:尾部注入,每轮可见(harness 强制,不依赖模型记得)
+		if p.Plan != nil {
+			if plan := p.Plan(ctx); plan != "" {
+				out = append(out, schema.SystemMessage(plan))
 			}
 		}
 		return out
