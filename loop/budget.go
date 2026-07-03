@@ -178,10 +178,19 @@ func countTokens(in []*schema.Message, out *schema.Message) int64 {
 	return estimate(in) + estimate([]*schema.Message{out})
 }
 
+// estimate 按字符类型分段估算 token:ASCII ≈ 4 字符/token,
+// CJK 等宽字符 ≈ 0.75 token/字符。比笼统的字节除三更贴近主流
+// tokenizer,预算与压缩阈值的触发时机随之校准。
 func estimate(msgs []*schema.Message) int64 {
-	var chars int
+	var ascii, wide int
 	for _, m := range msgs {
-		chars += len(m.Content)
+		for _, r := range m.Content {
+			if r < 128 {
+				ascii++
+			} else {
+				wide++
+			}
+		}
 	}
-	return int64(chars/3) + 1
+	return int64(ascii/4) + int64(wide*3/4) + 1
 }

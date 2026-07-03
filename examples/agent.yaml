@@ -51,6 +51,10 @@ reliability:
   model_retry: {max_attempts: 3, base_delay: 500ms}
   tool_timeout: 5m
 
+# ---- 挂起/恢复:IM 通道的 ask_user/审批等待落盘,跨进程重启可恢复 ----
+# suspend:
+#   dir: ./data/pending
+
 # ---- 命名空间:三层结构的主路径 ----
 # tools(ns 内共享,对外不可见)→ components(执行单元声明,不进目录)
 # → skills(对外产品,唯一被 agent 发现的单元)。
@@ -152,6 +156,12 @@ agents:
     compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
     max_tool_result_len: 8000 # 工具结果截断,防 MCP 大结果打爆窗口;-1 关闭
     approval: interactive     # mutating 操作需人工批准(CLI y/n 或 IM 回复)
+    # 参数级审批策略:首条命中生效,无命中回落 ask;remember 启用会话级决策记忆
+    # approval_policy:
+    #   remember: true
+    #   rules:
+    #     - {ref: "cap://tool.mcp/fs/write_file", args: {path: "/tmp/*"}, action: allow}
+    #     - {ref: "cap://tool.*/im/send_message", args: {to: "boss"},     action: deny}
 
 # ---- Gateway:HTTP/SSE + A2A 供给面 + IM webhook(留空则纯 CLI)----
 # serving:

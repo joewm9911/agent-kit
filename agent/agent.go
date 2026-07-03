@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -34,8 +35,12 @@ type Agent struct {
 	model       model.ToolCallingChatModel
 	structured  *loop.StructuredEnforcer // nil = 不启用
 	interactor  runctx.Interactor        // 默认交互通道,可被 ctx 覆盖
-	approval    loop.ApprovalMode
+	approval    *loop.ApprovalState
 	budget      *loop.BudgetGate
+	record      loop.RecordMode
+
+	ctlMu    sync.Mutex
+	controls map[string]*loop.ControlState // 会话 → 运行控制
 }
 
 // Options 是 New 的可选项。
@@ -48,10 +53,13 @@ type Options struct {
 	Compaction loop.CompactionConfig
 	Structured *loop.StructuredEnforcer
 	Interactor runctx.Interactor
-	// ApprovalMode 与 Budget 在每次运行时装入 ctx,对主循环与
+	// Approval 与 Budget 在每次运行时装入 ctx,对主循环与
 	// skill/component 内部的 Ring 0 闸门统一生效。
-	ApprovalMode loop.ApprovalMode
-	Budget       *loop.BudgetGate
+	Approval *loop.ApprovalState
+	Budget   *loop.BudgetGate
+	// RecordTools 控制本轮工具轨迹随会话持久化的详略(默认 off,
+	// config 层默认 summary)。
+	RecordTools loop.RecordMode
 }
 
 // New 组装一个 Agent。model 用于结构化输出修复与滚动摘要等门面级调用。
@@ -60,8 +68,36 @@ func New(name, description string, runner engine.Runner, m model.ToolCallingChat
 		name: name, description: description, runner: runner, model: m,
 		store: opts.Store, window: opts.Window, compaction: opts.Compaction,
 		structured: opts.Structured, interactor: opts.Interactor,
-		approval: opts.ApprovalMode, budget: opts.Budget,
+		approval: opts.Approval, budget: opts.Budget, record: opts.RecordTools,
+		controls: map[string]*loop.ControlState{},
 	}
+}
+
+// controlFor 取(或创建)会话的运行控制。
+func (a *Agent) controlFor(sessionID string) *loop.ControlState {
+	a.ctlMu.Lock()
+	defer a.ctlMu.Unlock()
+	cs, ok := a.controls[sessionID]
+	if !ok {
+		if len(a.controls) > 4096 { // 粗粒度防泄漏
+			a.controls = map[string]*loop.ControlState{}
+		}
+		cs = &loop.ControlState{}
+		a.controls[sessionID] = cs
+	}
+	return cs
+}
+
+// Interrupt 叫停某会话正在进行的运行:下一次工具调用前生效,并取消
+// 当前轮 ctx(终止进行中的模型调用与并行分支)。
+func (a *Agent) Interrupt(sessionID string) {
+	a.controlFor(sessionID).Interrupt()
+}
+
+// Steer 向某会话正在进行的运行注入一条用户插话,随下一个工具结果
+// 送达模型(中途驾驶,不打断循环)。
+func (a *Agent) Steer(sessionID, msg string) {
+	a.controlFor(sessionID).Steer(msg)
 }
 
 // Name 返回 agent 名。
@@ -71,15 +107,31 @@ func (a *Agent) Name() string { return a.name }
 func (a *Agent) Description() string { return a.description }
 
 // Run 执行一轮对话:注入运行上下文 → 加载会话历史 → 运行主循环 →
-// (可选)结构化输出校验 → 回写历史。
+// (可选)结构化输出校验 → 回写历史(含本轮工具轨迹)。
 func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error) {
 	ctx = runctx.WithInput(a.prepare(ctx, sessionID), input)
+	ctx, rec := a.withRecorder(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cs := a.controlFor(sessionID)
+	cs.BeginTurn(cancel)
+	defer cs.EndTurn()
+	ctx = loop.WithControl(ctx, cs)
+
 	msgs, err := a.history(ctx, sessionID, input)
 	if err != nil {
 		return "", err
 	}
 	out, err := a.runner.Generate(ctx, msgs)
 	if err != nil {
+		if cs.Interrupted() {
+			// 用户主动叫停:以正常回答收束,轮次照常入会话。
+			answer := "已按你的要求中断当前任务。中断前的执行情况见记录,需要时告诉我从哪里继续。"
+			if a.store != nil {
+				_ = a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...)
+			}
+			return answer, nil
+		}
 		return "", err
 	}
 	answer := out.Content
@@ -89,7 +141,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 		}
 	}
 	if a.store != nil {
-		if err := a.store.Append(ctx, sessionID, schema.UserMessage(input), schema.AssistantMessage(answer, nil)); err != nil {
+		if err := a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...); err != nil {
 			return "", fmt.Errorf("append session: %w", err)
 		}
 		a.maybeCompact(ctx, sessionID)
@@ -97,10 +149,36 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	return answer, nil
 }
 
+// withRecorder 在启用轨迹记录且有会话存储时装入记录器。
+func (a *Agent) withRecorder(ctx context.Context) (context.Context, *loop.ToolRecorder) {
+	if a.store == nil || a.record == "" || a.record == loop.RecordOff {
+		return ctx, nil
+	}
+	rec := &loop.ToolRecorder{}
+	return loop.WithToolRecorder(ctx, rec), rec
+}
+
+// turnMessages 组装一轮的持久化消息:user → [执行记录] → assistant。
+// 工具轨迹入会话后,下一轮模型知道自己做过什么、看到过什么。
+func (a *Agent) turnMessages(rec *loop.ToolRecorder, input, answer string) []*schema.Message {
+	msgs := []*schema.Message{schema.UserMessage(input)}
+	if rec != nil {
+		if tm := loop.TrajectoryMessage(rec.Records(), a.record); tm != nil {
+			msgs = append(msgs, tm)
+		}
+	}
+	return append(msgs, schema.AssistantMessage(answer, nil))
+}
+
 // Stream 流式执行一轮对话。返回的流复制两份:一份给调用方,
-// 一份在后台聚合后回写会话历史。结构化输出与流式互斥(用 Run)。
+// 一份在后台聚合后回写会话历史(含本轮工具轨迹)。结构化输出与
+// 流式互斥(用 Run)。
 func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.StreamReader[*schema.Message], error) {
 	ctx = runctx.WithInput(a.prepare(ctx, sessionID), input)
+	ctx, rec := a.withRecorder(ctx)
+	cs := a.controlFor(sessionID)
+	cs.BeginTurn(nil) // 流式:中断经调用方断开 ctx,这里只挂插话通道
+	ctx = loop.WithControl(ctx, cs)
 	msgs, err := a.history(ctx, sessionID, input)
 	if err != nil {
 		return nil, err
@@ -131,7 +209,10 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 		if e != nil {
 			return
 		}
-		_ = a.store.Append(ctx, sessionID, schema.UserMessage(input), full)
+		// 流结束即主循环结束,记录器此时已收齐本轮全部工具调用。
+		turn := a.turnMessages(rec, input, full.Content)
+		turn[len(turn)-1] = full
+		_ = a.store.Append(ctx, sessionID, turn...)
 	}()
 	return copies[0], nil
 }
@@ -142,7 +223,7 @@ func (a *Agent) prepare(ctx context.Context, sessionID string) context.Context {
 		ctx = runctx.WithInteractor(ctx, a.interactor)
 	}
 	// Ring 0 策略随 ctx 下发:主循环与 skill/component 内部统一生效。
-	ctx = loop.WithApprovalMode(ctx, a.approval)
+	ctx = loop.WithApprovalState(ctx, a.approval)
 	ctx = loop.WithBudget(ctx, a.budget)
 	return ctx
 }

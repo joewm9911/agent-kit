@@ -26,6 +26,7 @@ import (
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/registry"
 	"github.com/joewm9911/agent-kit/source"
+	"github.com/joewm9911/agent-kit/suspend"
 )
 
 // ParamDecl 描述一个 skill 参数。
@@ -138,11 +139,12 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	}
 
 	// 内部工具面下沉全部 Ring 0 闸门(治理不再止步于 agent 主循环):
-	// 超时(最内,只计执行时间)→ 截断 → 审批(最外,批准等待不占超时)。
-	// 审批模式与预算门闸经调用方 ctx 生效,同一 skill 被不同策略的
-	// agent 复用时各自独立。
+	// 超时(最内,只计执行时间)→ 截断 → 效果日志 → 审批(最外,批准
+	// 等待不占超时)。审批模式、预算门闸与挂起日志经调用方 ctx 生效,
+	// 同一 skill 被不同策略的 agent 复用时各自独立。
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
 	caps = loop.TruncateResults(caps, 0)
+	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
 
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{

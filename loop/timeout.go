@@ -20,8 +20,9 @@ const DefaultToolTimeout = 5 * time.Minute
 // 回传模型(而非错误),让大脑换路径推进,循环不中断;宿主 ctx 被
 // 取消时则原样传播错误。d==0 用默认值,<0 关闭。
 //
-// 注意套闸顺序:审批闸门应在本闸外侧,人工批准的等待时间不计入
-// 工具执行超时。
+// 两类豁免:审批闸门应在本闸外侧(人工批准的等待不计入执行超时);
+// 带 TagInteractive 的交互类能力(ask_user 等)不套闸——等人回复的
+// 时间不是执行时间。
 func TimeoutTools(caps []capability.Capability, d time.Duration) []capability.Capability {
 	if d < 0 {
 		return caps
@@ -31,9 +32,22 @@ func TimeoutTools(caps []capability.Capability, d time.Duration) []capability.Ca
 	}
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
+		if hasTag(c.Meta().Tags, capability.TagInteractive) {
+			out = append(out, c)
+			continue
+		}
 		out = append(out, &timeoutCap{inner: c, d: d})
 	}
 	return out
+}
+
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
 }
 
 type timeoutCap struct {

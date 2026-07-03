@@ -66,6 +66,8 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) routes() {
 	// 对人/前端
 	s.mux.HandleFunc("POST /agents/{name}/messages", s.handleMessage)
+	// 运行控制:中断/插话不经会话串行队列,对进行中的运行即时生效
+	s.mux.HandleFunc("POST /agents/{name}/control", s.handleControl)
 	// A2A 供给面
 	s.mux.HandleFunc("GET /a2a/agents", s.handleA2AList)
 	s.mux.HandleFunc("POST /a2a/agents/{name}/tasks", s.handleA2ATask)
@@ -103,6 +105,38 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"session": req.Session, "answer": answer})
+}
+
+// handleControl 处理运行控制:{session, action: interrupt|steer, message}。
+func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
+	a, ok := s.agents[r.PathValue("name")]
+	if !ok {
+		http.Error(w, "unknown agent", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		Session string `json:"session"`
+		Action  string `json:"action"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Session == "" {
+		http.Error(w, "bad request: need {session, action}", http.StatusBadRequest)
+		return
+	}
+	switch req.Action {
+	case "interrupt":
+		a.Interrupt(req.Session)
+	case "steer":
+		if req.Message == "" {
+			http.Error(w, "steer needs {message}", http.StatusBadRequest)
+			return
+		}
+		a.Steer(req.Session, req.Message)
+	default:
+		http.Error(w, "bad action: want interrupt|steer", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) stream(w http.ResponseWriter, r *http.Request, a *agent.Agent, session, input string) {

@@ -104,9 +104,13 @@ func (g *gated) AsLambda(ctx context.Context) (*compose.Lambda, error) {
 
 func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.Context) (string, error)) (string, error) {
 	meta := g.inner.Meta()
+	st := approvalStateFrom(ctx)
+
 	mode := g.mode
 	if mode == "" { // ctx 套闸:运行时解析,缺省 interactive
-		if mode = approvalModeFrom(ctx); mode == "" {
+		if st != nil && st.Mode != "" {
+			mode = st.Mode
+		} else if mode = approvalModeFrom(ctx); mode == "" {
 			mode = ApprovalInteractive
 		}
 	}
@@ -116,15 +120,53 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 	if mode == ApprovalDeny {
 		return fmt.Sprintf("操作被拒绝:%s 是改动性操作,当前部署为只读模式。", meta.Ref.Name), nil
 	}
+
+	// 参数级策略:首条命中生效(allow 免批 / deny 直拒 / ask 照常)。
+	if st != nil {
+		switch st.decide(meta.Ref, argsJSON) {
+		case actionAllow:
+			return exec(ctx)
+		case actionDeny:
+			return fmt.Sprintf("操作被拒绝:%s 的本次调用命中审批策略的 deny 规则。请调整参数或换路径。", meta.Ref.Name), nil
+		}
+		// 决策记忆:用户此前对该能力选择过"总是允许/拒绝"
+		if allowed, ok := st.recall(runctx.Session(ctx), meta.Ref.Key()); ok {
+			if allowed {
+				return exec(ctx)
+			}
+			return fmt.Sprintf("操作未执行:用户已在本会话拒绝 %s 的后续调用。", meta.Ref.Name), nil
+		}
+	}
+
 	it := runctx.GetInteractor(ctx)
 	if it == nil {
 		return fmt.Sprintf("操作未执行:%s 需要人工批准,但当前无交互通道。请向用户说明情况。", meta.Ref.Name), nil
 	}
-	ok, err := it.Approve(ctx, runctx.ApprovalRequest{
+	req := runctx.ApprovalRequest{
 		CapRef:      meta.Ref.String(),
 		Description: meta.Description,
 		Arguments:   argsJSON,
-	})
+	}
+
+	// 支持决策记忆的通道:多出"总是允许/拒绝"档
+	if di, ok := it.(DecisionInteractor); ok && st != nil {
+		d, err := di.ApproveDecision(ctx, req)
+		if err != nil {
+			return fmt.Sprintf("操作未执行:批准流程失败(%v)。", err), nil
+		}
+		switch d {
+		case DecisionAlwaysAllow:
+			st.memorize(runctx.Session(ctx), meta.Ref.Key(), true)
+			return exec(ctx)
+		case DecisionAllow:
+			return exec(ctx)
+		case DecisionAlwaysDeny:
+			st.memorize(runctx.Session(ctx), meta.Ref.Key(), false)
+		}
+		return fmt.Sprintf("操作未执行:用户拒绝了 %s 的本次调用。请调整方案或询问用户意图。", meta.Ref.Name), nil
+	}
+
+	ok, err := it.Approve(ctx, req)
 	if err != nil {
 		return fmt.Sprintf("操作未执行:批准流程失败(%v)。", err), nil
 	}

@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/suspend"
 )
 
 // Binding 把一个 Channel 路由到一个 Agent。
@@ -32,15 +34,21 @@ type Dispatcher struct {
 	logger *slog.Logger
 
 	mu      sync.Mutex
-	workers map[string]chan job     // 会话 key → 串行队列
-	pending map[string]chan string  // 会话 key → 等待用户回复的通道
-	seen    map[string]struct{}     // 事件去重
-	seenQ   []string                // 去重集的淘汰队列
+	workers map[string]chan job    // 会话 key → 串行队列
+	pending map[string]chan string // 会话 key → 等待用户回复的通道
+	running map[string]bool        // 会话 key → 是否有运行进行中
+	seen    map[string]struct{}    // 事件去重
+	seenQ   []string               // 去重集的淘汰队列
+
+	// suspendStore 非 nil 时启用挂起模式:ask_user/审批不再阻塞
+	// goroutine 等待,而是持久化挂起、答案到达(可跨进程重启)后重放。
+	suspendStore suspend.Store
 }
 
 type job struct {
-	b  Binding
-	in Inbound
+	b      Binding
+	in     Inbound
+	turnID string // 挂起模式的轮次标识;恢复的轮次沿用首跑的 ID
 }
 
 // NewDispatcher 创建分发器。
@@ -52,8 +60,15 @@ func NewDispatcher(logger *slog.Logger) *Dispatcher {
 		logger:  logger,
 		workers: map[string]chan job{},
 		pending: map[string]chan string{},
+		running: map[string]bool{},
 		seen:    map[string]struct{}{},
 	}
+}
+
+// EnableSuspend 启用挂起模式:交互等待持久化到 store,跨进程重启可恢复。
+// 挂起模式与流式回复不兼容,启用后流式绑定退化为整段回复。
+func (d *Dispatcher) EnableSuspend(store suspend.Store) {
+	d.suspendStore = store
 }
 
 // Handler 返回绑定到 b 的 InboundHandler,交给 Channel.Start。
@@ -81,19 +96,56 @@ func (d *Dispatcher) Handler(b Binding) InboundHandler {
 			}
 			return
 		}
-		q := d.workers[key]
-		if q == nil {
-			q = make(chan job, 16)
-			d.workers[key] = q
-			go d.work(key, q)
+		// 挂起模式:会话有持久化的挂起轮次 → 这条消息是答案,
+		// 记入交互日志并以原输入重放该轮(进程重启后同样走这里)。
+		if d.suspendStore != nil {
+			if rec, ok, err := suspend.TakePendingTurn(d.suspendStore, key); err == nil && ok {
+				d.mu.Unlock()
+				if err := suspend.AnswerPending(d.suspendStore, rec.WaitingID, in.Text); err != nil {
+					d.logger.Error("record answer failed", slog.String("session", key), slog.String("err", err.Error()))
+					return
+				}
+				d.enqueue(ctx, b, Inbound{Conv: in.Conv, Text: rec.Input}, rec.TurnID)
+				return
+			}
+		}
+		// 运行进行中:控制类消息旁路串行队列,即时生效——
+		// "停止"不能排在它要停止的任务后面。
+		if d.running[key] {
+			if isInterruptText(in.Text) {
+				d.mu.Unlock()
+				b.Agent.Interrupt(key)
+				_, _ = b.Channel.Send(ctx, in.Conv, Outbound{Text: "好的,正在停止当前任务。"})
+				return
+			}
+			if steer, ok := steerText(in.Text); ok {
+				d.mu.Unlock()
+				b.Agent.Steer(key, steer)
+				_, _ = b.Channel.Send(ctx, in.Conv, Outbound{Text: "已把你的话带给正在运行的任务。"})
+				return
+			}
 		}
 		d.mu.Unlock()
+		d.enqueue(ctx, b, in, "")
+	}
+}
 
-		select {
-		case q <- job{b: b, in: in}:
-		default:
-			_, _ = b.Channel.Send(ctx, in.Conv, Outbound{Text: "消息太多啦,请稍后再试。"})
-		}
+// enqueue 把一轮任务放进会话的串行队列。turnID 非空表示恢复的轮次。
+func (d *Dispatcher) enqueue(ctx context.Context, b Binding, in Inbound, turnID string) {
+	key := d.sessionKey(b, in.Conv)
+	d.mu.Lock()
+	q := d.workers[key]
+	if q == nil {
+		q = make(chan job, 16)
+		d.workers[key] = q
+		go d.work(key, q)
+	}
+	d.mu.Unlock()
+
+	select {
+	case q <- job{b: b, in: in, turnID: turnID}:
+	default:
+		_, _ = b.Channel.Send(ctx, in.Conv, Outbound{Text: "消息太多啦,请稍后再试。"})
 	}
 }
 
@@ -104,14 +156,40 @@ func (d *Dispatcher) work(key string, q chan job) {
 }
 
 func (d *Dispatcher) run(key string, j job) {
+	d.mu.Lock()
+	d.running[key] = true
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.running, key)
+		d.mu.Unlock()
+	}()
+
 	// IM 消息处理与单次请求生命周期解耦,用独立的长超时上下文。
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	// HITL 桥接:ask_user 与审批走这个 IM 会话。
-	ctx = runctx.WithInteractor(ctx, &imInteractor{d: d, b: j.b, conv: j.in.Conv, key: key})
+	// 挂起模式:可挂起的交互通道 + 效果/交互日志随 ctx 下发。
+	// 非挂起模式:进程内阻塞等待的 HITL 桥接(原行为)。
+	var journal *suspend.Journal
+	if d.suspendStore != nil {
+		turnID := j.turnID
+		if turnID == "" {
+			turnID = suspend.NewTurnID()
+		}
+		journal = suspend.NewJournal(d.suspendStore, turnID)
+		ctx = suspend.WithJournal(ctx, journal)
+		conv := j.in.Conv
+		ctx = runctx.WithInteractor(ctx, suspend.Interactor(journal, func(ctx context.Context, q string) error {
+			_, err := j.b.Channel.Send(ctx, conv, Outbound{Text: q})
+			return err
+		}))
+	} else {
+		ctx = runctx.WithInteractor(ctx, &imInteractor{d: d, b: j.b, conv: j.in.Conv, key: key})
+	}
 
-	if j.b.ReplyMode == "stream" {
+	// 挂起模式与流式回复不兼容(挂起需要整轮退栈),退化整段。
+	if j.b.ReplyMode == "stream" && d.suspendStore == nil {
 		if err := d.streamReply(ctx, j); err == nil {
 			return
 		}
@@ -119,8 +197,21 @@ func (d *Dispatcher) run(key string, j job) {
 	}
 	answer, err := j.b.Agent.Run(ctx, key, j.in.Text)
 	if err != nil {
+		var suspended *suspend.ErrSuspended
+		if journal != nil && errors.As(err, &suspended) {
+			// 问题已送达用户;持久化挂起轮次后整轮退栈,不占任何资源。
+			saveErr := suspend.SavePendingTurn(d.suspendStore, key, suspend.PendingTurn{
+				TurnID: journal.TurnID(), Input: j.in.Text, WaitingID: suspended.InteractionID,
+			})
+			if saveErr != nil {
+				d.logger.Error("save pending turn failed", slog.String("session", key), slog.String("err", saveErr.Error()))
+			}
+			return
+		}
 		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", err.Error()))
 		answer = "处理失败:" + err.Error()
+	} else if journal != nil {
+		journal.CompleteTurn() // 一轮善终,清理该轮日志
 	}
 	if _, err := j.b.Channel.Send(ctx, j.in.Conv, Outbound{Text: answer, Markdown: true}); err != nil {
 		d.logger.Error("send reply failed", slog.String("session", key), slog.String("err", err.Error()))
@@ -161,6 +252,26 @@ func (d *Dispatcher) streamReply(ctx context.Context, j job) error {
 		sb.WriteString("(无输出)")
 	}
 	return flush()
+}
+
+// isInterruptText 识别叫停指令。
+func isInterruptText(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "停", "停止", "停下", "取消", "别做了", "stop", "/stop", "cancel":
+		return true
+	}
+	return false
+}
+
+// steerText 识别插话指令:「插话:」「补充:」前缀的内容注入运行中的任务。
+func steerText(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	for _, p := range []string{"插话:", "插话：", "补充:", "补充："} {
+		if rest, ok := strings.CutPrefix(s, p); ok {
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return "", false
 }
 
 func (d *Dispatcher) sessionKey(b Binding, conv ConvRef) string {

@@ -54,6 +54,10 @@ func ParseRisk(s string) (Risk, error) {
 	}
 }
 
+// TagInteractive 标记"阻塞等待用户输入"的交互类能力(ask_user 等):
+// 工具超时闸门对其豁免——等人回复的时间不是执行时间。
+const TagInteractive = "interactive"
+
 // Meta 是能力的自描述清单。Description 会作为工具描述暴露给模型,
 // 是大脑调用决策的直接依据,写得越清楚决策越准。
 type Meta struct {

@@ -29,6 +29,7 @@ import (
 	"github.com/joewm9911/agent-kit/session"
 	"github.com/joewm9911/agent-kit/skill"
 	"github.com/joewm9911/agent-kit/source"
+	"github.com/joewm9911/agent-kit/suspend"
 	"github.com/joewm9911/agent-kit/workflow"
 )
 
@@ -59,7 +60,7 @@ type PromptSourceConfig struct {
 type AgentConfig struct {
 	Name         string       `yaml:"name"`
 	Description  string       `yaml:"description"`
-	Model        *ModelConfig `yaml:"model"` // nil 用顶层 default_model
+	Model        *ModelConfig `yaml:"model"`         // nil 用顶层 default_model
 	SystemPrompt prompt.Value `yaml:"system_prompt"` // L2 业务 persona
 	LoopPrompt   prompt.Value `yaml:"loop_prompt"`   // L1 框架规约覆盖(默认内置)
 	MaxSteps     int          `yaml:"max_steps"`
@@ -87,6 +88,9 @@ type AgentConfig struct {
 		AutoRecall struct {
 			TopK int `yaml:"top_k"` // 0 = 不启用
 		} `yaml:"auto_recall"`
+		// RecordTools 控制本轮工具轨迹随会话持久化的详略:
+		// summary(默认)| full | off。off 退回只存问答(任务连续性受限)。
+		RecordTools string `yaml:"record_tools"`
 	} `yaml:"memory"`
 
 	// MaxToolResultLen 是工具结果进入上下文的截断长度(rune):
@@ -98,6 +102,8 @@ type AgentConfig struct {
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
 	// Approval:interactive(默认)| auto | deny。
 	Approval string `yaml:"approval"`
+	// ApprovalPolicy 是参数级审批规则与决策记忆(interactive 模式下生效)。
+	ApprovalPolicy loop.ApprovalPolicy `yaml:"approval_policy"`
 }
 
 // ReliabilityConfig 是全局可靠性策略。
@@ -151,6 +157,12 @@ type Config struct {
 		Addr string `yaml:"addr"`
 	} `yaml:"serving"`
 	Channels []ChannelConfig `yaml:"channels"`
+
+	// Suspend 启用 IM 通道的持久化挂起:ask_user/审批等待落盘,
+	// 跨小时/跨天/跨进程重启均可恢复;未配置时为进程内阻塞等待。
+	Suspend struct {
+		Dir string `yaml:"dir"` // 挂起状态目录,非空即启用
+	} `yaml:"suspend"`
 
 	Observability struct {
 		Log            bool   `yaml:"log"`
@@ -343,6 +355,13 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 		app.Server = serving.New(cfg.Serving.Addr, agents, logger)
 		dispatcher := channel.NewDispatcher(logger)
+		if cfg.Suspend.Dir != "" {
+			store, err := suspend.NewFileStore(cfg.Suspend.Dir)
+			if err != nil {
+				return nil, fmt.Errorf("suspend: %w", err)
+			}
+			dispatcher.EnableSuspend(store)
+		}
 		for _, cc := range cfg.Channels {
 			ch, err := channel.New(cc.Type, cc.Name, cc.Config)
 			if err != nil {
@@ -408,14 +427,22 @@ func buildAgent(ctx context.Context, ac *AgentConfig, catalog *source.Catalog,
 		caps = append(caps, memory.AsCapabilities(kv)...)
 	}
 	// Ring 0 闸门:超时(最内)→ 截断 → 审批(最外,批准等待不占超时)。
-	// 审批模式与预算门闸由 agent 每次运行装入 ctx,对 skill 内部同样生效。
+	// 审批运行态(模式+参数级策略+决策记忆)与预算门闸由 agent 每次
+	// 运行装入 ctx,对 skill 内部同样生效。
 	mode := loop.ApprovalMode(ac.Approval)
 	if mode == "" {
 		mode = loop.ApprovalInteractive
 	}
+	approval, err := loop.NewApprovalState(mode, ac.ApprovalPolicy)
+	if err != nil {
+		return nil, err
+	}
 	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
 	caps = loop.TruncateResults(caps, ac.MaxToolResultLen) // 工具结果截断(Ring 0)
+	caps = suspend.DurableEffects(caps)                    // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
+	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)
+	caps = loop.RecordTools(caps)  // 轨迹记录(最外层:记模型实际看到的)
 
 	// 会话记忆(store 提前构建:L4 召回钩子需要它)
 	var store session.Store
@@ -456,10 +483,15 @@ func buildAgent(ctx context.Context, ac *AgentConfig, catalog *source.Catalog,
 		return nil, err
 	}
 
+	record := loop.RecordMode(ac.Memory.RecordTools)
+	if record == "" {
+		record = loop.RecordSummary
+	}
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
 		Store: store, Window: ac.Memory.Window, Compaction: ac.Compaction,
 		Structured: enforcer, Interactor: interactor,
-		ApprovalMode: mode, Budget: loop.NewBudgetGate(ac.Budget),
+		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget),
+		RecordTools: record,
 	}), nil
 }
 

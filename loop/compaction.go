@@ -51,9 +51,10 @@ func (c CompactionConfig) Over(msgs []*schema.Message) bool {
 // Compactor 返回调用层压缩的 MessageRewriter:历史超过阈值时,
 // 把较早的消息摘要为一条 system 记录,保留最近若干条。
 //
-// 同一会话内做增量摘要缓存:一轮内多次触发时,只对新增部分做
-// 增量归并,不重复摘要整个前缀。摘要失败时保守地返回原历史
-// (压缩是优化,不是正确性前提)。
+// 压缩是低频的一次性事件,不是持续重写:一旦压缩,后续调用复用
+// 缓存的(切割点, 摘要)重建视图——前缀稳定,供应商的 prompt cache
+// 在两次压缩之间持续命中;直到视图再次超阈值才做增量归并重压。
+// 摘要失败时保守地返回原历史(压缩是优化,不是正确性前提)。
 func Compactor(m model.ToolCallingChatModel, cfg CompactionConfig) engine.MessageModifier {
 	if !cfg.Enabled() {
 		return nil
@@ -61,40 +62,66 @@ func Compactor(m model.ToolCallingChatModel, cfg CompactionConfig) engine.Messag
 	cache := &summaryCache{entries: map[string]summaryEntry{}}
 
 	return func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
+		session := runctx.Agent(ctx) + "/" + runctx.Session(ctx)
+
+		if prev, ok := cache.get(session); ok && prev.valid(msgs) {
+			view := prev.view(msgs)
+			if !cfg.Over(view) {
+				return view // 稳定前缀:不重切,cache 持续命中
+			}
+			// 视图再次超阈值:增量归并(旧摘要 + 新增部分)后重切
+			cut := SafeCut(msgs, len(msgs)-cfg.Keep())
+			if cut <= prev.prefixLen || cut >= len(msgs) {
+				return view
+			}
+			delta := append([]*schema.Message{schema.SystemMessage("[已有摘要]\n" + prev.summary)}, msgs[prev.prefixLen:cut]...)
+			summary, err := Summarize(ctx, m, delta)
+			if err != nil {
+				return view
+			}
+			next := summaryEntry{prefixLen: cut, summary: summary, boundary: fingerprint(msgs[cut-1])}
+			cache.put(session, next)
+			return next.view(msgs)
+		}
+
 		if !cfg.Over(msgs) {
 			return msgs
 		}
-		cut := len(msgs) - cfg.Keep()
-		// 不能从 tool 响应消息处切开(会拆散 assistant 的 tool_call 配对),
-		// 向后推进直到边界落在完整轮次上。
-		for cut < len(msgs) && msgs[cut].Role == schema.Tool {
-			cut++
-		}
+		// 首次压缩:切割点不拆散 tool_call 配对
+		cut := SafeCut(msgs, len(msgs)-cfg.Keep())
 		if cut <= 0 || cut >= len(msgs) {
 			return msgs
 		}
-
-		session := runctx.Agent(ctx) + "/" + runctx.Session(ctx)
-		prefix := msgs[:cut]
-		var summary string
-		var err error
-		if prev, ok := cache.get(session); ok && prev.prefixLen <= cut {
-			// 增量:上次摘要 + 新增部分 → 归并摘要
-			delta := append([]*schema.Message{schema.SystemMessage("[已有摘要]\n" + prev.summary)}, msgs[prev.prefixLen:cut]...)
-			summary, err = Summarize(ctx, m, delta)
-		} else {
-			summary, err = Summarize(ctx, m, prefix)
-		}
+		summary, err := Summarize(ctx, m, msgs[:cut])
 		if err != nil {
 			return msgs
 		}
-		cache.put(session, summaryEntry{prefixLen: cut, summary: summary})
-
-		out := make([]*schema.Message, 0, len(msgs)-cut+1)
-		out = append(out, schema.SystemMessage("[早前对话与执行记录摘要]\n"+summary))
-		out = append(out, msgs[cut:]...)
-		return out
+		entry := summaryEntry{prefixLen: cut, summary: summary, boundary: fingerprint(msgs[cut-1])}
+		cache.put(session, entry)
+		return entry.view(msgs)
 	}
+}
+
+// valid 校验缓存与当前消息列表对齐:切割点未越界,且边界消息未变
+// (跨轮织入的历史形状可能变化,错位则放弃缓存重新评估)。
+func (e summaryEntry) valid(msgs []*schema.Message) bool {
+	return e.prefixLen > 0 && e.prefixLen < len(msgs) && fingerprint(msgs[e.prefixLen-1]) == e.boundary
+}
+
+// view 用缓存重建织入视图:[摘要] + 切割点之后的原始消息。
+func (e summaryEntry) view(msgs []*schema.Message) []*schema.Message {
+	out := make([]*schema.Message, 0, len(msgs)-e.prefixLen+1)
+	out = append(out, schema.SystemMessage("[早前对话与执行记录摘要]\n"+e.summary))
+	return append(out, msgs[e.prefixLen:]...)
+}
+
+// fingerprint 取消息的轻量指纹(角色+内容前缀),用于缓存对齐校验。
+func fingerprint(m *schema.Message) string {
+	c := m.Content
+	if len(c) > 64 {
+		c = c[:64]
+	}
+	return string(m.Role) + "|" + c
 }
 
 // Summarize 把一段对话与执行记录压缩为要点摘要,保留目标、关键事实、
@@ -129,6 +156,7 @@ func SafeCut(msgs []*schema.Message, cut int) int {
 type summaryEntry struct {
 	prefixLen int
 	summary   string
+	boundary  string // 切割点前一条消息的指纹,用于跨调用对齐校验
 }
 
 type summaryCache struct {
