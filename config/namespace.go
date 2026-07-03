@@ -28,11 +28,12 @@ import (
 )
 
 // ComponentConfig 声明一个执行单元:能力声明与能力使用分离的"声明"侧。
-// 不进全局目录、对外不可见。两族执行形态,按声明字段区分:
+// 不进全局目录、对外不可见。engine **必填**——执行形态决定成本模型与
+// 行为保证,是读配置的人最需要一眼看到的事实,不做隐式默认:
 //
 //	循环族(prompt + tools):engine = direct(单发:一次调用+一轮工具+
-//	  收尾,无循环)| react(默认)| plan-execute | 已注册模板;
-//	编排族(steps):engine = graph(DAG,默认)| workflow(顺序简化,
+//	  收尾,无循环)| react(自主循环)| plan-execute(规划循环)| 已注册模板;
+//	编排族(steps):engine = graph(DAG,可并行)| workflow(纯顺序,
 //	  禁 needs)。无脑钉死序列,复用 skill 的图执行器,params 显式化
 //	  入参契约。两族字段互斥。
 type ComponentConfig struct {
@@ -207,6 +208,14 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			continue
 		}
 
+		// 循环族:engine 同样必填——执行形态决定成本模型(direct 1~2 次
+		// 调用,react N 次,plan-execute N×M 次),不做隐式默认。
+		switch cc.Engine {
+		case "":
+			return fmt.Errorf("namespace %s: component %s: engine 必须显式声明:direct(单发)| react(循环)| plan-execute(规划循环)| 已注册模板", ns.Name, cc.Name)
+		case "graph", "workflow":
+			return fmt.Errorf("namespace %s: component %s: engine %s 需要 steps 声明(编排族)", ns.Name, cc.Name, cc.Engine)
+		}
 		caps, err := resolveToolFace(ns.Name, cc.Tools, local, comps, deps.global)
 		if err != nil {
 			return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
@@ -310,11 +319,10 @@ func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int,
 func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig,
 	local *source.Catalog, comps map[string]capability.Capability, deps nsDeps, eff Defaults) (capability.Capability, error) {
 
-	engine := cc.Engine
-	if engine == "" {
-		engine = "graph"
+	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.MaxSteps > 0 {
+		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps 互斥(编排族没有大脑)")
 	}
-	switch engine {
+	switch cc.Engine {
 	case "graph":
 	case "workflow": // 顺序简化形态:只允许缺省的"依赖上一步"链
 		for _, s := range cc.Steps {
@@ -322,11 +330,10 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 				return nil, fmt.Errorf("step %q: workflow 是顺序简化形态,不支持 needs(要 DAG 用 engine: graph)", s.Name)
 			}
 		}
+	case "":
+		return nil, fmt.Errorf("engine 必须显式声明:graph(DAG,可并行)| workflow(纯顺序)——执行形态是读配置的人最需要一眼看到的事实")
 	default:
-		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", engine)
-	}
-	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.MaxSteps > 0 {
-		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps 互斥(编排族没有大脑)")
+		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", cc.Engine)
 	}
 	resolver := stepResolver(nsName, local, comps, deps.global, deps.defaultModel)
 	return skill.BuildGraph(ctx, &skill.GraphDeclaration{

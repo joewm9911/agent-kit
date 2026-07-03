@@ -51,6 +51,7 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 		Tools: []SourceConfig{{Name: "svc", Type: "nstest", Required: true}},
 		Components: []ComponentConfig{{
 			Name:   "planner",
+			Engine: "react",
 			Prompt: promptVal("根据请求 {request} 制定计划"),
 			Tools:  []string{"tools/svc/search"},
 		}},
@@ -113,6 +114,7 @@ func TestNamespaceToolBoundary(t *testing.T) {
 		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Components: []ComponentConfig{{
 			Name:   "bad",
+			Engine: "react",
 			Prompt: promptVal("x"),
 			Tools:  []string{"tools/other/auth"},
 		}},
@@ -149,6 +151,7 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 			{
 				// graph 形态:并行 fan-out + 汇合,引用前面的编排族 component
 				Name:   "wide",
+				Engine: "graph",
 				Params: map[string]skill.ParamDecl{"q": {Type: "string"}},
 				Steps: []skill.Step{
 					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: `{"q":"{q}"}`},
@@ -219,6 +222,7 @@ func TestGraphComponentMutuallyExclusive(t *testing.T) {
 		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Components: []ComponentConfig{{
 			Name:   "bad",
+			Engine: "react",
 			Prompt: promptVal("x"),
 			Steps:  []skill.Step{{Name: "s", Use: "tools/svc/search"}},
 		}},

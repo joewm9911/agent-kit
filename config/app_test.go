@@ -154,9 +154,11 @@ defaults:
   model: {provider: marker, config: {resp: ns-model}}
 components:
   - name: own
+    engine: react
     prompt: "回答 {q}"
     model: {provider: marker, config: {resp: comp-model}}
   - name: inherit
+    engine: react
     prompt: "回答 {q}"
 skills:
   - name: via-own
@@ -168,6 +170,7 @@ skills:
 		"namespaces/plain.yaml": `
 components:
   - name: inherit
+    engine: react
     prompt: "回答 {q}"
 skills:
   - name: via-agent
