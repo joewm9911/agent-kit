@@ -35,6 +35,12 @@ budget: {max_model_calls: 40, max_tokens: 200000}
 compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
 max_tool_result_len: 8000
 
+# 上下文卫生:工具结果超过阈值自动消化(模型带当前任务提取要点入上下文,
+# 全文落 run 级暂存,模型可用 read_result 分页取回)。搜索、捞日志等
+# 大数据量工具不再污染上下文;截断闸仍在其后兜底。
+context_hygiene:
+  digest_over: 4000
+
 approval: interactive     # mutating 操作需人工批准(CLI y/n/a/x 或 IM 回复)
 # 参数级审批策略:首条命中生效,无命中回落 ask;remember 启用会话级决策记忆
 # approval_policy:

@@ -41,6 +41,8 @@ type ComponentConfig struct {
 	MaxSteps     int                   `yaml:"max_steps"`
 	EngineConfig map[string]any        `yaml:"engine_config"`
 	Compaction   loop.CompactionConfig `yaml:"compaction"`
+	// DigestOver 启用内部工具面的大结果消化(0 = 未声明,走 defaults 链)。
+	DigestOver int `yaml:"digest_over"`
 }
 
 // NamespaceSkill 声明一个对外 skill:接口(描述+参数)+ 编排(steps,
@@ -206,6 +208,10 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		if mc != nil {
 			decl.Model = &skill.ModelDecl{Provider: mc.Provider, Config: mc.Config}
 		}
+		digestOver := cc.DigestOver
+		if digestOver == 0 && eff.DigestOver != nil {
+			digestOver = *eff.DigestOver
+		}
 		c, err := skill.Build(ctx, decl, skill.Deps{
 			Prompts:      deps.prompts,
 			DefaultModel: deps.defaultModel,
@@ -213,6 +219,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			Capabilities: caps,
 			ToolTimeout:  toolTimeout.Std(),
 			Retry:        retry,
+			DigestOver:   digestOver,
 		})
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -377,13 +384,14 @@ func crossNamespaceSkill(refStr string, global *source.Catalog) (capability.Capa
 }
 
 // modelStepCap 把默认模型包装为 use: model 步骤的能力:
-// 渲染后的 args 即提示词,单次调用。
+// 渲染后的 args 即提示词,单次调用;步骤声明 context: fork 时,
+// 以调用方对话快照 + 提示词起步。
 func modelStepCap(m model.ToolCallingChatModel) capability.Capability {
 	return capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "model", Provider: "step", Namespace: "internal", Name: "model"},
 		Description: "单次模型调用",
 	}, func(ctx context.Context, args string) (string, error) {
-		out, err := m.Generate(ctx, []*schema.Message{schema.UserMessage(args)})
+		out, err := m.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(args)))
 		if err != nil {
 			return "", err
 		}

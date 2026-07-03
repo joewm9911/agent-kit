@@ -137,6 +137,25 @@ plan-execute 不是 agent 的配置项,是 component 引用的引擎模板——
 (默认 5 分钟,超时以结果回传模型换路径推进,循环不中断;审批等待
 不计入超时)。编排步骤的 `timeout` 超时则视为步骤失败,确定性中断整图。
 
+## 上下文卫生:digest 与 fork
+
+两个正交开关防止上下文污染与背景丢失([loop/digest.go](loop/digest.go)、
+[loop/fork.go](loop/fork.go)):
+
+- **digest(结果消化)**:`context_hygiene.digest_over` 阈值之上的工具
+  结果先落 run 级暂存,由模型带着当前任务提取要点后入上下文,附取回
+  指针——搜索、捞日志等大数据量工具不再挤爆窗口;摘要不够时模型可用
+  内置 `read_result(id, offset)` 分页翻原文。消化是有损优化,失败退回
+  原样,截断闸兜底;`result:raw` 标签可豁免。component 级 `digest_over`
+  走 defaults 链。
+- **fork(上下文继承)**:带内部循环的能力默认从零起步(fresh,背景靠
+  args 转述);步骤声明 `context: fork` 后,内部循环以"调用方对话快照 +
+  任务书"起步——背景无损继承,隔离方向不变(过程不回流,只返回结果)。
+  fork 复制一份调用方历史 token 且吃不到其 prompt cache,默认 fresh。
+
+编排步骤之间的数据流走 state 变量、不进模型上下文,大数据管道天然
+免疫——重数据流程优先下沉到 steps。
+
 ## 接入:HTTP / A2A / 飞书
 
 `serving.addr` 一开即是 Gateway([serving/](serving/)):

@@ -80,6 +80,9 @@ type Deps struct {
 	ToolTimeout time.Duration
 	// Retry 是 skill 专属模型的瞬时错误重试策略(DefaultModel 由上层包装)。
 	Retry loop.RetryConfig
+	// DigestOver 启用内部工具面的大结果消化:超过该 rune 数的工具
+	// 结果先落 run 级暂存,由模型带任务提取要点后入上下文(0 关闭)。
+	DigestOver int
 }
 
 // Build 把声明装配为能力:解析全部引用并锁版本 → 检查依赖 →
@@ -139,10 +142,14 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	}
 
 	// 内部工具面下沉全部 Ring 0 闸门(治理不再止步于 agent 主循环):
-	// 超时(最内,只计执行时间)→ 截断 → 效果日志 → 审批(最外,批准
-	// 等待不占超时)。审批模式、预算门闸与挂起日志经调用方 ctx 生效,
-	// 同一 skill 被不同策略的 agent 复用时各自独立。
+	// 超时(最内,只计执行时间)→ 消化 → 截断 → 效果日志 → 审批(最外,
+	// 批准等待不占超时)。审批模式、预算门闸、结果暂存与挂起日志经
+	// 调用方 ctx 生效,同一 skill 被不同策略的 agent 复用时各自独立。
+	if deps.DigestOver > 0 {
+		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
+	}
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
+	caps = loop.DigestResults(caps, m, deps.DigestOver)
 	caps = loop.TruncateResults(caps, 0)
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
@@ -179,7 +186,9 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		}
 		task := brief.Render(vars)
 		// 上下文边界:独立会话,内部过程不回流宿主,只返回最终结果。
-		out, err := runner.Generate(ctx, []*schema.Message{schema.UserMessage(task)})
+		// 使用点声明 context: fork 时,以调用方对话快照 + 任务书起步
+		// (背景无损继承,隔离方向不变)。
+		out, err := runner.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(task)))
 		if err != nil {
 			return "", err
 		}

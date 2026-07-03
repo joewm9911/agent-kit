@@ -58,6 +58,8 @@ type Defaults struct {
 	// StepTimeout/StepRetry 是编排步骤未声明 timeout/retry 时的默认。
 	StepTimeout *loop.Duration `yaml:"step_timeout"`
 	StepRetry   *int           `yaml:"step_retry"`
+	// DigestOver 是 component 内部工具面的大结果消化阈值默认。
+	DigestOver *int `yaml:"digest_over"`
 }
 
 // merge 返回合并结果:nearer(更近层级)显式设置的键覆盖 d。
@@ -83,6 +85,9 @@ func (d Defaults) merge(nearer Defaults) Defaults {
 	}
 	if nearer.StepRetry != nil {
 		out.StepRetry = nearer.StepRetry
+	}
+	if nearer.DigestOver != nil {
+		out.DigestOver = nearer.DigestOver
 	}
 	return out
 }

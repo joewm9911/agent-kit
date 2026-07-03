@@ -122,6 +122,10 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	if err != nil {
 		return "", err
 	}
+	// 本轮上下文卫生:结果暂存(digest 的取回来源)与对话快照(fork 的
+	// 背景来源)随 ctx 下发,skill/component 内部同样可见。
+	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
+	ctx = loop.WithConversationSnapshot(ctx, msgs)
 	out, err := a.runner.Generate(ctx, msgs)
 	if err != nil {
 		if cs.Interrupted() {
@@ -183,6 +187,8 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 	if err != nil {
 		return nil, err
 	}
+	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
+	ctx = loop.WithConversationSnapshot(ctx, msgs)
 	sr, err := a.runner.Stream(ctx, msgs)
 	if err != nil {
 		return nil, err
@@ -374,10 +380,11 @@ func (a *Agent) AsLambda(ctx context.Context) (*compose.Lambda, error) {
 }
 
 // invokeAsSub 作为子 agent 被调用:独立会话,不与上级会话串历史;
-// 内部过程不回流宿主上下文,只返回最终结果。
+// 内部过程不回流宿主上下文,只返回最终结果。使用点声明 context: fork
+// 时,以调用方对话快照 + 任务起步(背景无损继承,隔离方向不变)。
 func (a *Agent) invokeAsSub(ctx context.Context, argsJSON string) (string, error) {
 	task := capability.ParseSingle(argsJSON, "task")
-	out, err := a.runner.Generate(ctx, []*schema.Message{schema.UserMessage(task)})
+	out, err := a.runner.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(task)))
 	if err != nil {
 		return "", err
 	}

@@ -97,6 +97,14 @@ type AgentConfig struct {
 	// 0 = 默认 8000,-1 = 关闭截断。防 MCP 等外部工具返回超大结果打爆窗口。
 	MaxToolResultLen int `yaml:"max_tool_result_len"`
 
+	// ContextHygiene 是上下文卫生策略:digest_over > 0 时,超过该
+	// rune 数的工具结果先落 run 级暂存,由模型带当前任务提取要点后
+	// 入上下文(附 read_result 取回指针)——搜索、捞日志等大数据量
+	// 工具不再污染上下文。截断闸仍在其后兜底。
+	ContextHygiene struct {
+		DigestOver int `yaml:"digest_over"`
+	} `yaml:"context_hygiene"`
+
 	Budget           loop.BudgetConfig     `yaml:"budget"`
 	Compaction       loop.CompactionConfig `yaml:"compaction"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
@@ -485,8 +493,12 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	if err != nil {
 		return nil, err
 	}
+	if ac.ContextHygiene.DigestOver > 0 {
+		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
+	}
 	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
-	caps = loop.TruncateResults(caps, ac.MaxToolResultLen) // 工具结果截断(Ring 0)
+	caps = loop.DigestResults(caps, m, ac.ContextHygiene.DigestOver) // 大结果消化
+	caps = loop.TruncateResults(caps, ac.MaxToolResultLen)           // 工具结果截断(Ring 0)
 	caps = suspend.DurableEffects(caps)                    // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
 	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)

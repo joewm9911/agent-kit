@@ -40,6 +40,10 @@ type Step struct {
 	Timeout loop.Duration `yaml:"timeout"`
 	// Retry 是失败后的重试次数(总尝试 = Retry+1),重试间做短退避。
 	Retry int `yaml:"retry"`
+	// Context 声明目标能力的上下文起点:空/fresh(默认,从零起步)
+	// | fork(以最外层 agent 的对话快照 + 任务起步;背景无损继承,
+	// 隔离方向不变,只对带内部循环的能力有意义)。
+	Context string `yaml:"context"`
 }
 
 // GraphDeclaration 是新形态 skill 的完整声明:对外接口(Description
@@ -121,6 +125,9 @@ func compileGraph(decl *GraphDeclaration, resolve StepResolver) (*graphPlan, err
 
 	steps := make([]compiledStep, n)
 	for i, s := range decl.Steps {
+		if s.Context != "" && s.Context != "fresh" && s.Context != "fork" {
+			return nil, fmt.Errorf("step %q: bad context %q (want fresh|fork)", s.Name, s.Context)
+		}
 		cs := compiledStep{step: s}
 		// 缺省依赖:上一声明步骤;显式 needs 覆盖
 		if s.Needs == nil && i > 0 {
@@ -364,6 +371,9 @@ func runStep(ctx context.Context, s *compiledStep, args string) (string, error) 
 }
 
 func invokeStep(ctx context.Context, s *compiledStep, args string) (string, error) {
+	if s.step.Context == "fork" {
+		ctx = loop.WithForkContext(ctx) // 目标能力以调用方对话快照起步
+	}
 	d := s.step.Timeout.Std()
 	if d <= 0 {
 		return capability.Invoke(ctx, s.cap, args)
