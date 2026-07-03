@@ -212,7 +212,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		// 调用,react N 次,plan-execute N×M 次),不做隐式默认。
 		switch cc.Engine {
 		case "":
-			return fmt.Errorf("namespace %s: component %s: engine 必须显式声明:direct(单发)| react(循环)| plan-execute(规划循环)| 已注册模板", ns.Name, cc.Name)
+			return fmt.Errorf("namespace %s: component %s: engine 必须显式声明:direct(单发)| react(循环)| plan-execute(规划循环)| reflection(反思)| router(分诊)| rewoo(一次规划并行执行)| 已注册模板", ns.Name, cc.Name)
 		case "graph", "workflow":
 			return fmt.Errorf("namespace %s: component %s: engine %s 需要 steps 声明(编排族)", ns.Name, cc.Name, cc.Engine)
 		}
