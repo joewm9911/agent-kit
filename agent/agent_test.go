@@ -7,10 +7,10 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/engine"
-	"github.com/cloverzhang/agent-kit/internal/testmodel"
-	"github.com/cloverzhang/agent-kit/loop"
-	"github.com/cloverzhang/agent-kit/session"
+	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/internal/testmodel"
+	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/session"
 )
 
 func TestRollingSummaryPersistence(t *testing.T) {

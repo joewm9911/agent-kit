@@ -8,7 +8,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 // DefaultMaxToolResultLen 是工具结果进入上下文的默认截断长度(rune)。

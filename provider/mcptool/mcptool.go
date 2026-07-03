@@ -11,9 +11,9 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/registry"
-	"github.com/cloverzhang/agent-kit/source"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/source"
 )
 
 func init() {

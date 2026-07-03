@@ -8,7 +8,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/cloverzhang/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/registry"
 )
 
 func init() {

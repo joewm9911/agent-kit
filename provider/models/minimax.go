@@ -6,7 +6,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/cloverzhang/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/registry"
 )
 
 // minimax 走 MiniMax 的 OpenAI 兼容接口(已验证 tool calling 与 usage 回报)。

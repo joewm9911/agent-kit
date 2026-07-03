@@ -15,7 +15,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 // KV 是长期记忆的最小契约,Search 可以是关键词匹配,也可以是向量检索。

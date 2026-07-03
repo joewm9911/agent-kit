@@ -8,8 +8,8 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // ApprovalMode 决定改动性操作的放行策略。

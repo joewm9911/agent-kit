@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloverzhang/agent-kit/agent"
-	"github.com/cloverzhang/agent-kit/channel"
+	"github.com/joewm9911/agent-kit/agent"
+	"github.com/joewm9911/agent-kit/channel"
 )
 
 // Server 是 Gateway 实例。

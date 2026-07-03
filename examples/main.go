@@ -13,19 +13,19 @@ import (
 	"time"
 
 	// 空导入触发 source / channel / model 工厂注册
-	_ "github.com/cloverzhang/agent-kit/channel/feishu"
-	_ "github.com/cloverzhang/agent-kit/provider/a2a"
-	_ "github.com/cloverzhang/agent-kit/provider/httptool"
-	_ "github.com/cloverzhang/agent-kit/provider/mcptool"
-	_ "github.com/cloverzhang/agent-kit/provider/models"
+	_ "github.com/joewm9911/agent-kit/channel/feishu"
+	_ "github.com/joewm9911/agent-kit/provider/a2a"
+	_ "github.com/joewm9911/agent-kit/provider/httptool"
+	_ "github.com/joewm9911/agent-kit/provider/mcptool"
+	_ "github.com/joewm9911/agent-kit/provider/models"
 
 	"github.com/cloudwego/eino/callbacks"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/config"
-	"github.com/cloverzhang/agent-kit/interact"
-	"github.com/cloverzhang/agent-kit/observe"
-	"github.com/cloverzhang/agent-kit/provider/local"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/config"
+	"github.com/joewm9911/agent-kit/interact"
+	"github.com/joewm9911/agent-kit/observe"
+	"github.com/joewm9911/agent-kit/provider/local"
 )
 
 func main() {

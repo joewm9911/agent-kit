@@ -16,7 +16,7 @@ import (
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 // Config 声明一个知识库检索能力。

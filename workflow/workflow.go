@@ -16,8 +16,8 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/source"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/source"
 )
 
 // Step 声明图上的一个固定节点。

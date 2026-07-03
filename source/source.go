@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 // Source 是能力供给端的最小契约。

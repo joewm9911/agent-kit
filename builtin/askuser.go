@@ -3,8 +3,8 @@ package builtin
 import (
 	"context"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // AskUser 返回 ask_user 能力:大脑主动向用户求澄清。

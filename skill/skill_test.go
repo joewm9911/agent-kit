@@ -7,10 +7,10 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/internal/testmodel"
-	"github.com/cloverzhang/agent-kit/prompt"
-	"github.com/cloverzhang/agent-kit/source"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/internal/testmodel"
+	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/source"
 )
 
 func testCatalog(t *testing.T) *source.Catalog {

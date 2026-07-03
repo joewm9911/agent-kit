@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 func mkCap(ns, name string, risk capability.Risk) capability.Capability {

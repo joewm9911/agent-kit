@@ -9,8 +9,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/engine"
-	"github.com/cloverzhang/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // CompactionConfig 控制上下文压缩,两个阈值任一超过即触发。

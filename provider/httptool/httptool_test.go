@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 func TestHTTPToolParamDispatch(t *testing.T) {

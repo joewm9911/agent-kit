@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 // Catalog 是能力目录:所有 source 的聚合与治理点。

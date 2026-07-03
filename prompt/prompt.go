@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cloverzhang/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/capability"
 )
 
 // Template 是一个已解析的提示词模板。

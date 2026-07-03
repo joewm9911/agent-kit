@@ -11,8 +11,8 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/engine"
-	"github.com/cloverzhang/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // DefaultLoopPrompt 是 L1 框架规约:大脑的元规则,只讲档位选择与

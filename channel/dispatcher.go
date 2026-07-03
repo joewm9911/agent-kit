@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cloverzhang/agent-kit/agent"
-	"github.com/cloverzhang/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/agent"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // Binding 把一个 Channel 路由到一个 Agent。

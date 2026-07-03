@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cloverzhang/agent-kit/channel"
-	"github.com/cloverzhang/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/channel"
+	"github.com/joewm9911/agent-kit/registry"
 )
 
 func init() {

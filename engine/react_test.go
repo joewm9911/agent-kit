@@ -7,8 +7,8 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/internal/testmodel"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/internal/testmodel"
 )
 
 func echoCap() capability.Capability {

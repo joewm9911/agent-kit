@@ -19,12 +19,12 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/cloverzhang/agent-kit/capability"
-	"github.com/cloverzhang/agent-kit/engine"
-	"github.com/cloverzhang/agent-kit/loop"
-	"github.com/cloverzhang/agent-kit/prompt"
-	"github.com/cloverzhang/agent-kit/registry"
-	"github.com/cloverzhang/agent-kit/source"
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/source"
 )
 
 // ParamDecl 描述一个 skill 参数。
