@@ -312,6 +312,58 @@ func TestGraphRiskPropagation(t *testing.T) {
 	}
 }
 
+// TestGraphJSONEscapeInStringContext 验证渲染的 JSON 安全:占位符在
+// JSON 字符串内时值自动转义(上游输出含引号不破坏下游解析),在
+// 字符串外(纯文本提示词)原样注入。
+func TestGraphJSONEscapeInStringContext(t *testing.T) {
+	quoteOut := testCap("q", func(_ context.Context, s string) (string, error) {
+		return `he said "hi"` + "\n{done}", nil // 含引号、换行、花括号
+	})
+	parse := testCap("p", func(_ context.Context, s string) (string, error) {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			return "", fmt.Errorf("downstream got invalid JSON: %v", err)
+		}
+		return fmt.Sprint(m["text"]), nil
+	})
+	caps := map[string]capability.Capability{"q": quoteOut, "p": parse}
+	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "esc",
+		Steps: []Step{
+			{Name: "raw", Use: "q"},
+			{Name: "next", Use: "p", Args: `{"text":"{raw}"}`}, // 字符串上下文 → 转义
+		},
+	}, "ns", resolverFor(caps))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := capability.Invoke(context.Background(), sk, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `he said "hi"`) {
+		t.Fatalf("value should round-trip through JSON, got %q", out)
+	}
+
+	// 字符串外(纯文本模板):原样注入,不转义
+	echo := testCap("e", func(_ context.Context, s string) (string, error) { return s, nil })
+	caps2 := map[string]capability.Capability{"q": quoteOut, "e": echo}
+	sk2, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "plain",
+		Steps: []Step{
+			{Name: "raw", Use: "q"},
+			{Name: "say", Use: "e", Args: "总结:{raw}"},
+		},
+	}, "ns", resolverFor(caps2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err = capability.Invoke(context.Background(), sk2, `{}`)
+	if err != nil || !strings.Contains(out, "he said \"hi\"\n") {
+		t.Fatalf("plain-text template should inject raw: %q %v", out, err)
+	}
+}
+
 func TestGraphBuiltinInputVar(t *testing.T) {
 	echo := testCap("echo", func(_ context.Context, s string) (string, error) { return s, nil })
 	caps := map[string]capability.Capability{"e": echo}

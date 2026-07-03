@@ -429,15 +429,63 @@ func invokeStep(ctx context.Context, s *compiledStep, args string) (string, erro
 // renderVars 单次扫描渲染模板:每个 {ident} 查一次表,命中即替换,
 // 未命中原样保留。不做多轮替换,步骤输出里出现的占位字面量不会被
 // 二次展开(确定性优先)。
+//
+// JSON 安全:替换时跟踪模板自身的字符串上下文——占位符落在 JSON
+// 字符串内(如 '{"q":"{plan}"}')时,值自动做 JSON 转义,上游输出含
+// 引号/换行不会破坏下游的参数解析;落在字符串外(纯文本提示词、
+// 数字/对象位置)则原样注入。
 func renderVars(tpl string, vars map[string]string) string {
 	if tpl == "" {
 		return ""
 	}
-	return tplRef.ReplaceAllStringFunc(tpl, func(m string) string {
-		key := m[1 : len(m)-1]
+	locs := tplRef.FindAllStringSubmatchIndex(tpl, -1)
+	if locs == nil {
+		return tpl
+	}
+	var sb strings.Builder
+	inString := false // 扫描模板字面量维护的 JSON 字符串状态
+	prev := 0
+	for _, loc := range locs {
+		lit := tpl[prev:loc[0]]
+		sb.WriteString(lit)
+		inString = advanceStringState(inString, lit)
+		key := tpl[loc[2]:loc[3]]
 		if v, ok := vars[key]; ok {
-			return v
+			if inString {
+				sb.WriteString(jsonEscape(v))
+			} else {
+				sb.WriteString(v)
+			}
+		} else {
+			sb.WriteString(tpl[loc[0]:loc[1]]) // 未知占位原样保留
 		}
-		return m
-	})
+		prev = loc[1]
+	}
+	sb.WriteString(tpl[prev:])
+	return sb.String()
+}
+
+// advanceStringState 沿模板字面量推进 JSON 字符串开合状态
+// (跳过转义的 \" )。
+func advanceStringState(in bool, lit string) bool {
+	for i := 0; i < len(lit); i++ {
+		switch lit[i] {
+		case '\\':
+			if in {
+				i++ // 字符串内的转义序列,跳过下一字符
+			}
+		case '"':
+			in = !in
+		}
+	}
+	return in
+}
+
+// jsonEscape 返回 s 作为 JSON 字符串内容的转义形式(不含首尾引号)。
+func jsonEscape(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return s
+	}
+	return string(b[1 : len(b)-1])
 }

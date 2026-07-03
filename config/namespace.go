@@ -28,13 +28,18 @@ import (
 )
 
 // ComponentConfig 声明一个执行单元:能力声明与能力使用分离的"声明"侧。
-// 结构与 skill 声明同源(引擎+提示词+工具子集+可选专属模型),但不进
-// 全局目录、没有对外参数——它的入参契约就是编排步骤传入的 args。
+// 不进全局目录、对外不可见。两族执行形态,按声明字段区分:
+//
+//	循环族(prompt + tools):engine = direct(单发:一次调用+一轮工具+
+//	  收尾,无循环)| react(默认)| plan-execute | 已注册模板;
+//	编排族(steps):engine = graph(DAG,默认)| workflow(顺序简化,
+//	  禁 needs)。无脑钉死序列,复用 skill 的图执行器,params 显式化
+//	  入参契约。两族字段互斥。
 type ComponentConfig struct {
 	Name   string       `yaml:"name"`
-	Engine string       `yaml:"engine"` // react(默认)| plan-execute | 已注册模板
+	Engine string       `yaml:"engine"`
 	Prompt prompt.Value `yaml:"prompt"`
-	// Tools 是工具面引用:tools/<source>/<name|*>(本 ns 工具)、
+	// Tools 是循环族的工具面引用:tools/<source>/<name|*>(本 ns 工具)、
 	// components/<name>(本 ns 执行单元)、cap://skill 引用(跨 ns)。
 	Tools        []string              `yaml:"tools"`
 	Model        *ModelConfig          `yaml:"model"`
@@ -43,6 +48,11 @@ type ComponentConfig struct {
 	Compaction   loop.CompactionConfig `yaml:"compaction"`
 	// DigestOver 启用内部工具面的大结果消化(0 = 未声明,走 defaults 链)。
 	DigestOver int `yaml:"digest_over"`
+
+	// 编排族:私有的无脑序列/图(字段语义同 skill 的对应项)。
+	Params map[string]skill.ParamDecl `yaml:"params"`
+	Steps  []skill.Step               `yaml:"steps"`
+	Output string                     `yaml:"output"`
 }
 
 // NamespaceSkill 声明一个对外 skill:接口(描述+参数)+ 编排(steps,
@@ -54,6 +64,10 @@ type NamespaceSkill struct {
 	Params      map[string]skill.ParamDecl `yaml:"params"`
 	Steps       []skill.Step               `yaml:"steps"`
 	Output      string                     `yaml:"output"`
+	// Use 是入口引用形态(与 steps 互斥):skill 退化为纯接口声明
+	// (description + params),执行整体委托给一个 component
+	// (通常是 graph/workflow 形态),params JSON 原样透传。
+	Use string `yaml:"use"`
 	// StepDefaults 是本 skill 步骤未声明 timeout/retry 时的缺省
 	// (override 链的 skill 层;更下层的步骤显式声明优先)。
 	StepDefaults struct {
@@ -182,6 +196,17 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		if _, dup := comps[cc.Name]; dup {
 			return fmt.Errorf("namespace %s: duplicate component %q", ns.Name, cc.Name)
 		}
+
+		// 编排族:steps 声明 → 私有的无脑图(graph/workflow)
+		if len(cc.Steps) > 0 {
+			c, err := buildGraphComponent(ctx, ns.Name, cc, local, comps, deps, eff)
+			if err != nil {
+				return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
+			}
+			comps[cc.Name] = c
+			continue
+		}
+
 		caps, err := resolveToolFace(ns.Name, cc.Tools, local, comps, deps.global)
 		if err != nil {
 			return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
@@ -230,10 +255,18 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	// 3. skills:编排引用 → 编译为 DAG → 进 deps.global
 	for i := range ns.Skills {
 		sc := &ns.Skills[i]
+		steps := sc.Steps
+		if sc.Use != "" { // 入口引用形态:单步透传,skill 只是接口
+			if len(steps) > 0 {
+				return fmt.Errorf("namespace %s: skill %s: use 与 steps 互斥", ns.Name, sc.Name)
+			}
+			steps = []skill.Step{{Name: "main", Use: sc.Use}}
+		}
 		resolver := stepResolver(ns.Name, local, comps, deps.global, deps.defaultModel)
 		c, err := skill.BuildGraph(ctx, &skill.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
-			Params: sc.Params, Steps: stepsWithDefaults(sc, eff), Output: sc.Output,
+			Params: sc.Params, Output: sc.Output,
+			Steps: applyStepDefaults(steps, sc.StepDefaults.Timeout, sc.StepDefaults.Retry, eff),
 		}, ns.Name, resolver)
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -245,32 +278,62 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	return nil
 }
 
-// stepsWithDefaults 应用步骤参数的 override 链:步骤显式声明 →
-// skill 的 step_defaults → ns/agent 合并默认。0 视为未声明,
-// 负值表示显式关闭(retry: -1 = 不重试,即便上层有默认)。
-func stepsWithDefaults(sc *NamespaceSkill, eff Defaults) []skill.Step {
-	defTimeout := sc.StepDefaults.Timeout
-	if defTimeout == 0 && eff.StepTimeout != nil {
-		defTimeout = *eff.StepTimeout
+// applyStepDefaults 应用步骤参数的 override 链:步骤显式声明 →
+// skill 的 step_defaults(sdTimeout/sdRetry)→ ns/agent 合并默认。
+// 0 视为未声明,负值表示显式关闭(retry: -1 = 不重试,即便上层有默认)。
+func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int, eff Defaults) []skill.Step {
+	if sdTimeout == 0 && eff.StepTimeout != nil {
+		sdTimeout = *eff.StepTimeout
 	}
-	defRetry := sc.StepDefaults.Retry
-	if defRetry == 0 && eff.StepRetry != nil {
-		defRetry = *eff.StepRetry
+	if sdRetry == 0 && eff.StepRetry != nil {
+		sdRetry = *eff.StepRetry
 	}
-	if defTimeout == 0 && defRetry == 0 {
-		return sc.Steps
+	if sdTimeout == 0 && sdRetry == 0 {
+		return steps
 	}
-	out := make([]skill.Step, len(sc.Steps))
-	for i, s := range sc.Steps {
+	out := make([]skill.Step, len(steps))
+	for i, s := range steps {
 		if s.Timeout == 0 {
-			s.Timeout = defTimeout
+			s.Timeout = sdTimeout
 		}
 		if s.Retry == 0 {
-			s.Retry = defRetry
+			s.Retry = sdRetry
 		}
 		out[i] = s
 	}
 	return out
+}
+
+// buildGraphComponent 装配编排族 component:steps 复用 skill 的图
+// 执行器,产物只进本 ns 的 comps 表(私有,不进目录)。skill 与它的
+// 区别只剩可见性——skill 是导出的图,这里是私有的图。
+func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig,
+	local *source.Catalog, comps map[string]capability.Capability, deps nsDeps, eff Defaults) (capability.Capability, error) {
+
+	engine := cc.Engine
+	if engine == "" {
+		engine = "graph"
+	}
+	switch engine {
+	case "graph":
+	case "workflow": // 顺序简化形态:只允许缺省的"依赖上一步"链
+		for _, s := range cc.Steps {
+			if s.Needs != nil {
+				return nil, fmt.Errorf("step %q: workflow 是顺序简化形态,不支持 needs(要 DAG 用 engine: graph)", s.Name)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", engine)
+	}
+	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.MaxSteps > 0 {
+		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps 互斥(编排族没有大脑)")
+	}
+	resolver := stepResolver(nsName, local, comps, deps.global, deps.defaultModel)
+	return skill.BuildGraph(ctx, &skill.GraphDeclaration{
+		Name: cc.Name, Params: cc.Params,
+		Steps:  applyStepDefaults(cc.Steps, 0, 0, eff),
+		Output: cc.Output,
+	}, nsName, resolver)
 }
 
 // resolveToolFace 解析 component 的工具面引用并落实边界规则。

@@ -499,7 +499,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
 	caps = loop.DigestResults(caps, m, ac.ContextHygiene.DigestOver) // 大结果消化
 	caps = loop.TruncateResults(caps, ac.MaxToolResultLen)           // 工具结果截断(Ring 0)
-	caps = suspend.DurableEffects(caps)                    // 效果日志(挂起恢复的重放不二次执行)
+	caps = suspend.DurableEffects(caps)                              // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
 	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)
 	caps = loop.RecordTools(caps)  // 轨迹记录(最外层:记模型实际看到的)

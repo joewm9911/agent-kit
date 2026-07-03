@@ -125,6 +125,112 @@ func TestNamespaceToolBoundary(t *testing.T) {
 	}
 }
 
+// TestGraphComponentAndSkillUse 覆盖编排族 component(workflow/graph)
+// 与 skill 的 use: 入口引用形态。
+func TestGraphComponentAndSkillUse(t *testing.T) {
+	setupTestSource()
+	global := source.NewCatalog(capability.RiskMutating, nil)
+	m := testmodel.New(schema.AssistantMessage("summarized", nil))
+
+	ns := &NamespaceConfig{
+		Name:  "flows",
+		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Components: []ComponentConfig{
+			{
+				// workflow 形态:顺序钉死的私有序列(工具 → 模型),模型只出现一次
+				Name:   "lookup",
+				Engine: "workflow",
+				Params: map[string]skill.ParamDecl{"q": {Type: "string", Required: true}},
+				Steps: []skill.Step{
+					{Name: "data", Use: "tools/svc/search", Args: `{"q":"{q}"}`},
+					{Name: "say", Use: "model", Args: "总结:{data}"},
+				},
+			},
+			{
+				// graph 形态:并行 fan-out + 汇合,引用前面的编排族 component
+				Name:   "wide",
+				Params: map[string]skill.ParamDecl{"q": {Type: "string"}},
+				Steps: []skill.Step{
+					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: `{"q":"{q}"}`},
+					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: `{"q":"{q}"}`},
+					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: `{"q":"{a}+{b}"}`},
+				},
+			},
+		},
+		Skills: []NamespaceSkill{{
+			// use: 入口引用:skill 退化为纯接口,执行委托给 graph component
+			Name:        "wide-search",
+			Description: "并行检索并总结",
+			Params:      map[string]skill.ParamDecl{"q": {Type: "string", Required: true}},
+			Use:         "components/wide",
+		}},
+	}
+	err := buildNamespace(context.Background(), ns, nsDeps{
+		global: global, defaultModel: m, maxRisk: capability.RiskMutating,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 目录里只有导出的 skill,两个编排族 component 不可见
+	if metas := global.List(); len(metas) != 1 {
+		t.Fatalf("catalog entries = %d, want 1", len(metas))
+	}
+	sk, err := global.Get("cap://skill.graph/flows/wide-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := capability.Invoke(context.Background(), sk, `{"q":"pay"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "summarized" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestWorkflowComponentRejectsNeeds(t *testing.T) {
+	setupTestSource()
+	global := source.NewCatalog(capability.RiskMutating, nil)
+	ns := &NamespaceConfig{
+		Name:  "badflow",
+		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Components: []ComponentConfig{{
+			Name:   "x",
+			Engine: "workflow",
+			Steps: []skill.Step{
+				{Name: "a", Use: "tools/svc/search"},
+				{Name: "b", Use: "tools/svc/search", Needs: []string{"a"}},
+			},
+		}},
+	}
+	err := buildNamespace(context.Background(), ns, nsDeps{
+		global: global, defaultModel: testmodel.New(), maxRisk: capability.RiskMutating,
+	})
+	if err == nil || !strings.Contains(err.Error(), "不支持 needs") {
+		t.Fatalf("expect workflow needs rejection, got %v", err)
+	}
+}
+
+func TestGraphComponentMutuallyExclusive(t *testing.T) {
+	setupTestSource()
+	global := source.NewCatalog(capability.RiskMutating, nil)
+	ns := &NamespaceConfig{
+		Name:  "mixed",
+		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Components: []ComponentConfig{{
+			Name:   "bad",
+			Prompt: promptVal("x"),
+			Steps:  []skill.Step{{Name: "s", Use: "tools/svc/search"}},
+		}},
+	}
+	err := buildNamespace(context.Background(), ns, nsDeps{
+		global: global, defaultModel: testmodel.New(), maxRisk: capability.RiskMutating,
+	})
+	if err == nil || !strings.Contains(err.Error(), "互斥") {
+		t.Fatalf("expect mutual-exclusion error, got %v", err)
+	}
+}
+
 func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 	setupTestSource()
 	global := source.NewCatalog(capability.RiskMutating, nil)
