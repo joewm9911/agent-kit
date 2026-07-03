@@ -12,6 +12,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // testCap 构造一个记录输入并返回 transform(输入) 的能力。
@@ -308,6 +309,65 @@ func TestGraphRiskPropagation(t *testing.T) {
 	}
 	if sk.Meta().Risk != capability.RiskMutating {
 		t.Fatalf("risk = %v, want mutating", sk.Meta().Risk)
+	}
+}
+
+func TestGraphBuiltinInputVar(t *testing.T) {
+	echo := testCap("echo", func(_ context.Context, s string) (string, error) { return s, nil })
+	caps := map[string]capability.Capability{"e": echo}
+	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name:  "raw",
+		Steps: []Step{{Name: "s1", Use: "e", Args: `{"q":"{$input}"}`}},
+	}, "ns", resolverFor(caps))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// {$input} 由框架从 runctx 直取,不经主脑转写
+	ctx := runctx.WithInput(context.Background(), "北京明天适合出门吗?带伞不?")
+	out, err := capability.Invoke(ctx, sk, `{}`)
+	if err != nil || out != `{"q":"北京明天适合出门吗?带伞不?"}` {
+		t.Fatalf("got %q %v", out, err)
+	}
+
+	// 调用方传入同名键不能顶掉保留变量
+	out, err = capability.Invoke(ctx, sk, `{"$input":"劫持"}`)
+	if err != nil || !strings.Contains(out, "带伞") {
+		t.Fatalf("builtin var must not be overridable: %q %v", out, err)
+	}
+
+	// ctx 无输入(离线批处理等):替换为空串,确定性行为
+	out, err = capability.Invoke(context.Background(), sk, `{}`)
+	if err != nil || out != `{"q":""}` {
+		t.Fatalf("no input should render empty: %q %v", out, err)
+	}
+}
+
+func TestGraphUnknownBuiltinVarRejected(t *testing.T) {
+	caps := map[string]capability.Capability{"a": testCap("a", func(_ context.Context, s string) (string, error) { return s, nil })}
+	_, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name:  "typo",
+		Steps: []Step{{Name: "s1", Use: "a", Args: "{$history}"}},
+	}, "ns", resolverFor(caps))
+	if err == nil || !strings.Contains(err.Error(), "unknown builtin variable") {
+		t.Fatalf("expect builtin var error, got %v", err)
+	}
+}
+
+func TestGraphDollarNamesRejected(t *testing.T) {
+	caps := map[string]capability.Capability{"a": testCap("a", func(_ context.Context, s string) (string, error) { return s, nil })}
+	if _, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name:  "badstep",
+		Steps: []Step{{Name: "$s", Use: "a"}},
+	}, "ns", resolverFor(caps)); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expect reserved-name error for step, got %v", err)
+	}
+	if _, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name:   "badparam",
+		Params: map[string]ParamDecl{"$input": {Type: "string"}},
+		Steps:  []Step{{Name: "s", Use: "a"}},
+	}, "ns", resolverFor(caps)); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expect reserved-name error for param, got %v", err)
 	}
 }
 

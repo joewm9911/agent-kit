@@ -156,6 +156,16 @@ plan-execute 不是 agent 的配置项,是 component 引用的引擎模板——
 编排步骤之间的数据流走 state 变量、不进模型上下文,大数据管道天然
 免疫——重数据流程优先下沉到 steps。
 
+信息传递的通道谱系(成本与信息量递增,均为使用点显式声明):
+
+```
+params(主脑转写,有损) → {$input}(保留变量:用户本轮原话,框架直取)
+→ fork(全量对话快照) │ 大内容旁路:digest 指针 + read_result 点对点拉取
+```
+
+`{$input}` 在步骤 args 模板里引用,装配期校验($ 前缀仅限保留变量,
+params/步骤名禁用 $ 开头),调用方传入同名键不能顶掉框架注入值。
+
 ## 接入:HTTP / A2A / 飞书
 
 `serving.addr` 一开即是 Gateway([serving/](serving/)):

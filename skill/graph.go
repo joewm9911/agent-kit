@@ -20,6 +20,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // Step 是编排图上的一个节点。use 只做引用(能力声明与能力使用分离):
@@ -108,11 +109,20 @@ func BuildGraph(_ context.Context, decl *GraphDeclaration, ns string, resolve St
 }
 
 func compileGraph(decl *GraphDeclaration, resolve StepResolver) (*graphPlan, error) {
+	for name := range decl.Params {
+		if strings.HasPrefix(name, "$") {
+			return nil, fmt.Errorf("param %q: names must not start with $ (reserved for builtin variables)", name)
+		}
+	}
+
 	n := len(decl.Steps)
 	index := make(map[string]int, n)
 	for i, s := range decl.Steps {
 		if s.Name == "" || s.Use == "" {
 			return nil, fmt.Errorf("step %d: name and use are required", i)
+		}
+		if strings.HasPrefix(s.Name, "$") {
+			return nil, fmt.Errorf("step %q: names must not start with $ (reserved for builtin variables)", s.Name)
 		}
 		if _, dup := index[s.Name]; dup {
 			return nil, fmt.Errorf("duplicate step name %q", s.Name)
@@ -211,7 +221,15 @@ func checkAcyclic(steps []compiledStep) error {
 	return nil
 }
 
-var tplRef = regexp.MustCompile(`\{([\p{L}\p{N}_\-]+)\}`)
+var tplRef = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_\-]+)\}`)
+
+// builtinVars 是 $ 前缀的保留变量:由框架在运行时直接注入,不经过
+// 主脑转写。$input = 用户本轮输入原文(runctx.Input),穿透任意嵌套
+// 深度。注意:$input 是不可信文本,把它引进哪个步骤等于在那里显式
+// 开一个注入面——显式声明的价值正在于开了口子的地方看得见。
+var builtinVars = map[string]bool{
+	"$input": true,
+}
 
 // checkTemplateRefs 校验数据流与控制流一致:args 模板引用的每个占位
 // 要么是参数,要么是 needs 传递闭包内的步骤——并行分支下引用闭包外
@@ -237,6 +255,12 @@ func checkTemplateRefs(decl *GraphDeclaration, steps []compiledStep, index map[s
 	for i, s := range steps {
 		for _, m := range tplRef.FindAllStringSubmatch(s.step.Args, -1) {
 			ref := m[1]
+			if strings.HasPrefix(ref, "$") {
+				if !builtinVars[ref] {
+					return fmt.Errorf("step %q args references unknown builtin variable {%s}", s.step.Name, ref)
+				}
+				continue
+			}
 			if _, isParam := decl.Params[ref]; isParam {
 				continue
 			}
@@ -262,6 +286,8 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 			vars[k] = fmt.Sprint(v)
 		}
 	}
+	// 保留变量最后注入:框架直取,调用方传入的同名键不能顶掉它。
+	vars["$input"] = runctx.Input(ctx)
 	var missing []string
 	for name, d := range p.params {
 		if _, ok := vars[name]; !ok && d.Required {
