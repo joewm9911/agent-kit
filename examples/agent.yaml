@@ -1,0 +1,130 @@
+# agentkit 端到端示例:一份配置声明整个应用。
+# 运行:OPENAI_API_KEY=sk-... go run . (见 main.go)
+
+# ---- 凭证:${VAR} 走环境变量,${secret:VAR} 走 provider ----
+secrets:
+  provider: env
+
+# ---- 提示词供给:本地目录,可换 http 型对接提示词平台 ----
+prompt_sources:
+  - name: pp
+    type: file
+    config: {dir: ./prompts}
+prompt_default_label: production
+
+# ---- 能力供给源(多源聚合进目录,namespace = source 名)----
+sources:
+  # HTTP 接口 → 工具,纯配置
+  - name: weather
+    type: http
+    config:
+      tools:
+        - name: get_weather
+          description: 查询指定城市的当前天气,返回一行摘要
+          method: GET
+          url: "https://wttr.in/{city}?format=3"   # 格式钉死在 URL,不让模型选
+          params:
+            city: {type: string, desc: 城市名(拼音或英文), required: true, in: path}
+
+  # MCP server → 工具,纯配置(可选源:连不上只告警,不阻塞启动)
+  - name: fs
+    type: mcp
+    required: false
+    config:
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      risk: mutating
+      risk_overrides: {read_file: readonly, list_directory: readonly}
+
+  # 远端 agent(A2A)→ 黑盒能力,与本框架 serving 暴露的协议互通
+  # - name: peer
+  #   type: a2a
+  #   config: {base_url: "http://other-agentkit:8080"}
+
+# ---- 目录准入:dangerous 能力默认拒之门外 ----
+catalog:
+  max_risk: mutating
+
+# ---- 默认模型(skill/workflow 与未声明 model 的 agent 使用)----
+default_model:
+  provider: minimax          # 或 openai(兼容所有 OpenAI 协议网关)
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+  # provider: openai
+  # config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}
+
+# ---- Skill:结构下沉的载体;engine 决定内部循环形态 ----
+skills:
+  - name: research/competitor_report
+    version: "1"
+    description: >
+      对指定竞品生成结构化分析报告。任务耗时较长,仅在用户明确需要
+      完整竞品报告时调用;只是随口问竞品的某个点,不要调用。
+    params:
+      company: {type: string, desc: 竞品公司名, required: true}
+      focus:   {type: string, desc: 额外关注的方面,可选}
+    prompt: {ref: "cap://prompt.file/pp/competitor-brief"}
+    engine: plan-execute            # 内部是 plan-execute 循环,对大脑不可见
+    engine_config:
+      max_rounds: 3
+      step_max_steps: 10
+      on_exhausted: summarize
+    capabilities:
+      include:
+        - "cap://tool.http/weather/get_weather"
+
+# ---- Workflow:强保证场景的逃生舱,orchestrator 就是这张图 ----
+workflows:
+  - name: daily-brief
+    description: 固定流程:查天气 → 生成早报(无大脑,节点钉死)
+    steps:
+      - {name: wx,    use: "cap://tool.http/weather/get_weather", args: '{"city":"{input}","format":"3"}'}
+      - {name: brief, use: model, args: "根据天气「{wx}」写一句今日出行建议。"}
+
+# ---- Agents:唯一的主循环是 ReAct,没有 pattern 字段 ----
+agents:
+  - name: assistant
+    description: 会查天气、能写竞品报告、可以记住用户偏好的助手
+    system_prompt: {ref: "cap://prompt.file/pp/assistant-persona"}   # L2,L1 用内置规约
+    max_steps: 30
+    capabilities:
+      include:
+        - "cap://tool.http/weather/*"
+        - "cap://tool.mcp/fs/*"
+        - "cap://skill.plan-execute/research/*"
+        - "cap://flow.workflow/workflows/daily-brief"
+      exclude:
+        - "cap://tool.mcp/fs/write_file"
+    memory:
+      window: 100             # 会话记忆(运行时织入,模型无感知);store 层硬裁剪
+      store: file             # inmemory | file | session.Register 注册的自定义后端
+      store_config: {dir: ./data/sessions}
+      long_term_tools: true   # memory_save / memory_search(大脑自主)
+      # long_term_store: redis            # 自定义长期记忆后端(memory.Register)
+      # long_term_config: {addr: "..."}
+      auto_recall: {top_k: 3} # L4 自动召回:每轮用当前输入检索长期记忆+窗口外历史
+    budget: {max_model_calls: 40, max_tokens: 200000}
+    # 超过任一阈值触发滚动摘要:持久化进 store(原文保留可审计),不重复摘要
+    compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
+    max_tool_result_len: 8000 # 工具结果截断,防 MCP 大结果打爆窗口;-1 关闭
+    approval: interactive     # mutating 操作需人工批准(CLI y/n 或 IM 回复)
+
+# ---- Gateway:HTTP/SSE + A2A 供给面 + IM webhook(留空则纯 CLI)----
+# serving:
+#   addr: ":8080"
+# channels:
+#   - name: feishu-main
+#     type: feishu
+#     agent: assistant
+#     session_mapping: chat_user   # 群内每人独立会话
+#     reply_mode: stream           # 卡片伪流式
+#     config:
+#       app_id: "${FEISHU_APP_ID}"
+#       app_secret: "${secret:FEISHU_APP_SECRET}"
+#       verification_token: "${secret:FEISHU_VERIFY_TOKEN}"
+#       encrypt_key: "${secret:FEISHU_ENCRYPT_KEY}"
+
+observability:
+  log: false                # CLI 体验模式关闭控制台打点;排查问题时打开
+  trajectory_path: ./data/trajectory.jsonl   # 完整轨迹始终落盘
