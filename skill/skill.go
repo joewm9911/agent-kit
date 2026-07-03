@@ -15,16 +15,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/joewm9911/agent-kit/builtin"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/source"
 	"github.com/joewm9911/agent-kit/suspend"
 )
@@ -64,6 +67,11 @@ type Declaration struct {
 	MaxSteps int        `yaml:"max_steps"`
 	// Compaction 启用内部循环的上下文压缩(长任务 skill 建议开启)。
 	Compaction loop.CompactionConfig `yaml:"compaction"`
+	// Todo 给内部循环挂调用级临时清单(仅 react):键 = 本次执行域,
+	// 生命周期 = 一次调用,结束即弃——宿主计划不受影响,组件保持无状态
+	// 可重入。默认关;它是给确实拆不动的研究型长循环的例外通道,
+	// component 长到需要计划通常是"该拆成结构"的信号。
+	Todo bool `yaml:"todo"`
 }
 
 // Deps 是装配 skill 所需的环境。
@@ -141,6 +149,15 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
 	}
 
+	// 调用级临时清单(opt-in,仅 react):挂 todo 工具面 + 卡住提醒,
+	// 键按执行域隔离、随调用结束即弃。
+	if decl.Todo && engineName != "react" {
+		return nil, fmt.Errorf("skill %s: todo 只对 react 有意义(plan-execute 的计划由引擎管理,其余形态无长循环)", decl.Name)
+	}
+	if decl.Todo {
+		caps = append(caps, builtin.TodoCapabilities()...)
+	}
+
 	// 内部工具面下沉全部 Ring 0 闸门(治理不再止步于 agent 主循环):
 	// 超时(最内,只计执行时间)→ 消化 → 截断 → 效果日志 → 审批(最外,
 	// 批准等待不占超时)。审批模式、预算门闸、结果暂存与挂起日志经
@@ -153,17 +170,29 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	caps = loop.TruncateResults(caps, 0)
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
+	if decl.Todo {
+		caps = builtin.NudgeTools(caps) // 卡住提醒对内部循环同样生效
+	}
 
-	// L1 变体:component 工具面上没有 todo,提示词不承诺不存在的工具。
+	// L1 变体与工具面保持一致:挂了 todo 用完整规约(含纪律指引 + 计划
+	// 每轮注入),没挂用裁剪版(提示词不承诺不存在的工具)。
 	loopPrompt := deps.LoopPrompt
 	if loopPrompt == "" {
-		loopPrompt = loop.DefaultLoopPromptNoTodo
+		if decl.Todo {
+			loopPrompt = loop.DefaultLoopPrompt
+		} else {
+			loopPrompt = loop.DefaultLoopPromptNoTodo
+		}
+	}
+	layers := loop.PromptLayers{Loop: loopPrompt}
+	if decl.Todo {
+		layers.Plan = builtin.PlanSection
 	}
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
 		Model:        m,
 		Capabilities: caps,
 		MaxSteps:     decl.MaxSteps,
-		Modifier:     loop.PromptLayers{Loop: loopPrompt}.Modifier(),
+		Modifier:     layers.Modifier(),
 		Rewriter:     loop.Compactor(m, decl.Compaction), // 内部长循环可压缩
 		Prompts:      prompts,
 		Config:       engineConf,
@@ -179,7 +208,14 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		Risk:        risk,
 		Tags:        []string{"prompt:" + brief.Version},
 	}
+	var todoSeq atomic.Int64 // 调用级清单的执行域序号
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
+		if decl.Todo {
+			// 每次调用一个新执行域:清单与宿主、与历次调用互不可见;
+			// 调用结束即弃,组件保持无状态可重入。
+			ctx = runctx.WithScopePush(ctx, fmt.Sprintf("comp:%s#%d", decl.Name, todoSeq.Add(1)))
+			defer builtin.ClearCurrent(ctx)
+		}
 		vars := map[string]string{}
 		var args map[string]any
 		if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {

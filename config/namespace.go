@@ -49,6 +49,10 @@ type ComponentConfig struct {
 	Compaction   loop.CompactionConfig `yaml:"compaction"`
 	// DigestOver 启用内部工具面的大结果消化(0 = 未声明,走 defaults 链)。
 	DigestOver int `yaml:"digest_over"`
+	// Todo 给内部循环挂调用级临时清单(仅 react;调用结束即弃)。
+	// 默认关——component 长到需要计划通常是"该拆成结构"的信号,
+	// 这是给确实拆不动的研究型长循环的例外通道。
+	Todo bool `yaml:"todo"`
 
 	// 编排族:私有的无脑序列/图(字段语义同 skill 的对应项)。
 	Params map[string]skill.ParamDecl `yaml:"params"`
@@ -227,6 +231,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			EngineConfig: cc.EngineConfig,
 			MaxSteps:     cc.MaxSteps,
 			Compaction:   cc.Compaction,
+			Todo:         cc.Todo,
 		}
 		// component 未显式声明的执行参数,从 defaults 链取
 		if decl.MaxSteps == 0 && eff.MaxSteps != nil {
@@ -319,8 +324,8 @@ func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int,
 func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig,
 	local *source.Catalog, comps map[string]capability.Capability, deps nsDeps, eff Defaults) (capability.Capability, error) {
 
-	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.MaxSteps > 0 {
-		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps 互斥(编排族没有大脑)")
+	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.MaxSteps > 0 || cc.Todo {
+		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps/todo 互斥(编排族没有大脑,计划就是 steps 本身)")
 	}
 	switch cc.Engine {
 	case "graph":

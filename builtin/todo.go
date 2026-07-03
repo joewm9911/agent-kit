@@ -284,6 +284,16 @@ func Clear(agentName, sessionID string) {
 	delete(todos.stale, key)
 }
 
+// ClearCurrent 清空 ctx 当前执行域的计划。组件级临时清单在调用结束时
+// 用它即弃——草稿纸和窗口同生命周期,不留跨调用状态。
+func ClearCurrent(ctx context.Context) {
+	key := sessionKey(ctx)
+	todos.mu.Lock()
+	defer todos.mu.Unlock()
+	delete(todos.lists, key)
+	delete(todos.stale, key)
+}
+
 func render(list []todoItem) string {
 	var sb strings.Builder
 	for _, t := range list {
