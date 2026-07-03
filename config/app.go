@@ -401,7 +401,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, global *source.Catal
 	if err != nil {
 		return nil, nil, err
 	}
-	a, err := buildAgent(ctx, &as.AgentConfig, caps, prompts, m, rel, opts.Interactor)
+	a, err := buildAgent(ctx, &as.AgentConfig, caps, prompts, m, rel, opts.Interactor, nil)
 	if err != nil {
 		return nil, nil, err
 	}

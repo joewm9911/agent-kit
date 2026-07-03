@@ -10,6 +10,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
+	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/skill"
 	"github.com/joewm9911/agent-kit/source"
@@ -282,5 +283,23 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "only cap://skill") {
 		t.Fatalf("expect cross-ns tool rejection, got %v", err)
+	}
+}
+
+// TestWindowMustFitSummaryView 验证装配期校验:窗口容不下摘要视图
+// (摘要+锚定+保留消息)时拒绝装配,不让滚动记忆被静默裁掉。
+func TestWindowMustFitSummaryView(t *testing.T) {
+	setupTestSource()
+	cfg := &Config{
+		DefaultModel: nil,
+		Agents:       []AgentConfig{{Name: "bad"}},
+	}
+	cfg.Agents[0].Memory.Window = 8
+	cfg.Agents[0].Compaction = loop.CompactionConfig{MaxMessages: 30, KeepRecent: 10}
+	cfg.Agents[0].Model = &ModelConfig{Provider: "marker", Config: map[string]any{"resp": "x"}}
+	setupAppTestFakes() // 注册 marker 模型
+	_, err := Build(context.Background(), cfg, BuildOptions{})
+	if err == nil || !strings.Contains(err.Error(), "keep_recent") {
+		t.Fatalf("expect window/keep validation error, got %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
@@ -387,7 +388,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 		}
-		a, err := buildAgent(ctx, ac, caps, prompts, m, cfg.Reliability, opts.Interactor)
+		a, err := buildAgent(ctx, ac, caps, prompts, m, cfg.Reliability, opts.Interactor, logger)
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 		}
@@ -461,7 +462,11 @@ func agentModel(ctx context.Context, own, def *ModelConfig,
 // 自动挂载关联 namespace 的全部导出 skill)。
 func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capability,
 	prompts *prompt.Resolver, m model.ToolCallingChatModel,
-	rel ReliabilityConfig, interactor runctx.Interactor) (*agent.Agent, error) {
+	rel ReliabilityConfig, interactor runctx.Interactor, logger *slog.Logger) (*agent.Agent, error) {
+
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	if m == nil {
 		return nil, fmt.Errorf("no model (declare model or default_model)")
@@ -508,13 +513,32 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	}
 	caps = loop.RecordTools(caps) // 轨迹记录(最外层:记模型实际看到的)
 
-	// 会话记忆(store 提前构建:L4 召回钩子需要它)
+	// 会话记忆
 	var store session.Store
 	if ac.Memory.Window > 0 {
 		var err error
 		if store, err = session.New(ac.Memory.Store, ac.Memory.StoreConfig, ac.Memory.Window); err != nil {
 			return nil, err
 		}
+		// FullLoader 是滚动摘要与窗外召回的前提:自定义后端没实现时
+		// 这两项能力静默消失——装配期把降级喊出来,不让它悄悄发生。
+		if _, ok := store.(session.FullLoader); !ok {
+			if ac.Compaction.Enabled() || ac.Memory.AutoRecall.TopK > 0 {
+				logger.Warn("session store lacks FullLoader: rolling summary and beyond-window recall are DISABLED",
+					slog.String("agent", ac.Name), slog.String("store", ac.Memory.Store))
+			}
+		}
+		// 窗口必须容得下摘要视图:否则滚动摘要(+锚定)会被窗口裁剪
+		// 静默切掉,跨轮记忆凭空消失。+2 = 摘要 + 锚定两条合成消息。
+		if ac.Compaction.Enabled() && ac.Memory.Window < ac.Compaction.Keep()+2 {
+			return nil, fmt.Errorf("memory.window (%d) must be >= compaction keep_recent+2 (%d), or the rolling summary gets trimmed away",
+				ac.Memory.Window, ac.Compaction.Keep()+2)
+		}
+	}
+
+	// 摘要提示词(内容策略可配置,归并指令框架追加):装配期解析锁版本
+	if err := ac.Compaction.ResolvePrompt(ctx, prompts); err != nil {
+		return nil, err
 	}
 
 	// L1-L4 提示词拼装
@@ -533,7 +557,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		layers.Loop = loop.DefaultLoopPromptNoTodo // 关闭 todo:提示词不承诺不存在的工具
 	}
 	if topK := ac.Memory.AutoRecall.TopK; topK > 0 {
-		layers.Memories = autoRecall(kv, store, ac.Memory.Window, topK)
+		layers.Memories = autoRecall(kv, ac.Memory.Window, topK)
 	}
 
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
@@ -565,15 +589,30 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 }
 
 // autoRecall 是 L4 自动召回钩子:每次模型调用前,用本轮用户输入
-// 检索长期记忆与窗口外的会话历史,命中片段注入 system prompt 第四层。
-func autoRecall(kv memory.KV, store session.Store, window, topK int) func(ctx context.Context) []string {
+// 检索长期记忆与窗口外的会话历史,命中片段注入消息尾部第四层。
+// 会话历史来自 agent 本轮已加载的全量记录(ctx 共享,一轮只读一次
+// store);同轮多次模型调用的查询不变,结果按轮 memo,不重复检索。
+func autoRecall(kv memory.KV, window, topK int) func(ctx context.Context) []string {
+	var mu sync.Mutex
+	memo := map[string]struct {
+		input  string
+		result []string
+	}{}
+
 	return func(ctx context.Context) []string {
 		query := runctx.Input(ctx)
 		if query == "" {
 			return nil
 		}
-		var out []string
+		sess := runctx.Session(ctx)
+		mu.Lock()
+		if m, ok := memo[sess]; ok && m.input == query {
+			mu.Unlock()
+			return m.result
+		}
+		mu.Unlock()
 
+		var out []string
 		// 长期记忆命中
 		if kv != nil {
 			if hits, err := kv.Search(ctx, query, topK); err == nil {
@@ -582,20 +621,29 @@ func autoRecall(kv memory.KV, store session.Store, window, topK int) func(ctx co
 				}
 			}
 		}
-
-		// 窗口外的会话历史命中(仅支持全量读取的后端)
-		if fl, ok := store.(session.FullLoader); ok {
-			all, err := fl.LoadAll(ctx, runctx.Session(ctx))
-			if err == nil {
-				raw, _ := agent.RawHistory(all)
-				if window > 0 && len(raw) > window {
-					older := raw[:len(raw)-window]
-					for _, s := range session.SearchRelevant(older, query, topK) {
-						out = append(out, "早前对话 "+s)
-					}
+		// 窗口外的会话历史命中(本轮加载的全量记录,不再回读 store)
+		if all := agent.TurnHistory(ctx); len(all) > 0 {
+			raw, _ := agent.RawHistory(all)
+			if window > 0 && len(raw) > window {
+				older := raw[:len(raw)-window]
+				for _, s := range session.SearchRelevant(older, query, topK) {
+					out = append(out, "早前对话 "+s)
 				}
 			}
 		}
+
+		mu.Lock()
+		if len(memo) > 1024 { // 粗粒度防泄漏
+			memo = map[string]struct {
+				input  string
+				result []string
+			}{}
+		}
+		memo[sess] = struct {
+			input  string
+			result []string
+		}{query, out}
+		mu.Unlock()
 		return out
 	}
 }

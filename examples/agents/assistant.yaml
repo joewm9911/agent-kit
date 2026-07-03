@@ -32,7 +32,12 @@ memory:
   record_tools: summary   # 工具轨迹随会话持久化:summary | full | off
 
 budget: {max_model_calls: 40, max_tokens: 200000}
+# 压缩:阈值触发(token 维度优先用供应商真实用量校准);摘要的内容策略
+# 可配置(prompt 支持字面量或 {ref:},归并指令由框架追加);要求
+# window >= keep_recent+2(摘要+锚定要能进窗口,装配期校验)
 compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
+# compaction:
+#   prompt: {ref: "cap://prompt.file/pp/ops-summarize"}   # 领域保留清单
 max_tool_result_len: 8000
 
 # 上下文卫生:工具结果超过阈值自动消化(模型带当前任务提取要点入上下文,

@@ -6,6 +6,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -84,15 +85,35 @@ func New(typ string, conf map[string]any, window int) (Store, error) {
 
 // ---- inmemory ----
 
+// maxInMemorySessions 是 inmemory 后端的会话数上限:开发后端不该
+// 无界增长,超限时淘汰最久未活跃的会话(生产请用 file/自定义后端)。
+const maxInMemorySessions = 1024
+
 // NewInMemory 返回进程内滑动窗口存储,适合开发与无状态短会话。
 func NewInMemory(window int) Store {
-	return &inMemory{window: window, sessions: map[string][]*schema.Message{}}
+	return &inMemory{window: window, sessions: map[string][]*schema.Message{}, touch: map[string]int64{}}
 }
 
 type inMemory struct {
 	mu       sync.RWMutex
 	window   int
 	sessions map[string][]*schema.Message
+	touch    map[string]int64 // 会话 → 活跃序号(LRU 淘汰用)
+	seq      int64
+}
+
+// evictLocked 超限时淘汰最久未活跃的会话(持锁调用)。
+func (b *inMemory) evictLocked() {
+	for len(b.sessions) > maxInMemorySessions {
+		oldest, min := "", int64(1<<62)
+		for id, at := range b.touch {
+			if at < min {
+				oldest, min = id, at
+			}
+		}
+		delete(b.sessions, oldest)
+		delete(b.touch, oldest)
+	}
 }
 
 func (b *inMemory) Load(ctx context.Context, sessionID string) ([]*schema.Message, error) {
@@ -118,6 +139,9 @@ func (b *inMemory) Append(_ context.Context, sessionID string, msgs ...*schema.M
 	// 保留全量,窗口裁剪在 Load 时做(与 file 后端语义一致,
 	// 供滚动摘要与相关性召回使用)。
 	b.sessions[sessionID] = append(b.sessions[sessionID], msgs...)
+	b.seq++
+	b.touch[sessionID] = b.seq
+	b.evictLocked()
 	return nil
 }
 
@@ -125,6 +149,7 @@ func (b *inMemory) Clear(_ context.Context, sessionID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.sessions, sessionID)
+	delete(b.touch, sessionID)
 	return nil
 }
 
@@ -144,6 +169,9 @@ type fileStore struct {
 	window int
 }
 
+// path 生成会话文件路径。sanitize 把非法字符映射为 '_' 会产生碰撞
+// ("a/b" 与 "a_b" 同名 → 会话串线),因此凡是被改写过的 ID 追加
+// 原始 ID 的哈希后缀;本来就安全的 ID 保持原名(兼容既有文件)。
 func (f *fileStore) path(sessionID string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -153,7 +181,11 @@ func (f *fileStore) path(sessionID string) string {
 			return '_'
 		}
 	}, sessionID)
-	return filepath.Join(f.dir, safe+".jsonl")
+	if safe == sessionID {
+		return filepath.Join(f.dir, safe+".jsonl")
+	}
+	sum := sha256.Sum256([]byte(sessionID))
+	return filepath.Join(f.dir, fmt.Sprintf("%s-%x.jsonl", safe, sum[:4]))
 }
 
 func (f *fileStore) Load(ctx context.Context, sessionID string) ([]*schema.Message, error) {
@@ -190,6 +222,17 @@ func (f *fileStore) LoadAll(_ context.Context, sessionID string) ([]*schema.Mess
 }
 
 func (f *fileStore) Append(_ context.Context, sessionID string, msgs ...*schema.Message) error {
+	// 先整体序列化再单次写入:一轮的多条消息尽量原子落盘,进程中途
+	// 崩溃不易留下半轮记录(孤儿 user 消息)。
+	var buf []byte
+	for _, m := range msgs {
+		b, err := json.Marshal(m)
+		if err != nil {
+			return err
+		}
+		buf = append(buf, b...)
+		buf = append(buf, '\n')
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	file, err := os.OpenFile(f.path(sessionID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -197,16 +240,8 @@ func (f *fileStore) Append(_ context.Context, sessionID string, msgs ...*schema.
 		return err
 	}
 	defer file.Close()
-	for _, m := range msgs {
-		b, err := json.Marshal(m)
-		if err != nil {
-			return err
-		}
-		if _, err := file.Write(append(b, '\n')); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = file.Write(buf)
+	return err
 }
 
 func (f *fileStore) Clear(_ context.Context, sessionID string) error {

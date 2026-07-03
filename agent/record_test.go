@@ -56,7 +56,7 @@ func TestToolTrajectoryPersisted(t *testing.T) {
 	}
 
 	// 下一轮织入的历史包含执行记录
-	msgs, err := ag.history(ctx, "s1", "那上海呢")
+	_, msgs, err := ag.loadTurn(ctx, "s1", "那上海呢")
 	if err != nil {
 		t.Fatal(err)
 	}

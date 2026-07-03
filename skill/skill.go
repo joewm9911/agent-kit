@@ -148,6 +148,9 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if err != nil {
 		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
 	}
+	if err := decl.Compaction.ResolvePrompt(ctx, deps.Prompts); err != nil {
+		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
+	}
 
 	// 调用级临时清单(opt-in,仅 react):挂 todo 工具面 + 卡住提醒,
 	// 键按执行域隔离、随调用结束即弃。

@@ -8,6 +8,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +43,22 @@ type Agent struct {
 
 	ctlMu    sync.Mutex
 	controls map[string]*loop.ControlState // 会话 → 运行控制
+
+	// turnLocks 是会话轮次锁(分条带):同会话的并发轮串行化,防止
+	// append 交错把历史写成两轮穿插(IM 有 dispatcher 串行,HTTP 没有)。
+	turnLocks [64]sync.Mutex
+
+	// 滚动摘要在途去重与测试同步。
+	compactMu  sync.Mutex
+	compacting map[string]bool
+	compactWG  sync.WaitGroup
+}
+
+// turnLock 按会话哈希取条带锁。
+func (a *Agent) turnLock(sessionID string) *sync.Mutex {
+	h := fnv.New32a()
+	h.Write([]byte(sessionID))
+	return &a.turnLocks[h.Sum32()%uint32(len(a.turnLocks))]
 }
 
 // Options 是 New 的可选项。
@@ -69,7 +87,8 @@ func New(name, description string, runner engine.Runner, m model.ToolCallingChat
 		store: opts.Store, window: opts.Window, compaction: opts.Compaction,
 		structured: opts.Structured, interactor: opts.Interactor,
 		approval: opts.Approval, budget: opts.Budget, record: opts.RecordTools,
-		controls: map[string]*loop.ControlState{},
+		controls:   map[string]*loop.ControlState{},
+		compacting: map[string]bool{},
 	}
 }
 
@@ -108,7 +127,12 @@ func (a *Agent) Description() string { return a.description }
 
 // Run 执行一轮对话:注入运行上下文 → 加载会话历史 → 运行主循环 →
 // (可选)结构化输出校验 → 回写历史(含本轮工具轨迹)。
+// 同会话的并发轮被串行化;滚动摘要异步执行,不阻塞本轮返回。
 func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error) {
+	lock := a.turnLock(sessionID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	ctx = runctx.WithInput(a.prepare(ctx, sessionID), input)
 	ctx, rec := a.withRecorder(ctx)
 	ctx, cancel := context.WithCancel(ctx)
@@ -118,10 +142,12 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	defer cs.EndTurn()
 	ctx = loop.WithControl(ctx, cs)
 
-	msgs, err := a.history(ctx, sessionID, input)
+	// 一轮只做一次全量读:织入视图、L4 窗外召回、快照共享同一份历史。
+	all, msgs, err := a.loadTurn(ctx, sessionID, input)
 	if err != nil {
 		return "", err
 	}
+	ctx = withTurnHistory(ctx, all)
 	// 本轮上下文卫生:结果暂存(digest 的取回来源)与对话快照(fork 的
 	// 背景来源)随 ctx 下发,skill/component 内部同样可见。
 	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
@@ -136,6 +162,21 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 			}
 			return answer, nil
 		}
+		// 失败轮落痕:下一轮模型知道上次试到哪、错在哪,重试不再从零摸索;
+		// 已执行的工具在执行记录里,避免重复副作用。尽力而为,不掩盖原错误。
+		if a.store != nil {
+			turn := []*schema.Message{schema.UserMessage(input)}
+			if rec != nil {
+				if tm := loop.TrajectoryMessage(rec.Records(), a.record); tm != nil {
+					turn = append(turn, tm)
+				}
+			}
+			turn = append(turn, schema.SystemMessage(fmt.Sprintf(
+				"[上一轮执行失败] 错误:%v。已执行的工具见执行记录,重试时避免重复有副作用的操作。", err)))
+			if aerr := a.store.Append(ctx, sessionID, turn...); aerr != nil {
+				slog.Warn("agent: append failed-turn record", "agent", a.name, "session", sessionID, "err", aerr)
+			}
+		}
 		return "", err
 	}
 	answer := out.Content
@@ -148,7 +189,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 		if err := a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...); err != nil {
 			return "", fmt.Errorf("append session: %w", err)
 		}
-		a.maybeCompact(ctx, sessionID)
+		a.scheduleCompact(ctx, sessionID) // 异步:摘要是维护工作,不让用户等
 	}
 	return answer, nil
 }
@@ -178,15 +219,25 @@ func (a *Agent) turnMessages(rec *loop.ToolRecorder, input, answer string) []*sc
 // 一份在后台聚合后回写会话历史(含本轮工具轨迹)。结构化输出与
 // 流式互斥(用 Run)。
 func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.StreamReader[*schema.Message], error) {
+	lock := a.turnLock(sessionID)
+	lock.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			lock.Unlock()
+		}
+	}()
+
 	ctx = runctx.WithInput(a.prepare(ctx, sessionID), input)
 	ctx, rec := a.withRecorder(ctx)
 	cs := a.controlFor(sessionID)
 	cs.BeginTurn(nil) // 流式:中断经调用方断开 ctx,这里只挂插话通道
 	ctx = loop.WithControl(ctx, cs)
-	msgs, err := a.history(ctx, sessionID, input)
+	all, msgs, err := a.loadTurn(ctx, sessionID, input)
 	if err != nil {
 		return nil, err
 	}
+	ctx = withTurnHistory(ctx, all)
 	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
 	ctx = loop.WithConversationSnapshot(ctx, msgs)
 	sr, err := a.runner.Stream(ctx, msgs)
@@ -197,8 +248,11 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 		return sr, nil
 	}
 
+	// 轮次锁交接给聚合协程:流耗尽、历史落盘后才放行下一轮。
+	locked = false
 	copies := sr.Copy(2)
 	go func() {
+		defer lock.Unlock()
 		defer copies[1].Close()
 		var chunks []*schema.Message
 		for {
@@ -213,12 +267,17 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 		}
 		full, e := schema.ConcatMessages(chunks)
 		if e != nil {
+			slog.Warn("agent: concat stream for session append", "agent", a.name, "session", sessionID, "err", e)
 			return
 		}
 		// 流结束即主循环结束,记录器此时已收齐本轮全部工具调用。
 		turn := a.turnMessages(rec, input, full.Content)
 		turn[len(turn)-1] = full
-		_ = a.store.Append(ctx, sessionID, turn...)
+		if err := a.store.Append(ctx, sessionID, turn...); err != nil {
+			slog.Warn("agent: append streamed turn", "agent", a.name, "session", sessionID, "err", err)
+			return
+		}
+		a.scheduleCompact(ctx, sessionID)
 	}()
 	return copies[0], nil
 }
@@ -234,39 +293,78 @@ func (a *Agent) prepare(ctx context.Context, sessionID string) context.Context {
 	return ctx
 }
 
-// history 织入会话历史。后端支持全量读取时按滚动摘要重建视图:
-// [最新摘要] + 其后的原始消息;否则退化为窗口 Load。
-func (a *Agent) history(ctx context.Context, sessionID, input string) ([]*schema.Message, error) {
-	var msgs []*schema.Message
+// loadTurn 一次性加载本轮所需的全部历史:返回 (全量原始记录, 织入
+// 消息)。全量记录经 ctx 共享给 L4 窗外召回,不再重复读 store。
+func (a *Agent) loadTurn(ctx context.Context, sessionID, input string) (all, msgs []*schema.Message, err error) {
 	if a.store != nil {
 		if fl, ok := a.store.(session.FullLoader); ok {
-			all, err := fl.LoadAll(ctx, sessionID)
-			if err != nil {
-				return nil, fmt.Errorf("load session: %w", err)
+			if all, err = fl.LoadAll(ctx, sessionID); err != nil {
+				return nil, nil, fmt.Errorf("load session: %w", err)
 			}
 			msgs = sessionView(all)
 			if a.window > 0 && len(msgs) > a.window {
 				msgs = msgs[len(msgs)-a.window:]
 			}
 		} else {
-			h, err := a.store.Load(ctx, sessionID)
-			if err != nil {
-				return nil, fmt.Errorf("load session: %w", err)
+			if msgs, err = a.store.Load(ctx, sessionID); err != nil {
+				return nil, nil, fmt.Errorf("load session: %w", err)
 			}
-			msgs = h
 		}
 	}
-	return append(msgs, schema.UserMessage(input)), nil
+	return all, append(msgs, schema.UserMessage(input)), nil
 }
 
-// maybeCompact 做滚动摘要持久化:视图超过压缩阈值时,把早期部分
-// (含旧摘要)归并为新摘要追加进 store。原始消息不删除,file 后端
-// 保留全量记录可审计;后续 history 只按最新摘要重建视图。
-// 摘要失败静默跳过(压缩是优化,不是正确性前提)。
-func (a *Agent) maybeCompact(ctx context.Context, sessionID string) {
-	if !a.compaction.Enabled() || a.model == nil {
+type keyTurnHistory struct{}
+
+func withTurnHistory(ctx context.Context, all []*schema.Message) context.Context {
+	if len(all) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, keyTurnHistory{}, all)
+}
+
+// TurnHistory 返回本轮开始时加载的全量会话记录(含摘要标记),供
+// L4 召回等运行时组件复用——一轮只读一次 store。未装入时为 nil。
+func TurnHistory(ctx context.Context) []*schema.Message {
+	all, _ := ctx.Value(keyTurnHistory{}).([]*schema.Message)
+	return all
+}
+
+// scheduleCompact 异步触发滚动摘要:摘要是后台维护工作(一次模型
+// 调用),不让用户等;同会话在途去重,错过的增长下一轮再压(幂等)。
+func (a *Agent) scheduleCompact(ctx context.Context, sessionID string) {
+	if !a.compaction.Enabled() || a.model == nil || a.store == nil {
 		return
 	}
+	a.compactMu.Lock()
+	if a.compacting[sessionID] {
+		a.compactMu.Unlock()
+		return
+	}
+	a.compacting[sessionID] = true
+	a.compactMu.Unlock()
+
+	a.compactWG.Add(1)
+	bg := context.WithoutCancel(ctx) // 轮次 ctx 随返回取消,摘要用无取消副本
+	go func() {
+		defer a.compactWG.Done()
+		defer func() {
+			a.compactMu.Lock()
+			delete(a.compacting, sessionID)
+			a.compactMu.Unlock()
+		}()
+		a.compact(bg, sessionID)
+	}()
+}
+
+// waitCompactions 等待在途滚动摘要完成(测试与优雅关停用)。
+func (a *Agent) waitCompactions() { a.compactWG.Wait() }
+
+// compact 做滚动摘要持久化:视图超过压缩阈值时,把早期部分(含旧
+// 摘要)归并为新摘要追加进 store。原始消息不删除,file 后端保留全量
+// 记录可审计;后续织入只按最新摘要重建视图。
+// 摘要失败静默跳过(压缩是优化,不是正确性前提)。
+func (a *Agent) compact(ctx context.Context, sessionID string) {
 	fl, ok := a.store.(session.FullLoader)
 	if !ok {
 		return
@@ -275,30 +373,32 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionID string) {
 	if err != nil {
 		return
 	}
-	covered, view := splitSummary(all)
+	covered, view, synthetic := splitSummaryView(all)
 	if !a.compaction.Over(view) {
 		return
 	}
 	keep := a.compaction.Keep()
 	cut := loop.SafeCut(view, len(view)-keep)
-	if cut <= 0 || cut >= len(view) {
+	if cut <= synthetic || cut >= len(view) {
 		return
 	}
-	summary, err := loop.Summarize(ctx, a.model, view[:cut])
+	summary, err := loop.Summarize(ctx, a.model, a.compaction, view[:cut])
 	if err != nil {
 		return
 	}
-	// 新摘要覆盖的原始消息数:视图前缀里除去合成的旧摘要那一条。
-	delta := cut
-	if len(view) > 0 && isSummaryMsg(view[0]) {
-		delta = cut - 1
+	// 新摘要覆盖的原始消息数:切割前缀里除去合成注入的部分(摘要+锚定)。
+	delta := cut - synthetic
+	if err := a.store.Append(ctx, sessionID, makeSummaryMsg(covered+delta, summary)); err != nil {
+		slog.Warn("agent: append rolling summary", "agent", a.name, "session", sessionID, "err", err)
+		return
 	}
-	_ = a.store.Append(ctx, sessionID, makeSummaryMsg(covered+delta, summary))
+	slog.Info("session compacted", "agent", a.name, "session", sessionID,
+		"covered", covered+delta, "kept", len(view)-cut, "summary_runes", len([]rune(summary)))
 }
 
 // sessionView 按最新滚动摘要重建织入视图。
 func sessionView(all []*schema.Message) []*schema.Message {
-	_, view := splitSummary(all)
+	_, view, _ := splitSummaryView(all)
 	return view
 }
 
@@ -308,14 +408,16 @@ func makeSummaryMsg(covered int, text string) *schema.Message {
 	return schema.SystemMessage(fmt.Sprintf("%s%d]]\n[会话摘要]\n%s", summaryTagPrefix, covered, text))
 }
 
-func isSummaryMsg(m *schema.Message) bool {
-	return m.Role == schema.System && strings.HasPrefix(m.Content, "[会话摘要]")
-}
-
-// splitSummary 解析全量历史:剔除所有摘要标记消息,按最新一条摘要
-// 重建视图 = [摘要(合成 system)] + 其后的原始消息。covered 为最新
-// 摘要已覆盖的原始消息数。
-func splitSummary(all []*schema.Message) (covered int, view []*schema.Message) {
+// splitSummaryView 解析全量历史:剔除所有摘要标记消息,按最新一条
+// 摘要重建织入视图,并做锚定保护:
+//
+//	视图 = [摘要(合成 system,以 [已有摘要] 标注供归并指令识别)]
+//	     + [会话首条用户消息原文(锚定:最初的任务不随归并漂移)]
+//	     + 摘要覆盖之后的原始消息
+//
+// covered 为最新摘要已覆盖的原始消息数;synthetic 为视图头部合成
+// 注入的消息数(摘要+锚定),压缩切割时用于换算真实覆盖量。
+func splitSummaryView(all []*schema.Message) (covered int, view []*schema.Message, synthetic int) {
 	var raw []*schema.Message
 	var lastText string
 	for _, m := range all {
@@ -339,15 +441,27 @@ func splitSummary(all []*schema.Message) (covered int, view []*schema.Message) {
 		covered = len(raw)
 	}
 	if lastText != "" {
-		view = append(view, schema.SystemMessage(lastText))
+		// 存储格式带 [会话摘要] 标签;视图侧换成归并指令识别的 [已有摘要]。
+		body := strings.TrimPrefix(lastText, "[会话摘要]\n")
+		view = append(view, schema.SystemMessage("[已有摘要]\n"+body))
+		synthetic = 1
+		// 锚定:最初的任务描述已被摘要覆盖时,原文常驻视图头部——
+		// 多次归并后"最初到底要做什么"不漂移。
+		for _, m := range raw[:covered] {
+			if m.Role == schema.User && m.Content != "" {
+				view = append(view, m)
+				synthetic = 2
+				break
+			}
+		}
 	}
-	return covered, append(view, raw[covered:]...)
+	return covered, append(view, raw[covered:]...), synthetic
 }
 
 // RawHistory 返回剔除摘要标记后的原始历史(供相关性召回等使用),
 // 以及当前视图未包含的早期部分长度。
 func RawHistory(all []*schema.Message) (raw []*schema.Message, beyondView int) {
-	covered, _ := splitSummary(all)
+	covered, _, _ := splitSummaryView(all)
 	for _, m := range all {
 		if m.Role == schema.System && strings.HasPrefix(m.Content, summaryTagPrefix) {
 			continue
