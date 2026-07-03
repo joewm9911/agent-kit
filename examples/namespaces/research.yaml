@@ -1,0 +1,36 @@
+# namespaces/research.yaml —— 重型执行单元(plan-execute)包装为单步 skill 导出。
+
+tools:
+  - name: weather
+    type: http
+    config:
+      tools:
+        - name: get_weather
+          description: 查询指定城市的当前天气,返回一行摘要
+          method: GET
+          url: "https://wttr.in/{city}?format=3"
+          params:
+            city: {type: string, desc: 城市名(拼音或英文), required: true, in: path}
+
+components:
+  - name: competitor_report         # 内部是 plan-execute 循环,对外不可见
+    prompt: {ref: "cap://prompt.file/pp/competitor-brief"}
+    engine: plan-execute
+    engine_config:
+      max_rounds: 3
+      step_max_steps: 10
+      on_exhausted: summarize
+    tools:
+      - "tools/weather/get_weather"
+
+skills:
+  - name: competitor_report         # 对外接口:描述+参数;单步透传 component
+    version: "1"
+    description: >
+      对指定竞品生成结构化分析报告。任务耗时较长,仅在用户明确需要
+      完整竞品报告时调用;只是随口问竞品的某个点,不要调用。
+    params:
+      company: {type: string, desc: 竞品公司名, required: true}
+      focus:   {type: string, desc: 额外关注的方面,可选}
+    steps:
+      - {name: report, use: "components/competitor_report", args: '{"company":"{company}","focus":"{focus}"}'}

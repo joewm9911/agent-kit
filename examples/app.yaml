@@ -1,0 +1,68 @@
+# app.yaml —— 应用级入口(部署拥有):进程级资源 + 接线板,业务含量为零。
+# 三层文件:app(装配成什么进程)→ agents/(对外是什么产品)→ namespaces/(有什么能力)。
+# 运行:MINIMAX_API_KEY=... go run . (见 main.go)
+
+# ---- 凭证:${VAR} 走环境变量,${secret:VAR} 走 provider,对全部文件生效 ----
+secrets:
+  provider: env
+
+# ---- 提示词供给:本地目录,可换 http 型对接提示词平台 ----
+prompt_sources:
+  - name: pp
+    type: file
+    config: {dir: ./prompts}
+prompt_default_label: production
+
+# ---- 全局兼容源:直挂 agent 工具面的通用工具(业务工具请进 namespace)----
+sources:
+  - name: fs
+    type: mcp
+    required: false
+    config:
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      risk: mutating
+      risk_overrides: {read_file: readonly, list_directory: readonly}
+
+# ---- 目录准入:dangerous 能力默认拒之门外 ----
+catalog:
+  max_risk: mutating
+
+# ---- 可靠性(Ring 0,零值即启用默认):模型瞬时错误重试 + 工具超时 ----
+reliability:
+  model_retry: {max_attempts: 3, base_delay: 500ms}
+  tool_timeout: 5m
+
+# ---- 默认模型:override 链的最终回落(component→ns→agent→这里)----
+default_model:
+  provider: minimax          # 或 openai(兼容所有 OpenAI 协议网关)
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+
+# ---- 接线板:装配哪些 agent(路径相对本文件;文件名即 agent 名)----
+agents:
+  - agents/assistant.yaml
+
+# ---- Gateway:HTTP/SSE + A2A 供给面 + IM webhook(留空则纯 CLI)----
+# serving:
+#   addr: ":8080"
+# channels:
+#   - name: feishu-main
+#     type: feishu
+#     agent: assistant          # 路由:这个群的消息只进 assistant
+#     session_mapping: chat_user
+#     reply_mode: stream
+#     config:
+#       app_id: "${FEISHU_APP_ID}"
+#       app_secret: "${secret:FEISHU_APP_SECRET}"
+#       verification_token: "${secret:FEISHU_VERIFY_TOKEN}"
+#       encrypt_key: "${secret:FEISHU_ENCRYPT_KEY}"
+
+# ---- 挂起/恢复:IM 通道的 ask_user/审批等待落盘,跨进程重启可恢复 ----
+# suspend:
+#   dir: ./data/pending
+
+observability:
+  log: false
+  trajectory_path: ./data/trajectory.jsonl

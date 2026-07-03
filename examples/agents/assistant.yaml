@@ -1,0 +1,43 @@
+# agents/assistant.yaml —— agent 维度配置(产品面拥有)。
+# 文件名即 agent 名;agent 粒度的配置全部收在这里。
+# 治理策略(approval/budget)是 agent 独占的安全边界,不被 namespace 覆盖。
+
+description: 会查天气、能写竞品报告、可以记住用户偏好的助手
+system_prompt: {ref: "cap://prompt.file/pp/assistant-persona"}   # L2,L1 用内置规约
+max_steps: 30
+
+# ---- 能力域关联:挂载 namespace 即获得其全部导出 skill(路径相对本文件)----
+namespaces:
+  - ../namespaces/briefing.yaml
+  - ../namespaces/research.yaml
+
+# ---- 兼容路径:全局源的通用工具直挂;exclude 对自动挂载同样生效 ----
+capabilities:
+  include:
+    - "cap://tool.mcp/fs/*"
+  exclude:
+    - "cap://tool.mcp/fs/write_file"
+
+# ---- 执行参数默认值(override 链的 agent 层,可被 ns/component 就近覆盖)----
+# defaults:
+#   model: {provider: openai, config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}}
+#   step_retry: 1
+
+memory:
+  window: 100             # 会话记忆(运行时织入,模型无感知);store 层硬裁剪
+  store: file             # inmemory | file | session.Register 注册的自定义后端
+  store_config: {dir: ./data/sessions}   # 运行时路径,相对进程工作目录
+  long_term_tools: true   # memory_save / memory_search(大脑自主)
+  auto_recall: {top_k: 3} # L4 自动召回:每轮用当前输入检索长期记忆+窗口外历史
+  record_tools: summary   # 工具轨迹随会话持久化:summary | full | off
+
+budget: {max_model_calls: 40, max_tokens: 200000}
+compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
+max_tool_result_len: 8000
+
+approval: interactive     # mutating 操作需人工批准(CLI y/n/a/x 或 IM 回复)
+# 参数级审批策略:首条命中生效,无命中回落 ask;remember 启用会话级决策记忆
+# approval_policy:
+#   remember: true
+#   rules:
+#     - {ref: "cap://tool.mcp/fs/write_file", args: {path: "/tmp/*"}, action: allow}

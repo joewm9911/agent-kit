@@ -1,0 +1,39 @@
+# namespaces/briefing.yaml —— namespace 维度配置(域团队拥有)。
+# 文件名即 namespace 名。三层:tools(有什么原子能力,ns 内共享对外不可见)
+# → components(执行单元是什么,不进目录)→ skills(对外长什么样、怎么串)。
+# 边界:工具与 component 不出命名空间,跨 ns 只能引用 cap://skill。
+
+tools:
+  - name: wx
+    type: http
+    config:
+      tools:
+        - name: get_weather
+          description: 查询指定城市的当前天气
+          method: GET
+          url: "https://wttr.in/{city}?format=3"
+          params:
+            city: {type: string, desc: 城市名, required: true, in: path}
+
+components:
+  - name: writer                    # 无工具的 react 退化为单次模型调用
+    prompt: "根据天气「{wx}」为用户写一句今日出行建议,不超过 30 字。"
+
+skills:
+  - name: daily-brief
+    description: 查天气并生成一句出行建议(固定流程,顺序钉死)
+    params:
+      city: {type: string, desc: 城市名, required: true}
+    steps:                          # 缺省依赖上一步 = 串行链
+      - {name: wx,    use: "tools/wx/get_weather", args: '{"city":"{city}"}', timeout: 30s, retry: 1}
+      - {name: brief, use: "components/writer",    args: '{"wx":"{wx}"}'}
+    # 并行示例:显式 needs 表达分叉与汇合
+    # steps:
+    #   - {name: a, use: ...}
+    #   - {name: b, use: ..., needs: [a]}
+    #   - {name: c, use: ..., needs: [a]}          # b、c 并行
+    #   - {name: d, use: ..., needs: [b, c], args: '{"x":"{b}","y":"{c}"}'}
+
+# ---- 执行参数默认值(override 链的 ns 层,覆盖 agent 层、被 component 覆盖)----
+# defaults:
+#   step_timeout: 60s

@@ -1,7 +1,8 @@
 # agent-kit — 基于 eino 的 agent 快速搭建框架
 
-一份 YAML 声明整个应用:能力供给、提示词、skill、agent、HTTP/A2A 服务、
-飞书接入。设计立场:**大脑即循环,流程即兜底,结构进能力**。
+声明式定义整个应用:能力供给、提示词、skill、agent、HTTP/A2A 服务、
+飞书接入。配置按所有权切分为三层文件(app / agents / namespaces),
+也支持单文件形态。设计立场:**大脑即循环,流程即兜底,结构进能力**。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -148,17 +149,42 @@ tenant_access_token 缓存。Dispatcher([channel/dispatcher.go](channel/dispatch
 负责会话映射(chat/chat_user)、同会话串行、事件幂等,并把 IM 对话桥接为
 HITL 通道——**ask_user 的答案和审批的批复,就是会话里用户的下一条消息**。
 
+## 配置的三层文件形态
+
+配置按所有权切分([config/app.go](config/app.go)),每层文件回答一个问题:
+
+```
+app.yaml                 装配成什么进程(部署拥有):secrets/serving/channels/
+                         observability/reliability/默认模型 + agents 接线,业务含量为零
+agents/<name>.yaml       对外是什么产品(产品面拥有):模型/记忆/预算/审批
+                         + namespaces 关联(挂载即获得其全部导出 skill)
+namespaces/<name>.yaml   有什么能力(域团队拥有):tools/components/skills
+```
+
+约定:文件名即名字;相对路径相对引用它的文件解析。namespace 是库,
+agent 挂载时按自己的默认值**实例化**(源连接按文件缓存共享);跨 ns 的
+cap://skill 引用在同一 agent 的挂载集合内按关联顺序解析。
+
+**override 链**(执行参数,就近优先,显式写了的键才生效):
+component/step → skill(step_defaults)→ namespace(defaults)→
+agent(defaults)→ app。可覆盖的是 model/max_steps/compaction/
+tool_timeout/retry/step_timeout/step_retry;**治理策略(approval/budget/
+max_risk)不进链**——那是 agent/部署持有的安全边界,库不能给自己放权。
+
+单文件形态(`config.Load`+`Build`)保留为兼容路径。
+
 ## 运行
 
 ```bash
 cd examples
-OPENAI_API_KEY=sk-... go run .        # CLI REPL;serving.addr 配置后即 Gateway
+MINIMAX_API_KEY=... go run .          # CLI REPL;serving.addr 配置后即 Gateway
 go test ./...                          # 全套测试(脚本化假模型,无需真实 API)
 ```
 
-完整配置示例见 [examples/agent.yaml](examples/agent.yaml)。代码侧能力
-(local.Func、rpctool、子 agent)经 `config.BuildOptions.ExtraCapabilities`
-注入,与声明式能力同目录。
+完整配置示例见 [examples/app.yaml](examples/app.yaml)、
+[examples/agents/](examples/agents/)、[examples/namespaces/](examples/namespaces/)。
+代码侧能力(local.Func、rpctool、子 agent)经
+`config.BuildOptions.ExtraCapabilities` 注入,与声明式能力同目录。
 
 ## 三环边界(什么必须写死)
 

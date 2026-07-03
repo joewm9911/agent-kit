@@ -124,20 +124,44 @@ type ChannelConfig struct {
 	Config         map[string]any `yaml:"config"`
 }
 
-// Config 是应用的完整声明。
+// SecretsConfig 声明凭证 provider。
+type SecretsConfig struct {
+	Provider string         `yaml:"provider"` // env(默认)| file
+	Config   map[string]any `yaml:"config"`
+}
+
+// CatalogConfig 是目录准入配置。
+type CatalogConfig struct {
+	MaxRisk string `yaml:"max_risk"` // 准入上限,默认 mutating(dangerous 不入目录)
+}
+
+// ServingConfig 是 Gateway 配置。
+type ServingConfig struct {
+	Addr string `yaml:"addr"`
+}
+
+// SuspendConfig 启用 IM 通道的持久化挂起:ask_user/审批等待落盘,
+// 跨小时/跨天/跨进程重启均可恢复;未配置时为进程内阻塞等待。
+type SuspendConfig struct {
+	Dir string `yaml:"dir"` // 挂起状态目录,非空即启用
+}
+
+// ObservabilityConfig 是观测配置。
+type ObservabilityConfig struct {
+	Log            bool   `yaml:"log"`
+	TrajectoryPath string `yaml:"trajectory_path"`
+}
+
+// Config 是应用的完整声明(单文件形态,兼容路径;
+// 多文件形态见 LoadApp:app.yaml + 每 agent/namespace 一个文件)。
 type Config struct {
-	Secrets struct {
-		Provider string         `yaml:"provider"` // env(默认)| file
-		Config   map[string]any `yaml:"config"`
-	} `yaml:"secrets"`
+	Secrets SecretsConfig `yaml:"secrets"`
 
 	PromptSources      []PromptSourceConfig `yaml:"prompt_sources"`
 	PromptDefaultLabel string               `yaml:"prompt_default_label"`
 
 	Sources []SourceConfig `yaml:"sources"`
-	Catalog struct {
-		MaxRisk string `yaml:"max_risk"` // 准入上限,默认 mutating(dangerous 不入目录)
-	} `yaml:"catalog"`
+	Catalog CatalogConfig  `yaml:"catalog"`
 
 	DefaultModel *ModelConfig `yaml:"default_model"`
 	// Reliability 是全局可靠性策略(Ring 0):模型瞬时错误重试、
@@ -153,21 +177,12 @@ type Config struct {
 	Workflows []workflow.Config    `yaml:"workflows"`
 	Agents    []AgentConfig        `yaml:"agents"`
 
-	Serving struct {
-		Addr string `yaml:"addr"`
-	} `yaml:"serving"`
+	Serving  ServingConfig   `yaml:"serving"`
 	Channels []ChannelConfig `yaml:"channels"`
 
-	// Suspend 启用 IM 通道的持久化挂起:ask_user/审批等待落盘,
-	// 跨小时/跨天/跨进程重启均可恢复;未配置时为进程内阻塞等待。
-	Suspend struct {
-		Dir string `yaml:"dir"` // 挂起状态目录,非空即启用
-	} `yaml:"suspend"`
+	Suspend SuspendConfig `yaml:"suspend"`
 
-	Observability struct {
-		Log            bool   `yaml:"log"`
-		TrajectoryPath string `yaml:"trajectory_path"`
-	} `yaml:"observability"`
+	Observability ObservabilityConfig `yaml:"observability"`
 }
 
 // Load 读取配置文件:先解析 secrets 段构建凭证 provider(该段本身
@@ -177,38 +192,47 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	sp, err := secretsProviderFor(raw, path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := expandParse(raw, sp, path, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
 
+// secretsProviderFor 从配置头部的 secrets 段构建凭证 provider
+// (该段本身不得含占位符)。
+func secretsProviderFor(raw []byte, path string) (secrets.Provider, error) {
 	var head struct {
-		Secrets struct {
-			Provider string         `yaml:"provider"`
-			Config   map[string]any `yaml:"config"`
-		} `yaml:"secrets"`
+		Secrets SecretsConfig `yaml:"secrets"`
 	}
 	if err := yaml.Unmarshal(raw, &head); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	var sp secrets.Provider
 	switch head.Secrets.Provider {
 	case "", "env":
-		sp = secrets.Env{}
+		return secrets.Env{}, nil
 	case "file":
 		p, _ := head.Secrets.Config["path"].(string)
-		if sp, err = secrets.NewFile(p); err != nil {
-			return nil, err
-		}
+		return secrets.NewFile(p)
 	default:
 		return nil, fmt.Errorf("unknown secrets provider %q", head.Secrets.Provider)
 	}
+}
 
+// expandParse 用给定 provider 展开占位符后解析 YAML。
+func expandParse(raw []byte, sp secrets.Provider, path string, out any) error {
 	expanded, err := secrets.Expand(raw, sp)
 	if err != nil {
-		return nil, fmt.Errorf("expand secrets in %s: %w", path, err)
+		return fmt.Errorf("expand secrets in %s: %w", path, err)
 	}
-	var cfg Config
-	if err := yaml.Unmarshal(expanded, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	if err := yaml.Unmarshal(expanded, out); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	return &cfg, nil
+	return nil
 }
 
 // App 是总装产物。
@@ -217,6 +241,9 @@ type App struct {
 	Catalog *source.Catalog
 	Prompts *prompt.Resolver
 	Server  *serving.Server // serving 未配置时为 nil
+	// AgentMounts 是多文件路径下各 agent 的挂载目录(关联 namespaces
+	// 导出的 skills),供巡检与调试;单文件路径为 nil。
+	AgentMounts map[string]*source.Catalog
 }
 
 // BuildOptions 是代码侧的注入点。
@@ -340,9 +367,21 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	// 6. agents
 	app := &App{Agents: map[string]*agent.Agent{}, Catalog: catalog, Prompts: prompts}
 	for i := range cfg.Agents {
-		a, err := buildAgent(ctx, &cfg.Agents[i], catalog, prompts, defaultModel, cfg.Reliability, opts.Interactor)
+		ac := &cfg.Agents[i]
+		var caps []capability.Capability
+		if len(ac.Capabilities.Include) > 0 {
+			var err error
+			if caps, err = catalog.Select(ac.Capabilities.Include, ac.Capabilities.Exclude); err != nil {
+				return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
+			}
+		}
+		m, err := agentModel(ctx, ac.Model, nil, defaultModel, cfg.Reliability)
 		if err != nil {
-			return nil, fmt.Errorf("agent %s: %w", cfg.Agents[i].Name, err)
+			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
+		}
+		a, err := buildAgent(ctx, ac, caps, prompts, m, cfg.Reliability, opts.Interactor)
+		if err != nil {
+			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 		}
 		app.Agents[a.Name()] = a
 	}
@@ -386,32 +425,41 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	return app, nil
 }
 
-func buildAgent(ctx context.Context, ac *AgentConfig, catalog *source.Catalog,
-	prompts *prompt.Resolver, defaultModel model.ToolCallingChatModel,
+// agentModel 解析 agent 的模型:own(agent 自己声明)→ def(agent 级
+// 默认,来自 defaults 链)→ fallback(app 默认,已包装)。前两者在此
+// 套 Ring 0 中间件(重试+预算)。
+func agentModel(ctx context.Context, own, def *ModelConfig,
+	fallback model.ToolCallingChatModel, rel ReliabilityConfig) (model.ToolCallingChatModel, error) {
+
+	mc := own
+	if mc == nil {
+		mc = def
+	}
+	if mc == nil {
+		if fallback == nil {
+			return nil, fmt.Errorf("no model (declare model or default_model)")
+		}
+		return fallback, nil
+	}
+	m, err := registry.BuildModel(ctx, mc.Provider, mc.Config)
+	if err != nil {
+		return nil, err
+	}
+	return loop.BudgetModel(loop.RetryModel(m, rel.ModelRetry)), nil
+}
+
+// buildAgent 用已选品的能力面与已解析的模型装配 agent。
+// 选品与模型解析由调用方完成(单文件路径按 include 选品;多文件路径
+// 自动挂载关联 namespace 的全部导出 skill)。
+func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capability,
+	prompts *prompt.Resolver, m model.ToolCallingChatModel,
 	rel ReliabilityConfig, interactor runctx.Interactor) (*agent.Agent, error) {
 
-	// 模型:专属或默认。专属模型在此套 Ring 0 中间件(重试+预算);
-	// 默认模型已由 Build 统一包装,不重复套。
-	m := defaultModel
-	if ac.Model != nil {
-		var err error
-		if m, err = registry.BuildModel(ctx, ac.Model.Provider, ac.Model.Config); err != nil {
-			return nil, err
-		}
-		m = loop.BudgetModel(loop.RetryModel(m, rel.ModelRetry))
-	}
 	if m == nil {
 		return nil, fmt.Errorf("no model (declare model or default_model)")
 	}
 
-	// 能力选品 + 内置能力 + 审批闸门
-	var caps []capability.Capability
-	if len(ac.Capabilities.Include) > 0 {
-		var err error
-		if caps, err = catalog.Select(ac.Capabilities.Include, ac.Capabilities.Exclude); err != nil {
-			return nil, err
-		}
-	}
+	// 内置能力 + 审批闸门
 	if ac.Todo == nil || *ac.Todo {
 		caps = append(caps, builtin.TodoCapabilities()...)
 	}

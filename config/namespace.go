@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -51,6 +52,12 @@ type NamespaceSkill struct {
 	Params      map[string]skill.ParamDecl `yaml:"params"`
 	Steps       []skill.Step               `yaml:"steps"`
 	Output      string                     `yaml:"output"`
+	// StepDefaults 是本 skill 步骤未声明 timeout/retry 时的缺省
+	// (override 链的 skill 层;更下层的步骤显式声明优先)。
+	StepDefaults struct {
+		Timeout loop.Duration `yaml:"timeout"`
+		Retry   int           `yaml:"retry"`
+	} `yaml:"step_defaults"`
 }
 
 // NamespaceConfig 是一个配置命名空间的完整声明。
@@ -63,33 +70,104 @@ type NamespaceConfig struct {
 
 // nsDeps 是命名空间装配的环境。
 type nsDeps struct {
-	global       *source.Catalog // 全局目录:skills 的去向,跨 ns skill 引用的来源
+	global       *source.Catalog // skills 的落点,亦是跨 ns cap://skill 引用的解析域
 	prompts      *prompt.Resolver
 	defaultModel model.ToolCallingChatModel
 	maxRisk      capability.Risk
 	loopPrompt   string
 	toolTimeout  loop.Duration
 	retry        loop.RetryConfig
-	logger       *slog.Logger
+	// defaults 是本 ns 之上各层合并好的执行参数默认值(agent 级已并入;
+	// buildNamespace 内再叠加 ns 自己的 defaults,就近优先)。
+	defaults Defaults
+	// nsPath 是 namespace 文件绝对路径,作源连接缓存键;srcCache 非 nil
+	// 时同一 namespace 文件被多个 agent 实例化只建一次源连接。
+	nsPath   string
+	srcCache *sourceCache
+	logger   *slog.Logger
+}
+
+// sourceCache 按 (namespace 文件, 源名) 缓存源的 Sync 结果,让
+// namespace 的多 agent 实例化共享底层连接(MCP 等连接昂贵)。
+type sourceCache struct {
+	mu   sync.Mutex
+	caps map[string][]capability.Capability
+}
+
+func newSourceCache() *sourceCache {
+	return &sourceCache{caps: map[string][]capability.Capability{}}
+}
+
+func (c *sourceCache) get(key string) ([]capability.Capability, bool) {
+	if c == nil {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	caps, ok := c.caps[key]
+	return caps, ok
+}
+
+func (c *sourceCache) put(key string, caps []capability.Capability) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.caps[key] = caps
 }
 
 // buildNamespace 装配一个命名空间:tools → components → skills,
-// 只有 skills 进全局目录。
+// 只有 skills 进 deps.global(单文件路径 = 全局目录;多文件路径 =
+// 每 agent 的挂载目录)。
 func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error {
 	if ns.Name == "" {
 		return fmt.Errorf("namespace: name is required")
 	}
 
-	// 1. 工具:进 ns 本地目录,对外不可见
+	// 1. 工具:进 ns 本地目录,对外不可见。Sync 结果按 (ns 文件, 源名)
+	// 缓存——同一 namespace 被多个 agent 实例化时源连接只建一次。
 	local := source.NewCatalog(deps.maxRisk, deps.logger)
 	for _, tc := range ns.Tools {
+		key := deps.nsPath + "|" + tc.Name
+		if caps, ok := deps.srcCache.get(key); ok {
+			if err := local.AddSource(ctx, source.Static(tc.Name, caps...), true, tc.Priority); err != nil {
+				return fmt.Errorf("namespace %s: %w", ns.Name, err)
+			}
+			continue
+		}
 		src, err := source.New(ctx, tc.Type, tc.Name, tc.Config)
 		if err != nil {
 			return fmt.Errorf("namespace %s: tool source %s: %w", ns.Name, tc.Name, err)
 		}
-		if err := local.AddSource(ctx, src, tc.Required, tc.Priority); err != nil {
+		caps, err := src.Sync(ctx)
+		if err != nil {
+			if tc.Required {
+				return fmt.Errorf("namespace %s: required source %q sync failed: %w", ns.Name, tc.Name, err)
+			}
+			if deps.logger != nil {
+				deps.logger.Warn("optional source unavailable, skipped",
+					slog.String("namespace", ns.Name), slog.String("source", tc.Name), slog.String("err", err.Error()))
+			}
+			continue
+		}
+		deps.srcCache.put(key, caps)
+		if err := local.AddSource(ctx, source.Static(tc.Name, caps...), true, tc.Priority); err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
 		}
+	}
+
+	// 执行参数 override 链:component 显式声明 → ns/agent 合并默认
+	// (deps.defaults 已含 agent 层,ns 层由 BuildApp 并入)→ app 全局。
+	eff := deps.defaults
+
+	toolTimeout := deps.toolTimeout
+	if eff.ToolTimeout != nil {
+		toolTimeout = *eff.ToolTimeout
+	}
+	retry := deps.retry
+	if eff.Retry != nil {
+		retry = *eff.Retry
 	}
 
 	// 2. 执行单元:按声明顺序装配,产物只存在于本 ns 的构建上下文
@@ -114,16 +192,27 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			MaxSteps:     cc.MaxSteps,
 			Compaction:   cc.Compaction,
 		}
-		if cc.Model != nil {
-			decl.Model = &skill.ModelDecl{Provider: cc.Model.Provider, Config: cc.Model.Config}
+		// component 未显式声明的执行参数,从 defaults 链取
+		if decl.MaxSteps == 0 && eff.MaxSteps != nil {
+			decl.MaxSteps = *eff.MaxSteps
+		}
+		if !decl.Compaction.Enabled() && eff.Compaction != nil {
+			decl.Compaction = *eff.Compaction
+		}
+		mc := cc.Model
+		if mc == nil {
+			mc = eff.Model
+		}
+		if mc != nil {
+			decl.Model = &skill.ModelDecl{Provider: mc.Provider, Config: mc.Config}
 		}
 		c, err := skill.Build(ctx, decl, skill.Deps{
 			Prompts:      deps.prompts,
 			DefaultModel: deps.defaultModel,
 			LoopPrompt:   deps.loopPrompt,
 			Capabilities: caps,
-			ToolTimeout:  deps.toolTimeout.Std(),
-			Retry:        deps.retry,
+			ToolTimeout:  toolTimeout.Std(),
+			Retry:        retry,
 		})
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -131,13 +220,13 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		comps[cc.Name] = c
 	}
 
-	// 3. skills:编排引用 → 编译为 DAG → 进全局目录
+	// 3. skills:编排引用 → 编译为 DAG → 进 deps.global
 	for i := range ns.Skills {
 		sc := &ns.Skills[i]
 		resolver := stepResolver(ns.Name, local, comps, deps.global, deps.defaultModel)
 		c, err := skill.BuildGraph(ctx, &skill.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
-			Params: sc.Params, Steps: sc.Steps, Output: sc.Output,
+			Params: sc.Params, Steps: stepsWithDefaults(sc, eff), Output: sc.Output,
 		}, ns.Name, resolver)
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -147,6 +236,34 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 	}
 	return nil
+}
+
+// stepsWithDefaults 应用步骤参数的 override 链:步骤显式声明 →
+// skill 的 step_defaults → ns/agent 合并默认。0 视为未声明,
+// 负值表示显式关闭(retry: -1 = 不重试,即便上层有默认)。
+func stepsWithDefaults(sc *NamespaceSkill, eff Defaults) []skill.Step {
+	defTimeout := sc.StepDefaults.Timeout
+	if defTimeout == 0 && eff.StepTimeout != nil {
+		defTimeout = *eff.StepTimeout
+	}
+	defRetry := sc.StepDefaults.Retry
+	if defRetry == 0 && eff.StepRetry != nil {
+		defRetry = *eff.StepRetry
+	}
+	if defTimeout == 0 && defRetry == 0 {
+		return sc.Steps
+	}
+	out := make([]skill.Step, len(sc.Steps))
+	for i, s := range sc.Steps {
+		if s.Timeout == 0 {
+			s.Timeout = defTimeout
+		}
+		if s.Retry == 0 {
+			s.Retry = defRetry
+		}
+		out[i] = s
+	}
+	return out
 }
 
 // resolveToolFace 解析 component 的工具面引用并落实边界规则。

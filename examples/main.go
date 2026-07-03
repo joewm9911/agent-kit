@@ -41,16 +41,29 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cfg, err := config.Load("agent.yaml")
-	if err != nil {
-		log.Fatal(err)
-	}
-	app, err := config.Build(ctx, cfg, config.BuildOptions{
+	// 多文件形态(app.yaml + agents/ + namespaces/)优先;
+	// 单文件 agent.yaml 是兼容路径。
+	opts := config.BuildOptions{
 		Interactor:        interact.NewCLI(),
 		ExtraCapabilities: []capability.Capability{now},
-	})
-	if err != nil {
-		log.Fatal(err)
+	}
+	var app *config.App
+	if _, statErr := os.Stat("app.yaml"); statErr == nil {
+		spec, err := config.LoadApp("app.yaml")
+		if err != nil {
+			log.Fatal(err)
+		}
+		if app, err = config.BuildApp(ctx, spec, opts); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		cfg, err := config.Load("agent.yaml")
+		if err != nil {
+			log.Fatal(err)
+		}
+		if app, err = config.Build(ctx, cfg, opts); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// Gateway 模式
