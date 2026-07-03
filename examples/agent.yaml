@@ -46,6 +46,48 @@ sources:
 catalog:
   max_risk: mutating
 
+# ---- 可靠性(Ring 0,零值即启用默认):模型瞬时错误重试 + 工具超时 ----
+reliability:
+  model_retry: {max_attempts: 3, base_delay: 500ms}
+  tool_timeout: 5m
+
+# ---- 命名空间:三层结构的主路径 ----
+# tools(ns 内共享,对外不可见)→ components(执行单元声明,不进目录)
+# → skills(对外产品,唯一被 agent 发现的单元)。
+# 边界:工具与 component 不出命名空间,跨 ns 只能引用 cap://skill。
+namespaces:
+  - name: briefing
+    tools:                              # 工具定义:声明一次,ns 内共享
+      - name: wx
+        type: http
+        config:
+          tools:
+            - name: get_weather
+              description: 查询指定城市的当前天气
+              method: GET
+              url: "https://wttr.in/{city}?format=3"
+              params:
+                city: {type: string, desc: 城市名, required: true, in: path}
+
+    components:                         # 执行单元:引擎+提示词+工具子集
+      - name: writer                    # 无工具的 react 退化为单次模型调用
+        prompt: "根据天气「{wx}」为用户写一句今日出行建议,不超过 30 字。"
+
+    skills:                             # 对外产品:接口 + 编排(DAG)
+      - name: daily-brief
+        description: 查天气并生成一句出行建议(固定流程,顺序钉死)
+        params:
+          city: {type: string, desc: 城市名, required: true}
+        steps:                          # 缺省依赖上一步 = 串行链;
+          - {name: wx,    use: "tools/wx/get_weather", args: '{"city":"{city}"}', timeout: 30s, retry: 1}
+          - {name: brief, use: "components/writer",    args: '{"wx":"{wx}"}'}
+        # 并行示例:显式 needs 表达分叉与汇合
+        # steps:
+        #   - {name: a, use: ...}
+        #   - {name: b, use: ..., needs: [a]}
+        #   - {name: c, use: ..., needs: [a]}          # b、c 并行
+        #   - {name: d, use: ..., needs: [b, c], args: '{"x":"{b}","y":"{c}"}'}
+
 # ---- 默认模型(skill/workflow 与未声明 model 的 agent 使用)----
 default_model:
   provider: minimax          # 或 openai(兼容所有 OpenAI 协议网关)
@@ -93,6 +135,7 @@ agents:
         - "cap://tool.http/weather/*"
         - "cap://tool.mcp/fs/*"
         - "cap://skill.plan-execute/research/*"
+        - "cap://skill.graph/briefing/daily-brief"   # 命名空间导出的 skill
         - "cap://flow.workflow/workflows/daily-brief"
       exclude:
         - "cap://tool.mcp/fs/write_file"

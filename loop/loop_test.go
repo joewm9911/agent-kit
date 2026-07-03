@@ -14,8 +14,9 @@ import (
 )
 
 func TestBudgetHardStop(t *testing.T) {
-	m, tracker := WrapModel(testmodel.New(), BudgetConfig{MaxModelCalls: 2})
-	ctx := runctx.With(context.Background(), "a", "s1")
+	m := BudgetModel(testmodel.New())
+	gate := NewBudgetGate(BudgetConfig{MaxModelCalls: 2})
+	ctx := WithBudget(runctx.With(context.Background(), "a", "s1"), gate)
 	for i := 0; i < 2; i++ {
 		if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("q")}); err != nil {
 			t.Fatal(err)
@@ -26,13 +27,18 @@ func TestBudgetHardStop(t *testing.T) {
 	if !errors.As(err, &exhausted) {
 		t.Fatalf("expect ErrBudgetExhausted, got %v", err)
 	}
-	if calls, _ := tracker.Spend("s1"); calls != 2 {
+	if calls, _ := gate.Spend("s1"); calls != 2 {
 		t.Fatalf("spend = %d", calls)
 	}
 	// 预算按会话隔离:另一个会话不受影响
-	ctx2 := runctx.With(context.Background(), "a", "s2")
+	ctx2 := WithBudget(runctx.With(context.Background(), "a", "s2"), gate)
 	if _, err := m.Generate(ctx2, []*schema.Message{schema.UserMessage("q")}); err != nil {
 		t.Fatalf("other session should not be limited: %v", err)
+	}
+	// 未装门闸的 ctx:透传不设限
+	bare := runctx.With(context.Background(), "a", "s1")
+	if _, err := m.Generate(bare, []*schema.Message{schema.UserMessage("q")}); err != nil {
+		t.Fatalf("no gate should mean no limit: %v", err)
 	}
 }
 

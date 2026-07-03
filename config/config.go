@@ -100,6 +100,14 @@ type AgentConfig struct {
 	Approval string `yaml:"approval"`
 }
 
+// ReliabilityConfig 是全局可靠性策略。
+type ReliabilityConfig struct {
+	// ModelRetry 是模型调用的瞬时错误重试,零值 = 默认 3 次尝试。
+	ModelRetry loop.RetryConfig `yaml:"model_retry"`
+	// ToolTimeout 是工具单次调用超时,0 = 默认 5m,负 = 关闭。
+	ToolTimeout loop.Duration `yaml:"tool_timeout"`
+}
+
 // ChannelConfig 声明一个 IM 通道绑定。
 type ChannelConfig struct {
 	Name           string         `yaml:"name"`
@@ -125,10 +133,19 @@ type Config struct {
 		MaxRisk string `yaml:"max_risk"` // 准入上限,默认 mutating(dangerous 不入目录)
 	} `yaml:"catalog"`
 
-	DefaultModel *ModelConfig         `yaml:"default_model"`
-	Skills       []*skill.Declaration `yaml:"skills"`
-	Workflows    []workflow.Config    `yaml:"workflows"`
-	Agents       []AgentConfig        `yaml:"agents"`
+	DefaultModel *ModelConfig `yaml:"default_model"`
+	// Reliability 是全局可靠性策略(Ring 0):模型瞬时错误重试、
+	// 工具单次调用超时。零值即启用默认策略。
+	Reliability ReliabilityConfig `yaml:"reliability"`
+
+	// Namespaces 是三层结构的主路径:tools(ns 内共享)→ components
+	// (执行单元声明)→ skills(对外产品,唯一进目录的编排单元)。
+	Namespaces []NamespaceConfig `yaml:"namespaces"`
+
+	// Skills/Workflows 是平铺声明的兼容路径,新配置建议用 namespaces。
+	Skills    []*skill.Declaration `yaml:"skills"`
+	Workflows []workflow.Config    `yaml:"workflows"`
+	Agents    []AgentConfig        `yaml:"agents"`
 
 	Serving struct {
 		Addr string `yaml:"addr"`
@@ -258,19 +275,23 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 	}
 
-	// 默认模型(skill/workflow 与未声明 model 的 agent 使用)
+	// 默认模型(skill/workflow 与未声明 model 的 agent 使用)。
+	// 统一套 Ring 0 中间件:瞬时错误重试 + 预算(门闸经 ctx 生效,
+	// skill/component 内部调用同样计入调用方会话预算)。
 	var defaultModel model.ToolCallingChatModel
 	if cfg.DefaultModel != nil {
 		var err error
 		if defaultModel, err = registry.BuildModel(ctx, cfg.DefaultModel.Provider, cfg.DefaultModel.Config); err != nil {
 			return nil, fmt.Errorf("default_model: %w", err)
 		}
+		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Reliability.ModelRetry))
 	}
 
 	// 4. skills:装配后入目录,供 agent 选品
 	for _, decl := range cfg.Skills {
 		c, err := skill.Build(ctx, decl, skill.Deps{
 			Catalog: catalog, Prompts: prompts, DefaultModel: defaultModel,
+			ToolTimeout: cfg.Reliability.ToolTimeout.Std(), Retry: cfg.Reliability.ModelRetry,
 		})
 		if err != nil {
 			return nil, err
@@ -291,10 +312,23 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 	}
 
+	// 5b. namespaces:三层结构装配(tools → components → skills),
+	// 只有 skills 进全局目录;声明顺序决定跨 ns 引用的可见性。
+	for i := range cfg.Namespaces {
+		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
+			global: catalog, prompts: prompts, defaultModel: defaultModel,
+			maxRisk: maxRisk, toolTimeout: cfg.Reliability.ToolTimeout,
+			retry: cfg.Reliability.ModelRetry, logger: logger,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// 6. agents
 	app := &App{Agents: map[string]*agent.Agent{}, Catalog: catalog, Prompts: prompts}
 	for i := range cfg.Agents {
-		a, err := buildAgent(ctx, &cfg.Agents[i], catalog, prompts, defaultModel, opts.Interactor)
+		a, err := buildAgent(ctx, &cfg.Agents[i], catalog, prompts, defaultModel, cfg.Reliability, opts.Interactor)
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", cfg.Agents[i].Name, err)
 		}
@@ -335,20 +369,21 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 
 func buildAgent(ctx context.Context, ac *AgentConfig, catalog *source.Catalog,
 	prompts *prompt.Resolver, defaultModel model.ToolCallingChatModel,
-	interactor runctx.Interactor) (*agent.Agent, error) {
+	rel ReliabilityConfig, interactor runctx.Interactor) (*agent.Agent, error) {
 
-	// 模型:专属或默认,先套预算(Ring 0,模型没得选)
+	// 模型:专属或默认。专属模型在此套 Ring 0 中间件(重试+预算);
+	// 默认模型已由 Build 统一包装,不重复套。
 	m := defaultModel
 	if ac.Model != nil {
 		var err error
 		if m, err = registry.BuildModel(ctx, ac.Model.Provider, ac.Model.Config); err != nil {
 			return nil, err
 		}
+		m = loop.BudgetModel(loop.RetryModel(m, rel.ModelRetry))
 	}
 	if m == nil {
 		return nil, fmt.Errorf("no model (declare model or default_model)")
 	}
-	m, _ = loop.WrapModel(m, ac.Budget)
 
 	// 能力选品 + 内置能力 + 审批闸门
 	var caps []capability.Capability
@@ -372,12 +407,15 @@ func buildAgent(ctx context.Context, ac *AgentConfig, catalog *source.Catalog,
 		}
 		caps = append(caps, memory.AsCapabilities(kv)...)
 	}
+	// Ring 0 闸门:超时(最内)→ 截断 → 审批(最外,批准等待不占超时)。
+	// 审批模式与预算门闸由 agent 每次运行装入 ctx,对 skill 内部同样生效。
 	mode := loop.ApprovalMode(ac.Approval)
 	if mode == "" {
 		mode = loop.ApprovalInteractive
 	}
-	caps = loop.GateApproval(caps, mode)
+	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
 	caps = loop.TruncateResults(caps, ac.MaxToolResultLen) // 工具结果截断(Ring 0)
+	caps = loop.GateApprovalCtx(caps)
 
 	// 会话记忆(store 提前构建:L4 召回钩子需要它)
 	var store session.Store
@@ -421,6 +459,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, catalog *source.Catalog,
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
 		Store: store, Window: ac.Memory.Window, Compaction: ac.Compaction,
 		Structured: enforcer, Interactor: interactor,
+		ApprovalMode: mode, Budget: loop.NewBudgetGate(ac.Budget),
 	}), nil
 }
 

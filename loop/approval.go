@@ -42,6 +42,39 @@ func GateApproval(caps []capability.Capability, mode ApprovalMode) []capability.
 	return out
 }
 
+// GateApprovalCtx 同 GateApproval,但放行策略在调用时从 ctx 解析
+// (由 agent 经 WithApprovalMode 装入,缺省 interactive)。skill 与
+// component 的内部工具面用它套闸:同一能力被不同审批策略的 agent
+// 复用时,各自的模式经 ctx 生效,内部改动操作不再因"skill 边界批准
+// 一次"而裸奔。
+func GateApprovalCtx(caps []capability.Capability) []capability.Capability {
+	out := make([]capability.Capability, 0, len(caps))
+	for _, c := range caps {
+		if c.Meta().Risk >= capability.RiskMutating {
+			out = append(out, &gated{inner: c}) // mode 留空 = 运行时从 ctx 解析
+		} else {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+type keyApprovalMode struct{}
+
+// WithApprovalMode 把审批模式装入 ctx,对下游 GateApprovalCtx 套闸的
+// 能力生效。
+func WithApprovalMode(ctx context.Context, mode ApprovalMode) context.Context {
+	if mode == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, keyApprovalMode{}, mode)
+}
+
+func approvalModeFrom(ctx context.Context) ApprovalMode {
+	m, _ := ctx.Value(keyApprovalMode{}).(ApprovalMode)
+	return m
+}
+
 type gated struct {
 	inner capability.Capability
 	mode  ApprovalMode
@@ -71,7 +104,16 @@ func (g *gated) AsLambda(ctx context.Context) (*compose.Lambda, error) {
 
 func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.Context) (string, error)) (string, error) {
 	meta := g.inner.Meta()
-	if g.mode == ApprovalDeny {
+	mode := g.mode
+	if mode == "" { // ctx 套闸:运行时解析,缺省 interactive
+		if mode = approvalModeFrom(ctx); mode == "" {
+			mode = ApprovalInteractive
+		}
+	}
+	if mode == ApprovalAuto {
+		return exec(ctx)
+	}
+	if mode == ApprovalDeny {
 		return fmt.Sprintf("操作被拒绝:%s 是改动性操作,当前部署为只读模式。", meta.Ref.Name), nil
 	}
 	it := runctx.GetInteractor(ctx)

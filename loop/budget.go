@@ -26,8 +26,11 @@ func (e *ErrBudgetExhausted) Error() string {
 	return "budget exhausted: " + e.Reason
 }
 
-// BudgetTracker 按会话(runctx.Session)累计花费,可用于打点与计费。
-type BudgetTracker struct {
+// BudgetGate 是"配置 + 按会话累计"的预算门闸。它由 agent 在每次
+// 运行时装入 ctx,BudgetModel 包装的模型从 ctx 读它扣费——因此
+// skill/component 内部的模型调用也计入调用方 agent 的会话预算,
+// 不再是治理盲区。
+type BudgetGate struct {
 	cfg      BudgetConfig
 	mu       sync.Mutex
 	sessions map[string]*spend
@@ -38,108 +41,125 @@ type spend struct {
 	tokens int64
 }
 
-func (t *BudgetTracker) get(ctx context.Context) *spend {
-	key := runctx.Session(ctx)
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	s, ok := t.sessions[key]
-	if !ok {
-		s = &spend{}
-		t.sessions[key] = s
-	}
-	return s
+// NewBudgetGate 创建预算门闸。零值配置 = 只统计不设限。
+func NewBudgetGate(cfg BudgetConfig) *BudgetGate {
+	return &BudgetGate{cfg: cfg, sessions: map[string]*spend{}}
 }
 
-// Spend 返回某会话的累计花费(calls, tokens)。
-func (t *BudgetTracker) Spend(sessionID string) (int64, int64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if s, ok := t.sessions[sessionID]; ok {
+// Spend 返回某会话的累计花费(calls, tokens),供打点与计费。
+func (g *BudgetGate) Spend(sessionID string) (int64, int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if s, ok := g.sessions[sessionID]; ok {
 		return s.calls, s.tokens
 	}
 	return 0, 0
 }
 
-// WrapModel 给模型套上预算控制:
-//   - 硬上限:超出即返回 ErrBudgetExhausted,循环终止;
-//   - 软阈值(80%):向输入追加收尾指令,让大脑基于已有结果尽快给出回答,
-//     而不是被硬断在半途。
-//
-// 预算按会话隔离,同一 agent 服务多个会话互不影响。
-func WrapModel(m model.ToolCallingChatModel, cfg BudgetConfig) (model.ToolCallingChatModel, *BudgetTracker) {
-	t := &BudgetTracker{cfg: cfg, sessions: map[string]*spend{}}
-	return &budgetModel{inner: m, t: t}, t
-}
-
-type budgetModel struct {
-	inner model.ToolCallingChatModel
-	t     *BudgetTracker
-}
-
-func (b *budgetModel) state(ctx context.Context) (*spend, error) {
-	s := b.t.get(ctx)
-	cfg := b.t.cfg
-	b.t.mu.Lock()
-	defer b.t.mu.Unlock()
-	if cfg.MaxModelCalls > 0 && s.calls >= int64(cfg.MaxModelCalls) {
-		return nil, &ErrBudgetExhausted{Reason: fmt.Sprintf("model calls reached %d", cfg.MaxModelCalls)}
+// check 校验硬上限并返回会话账目。
+func (g *BudgetGate) check(session string) (*spend, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	s, ok := g.sessions[session]
+	if !ok {
+		s = &spend{}
+		g.sessions[session] = s
 	}
-	if cfg.MaxTokens > 0 && s.tokens >= int64(cfg.MaxTokens) {
-		return nil, &ErrBudgetExhausted{Reason: fmt.Sprintf("tokens reached %d", cfg.MaxTokens)}
+	if g.cfg.MaxModelCalls > 0 && s.calls >= int64(g.cfg.MaxModelCalls) {
+		return nil, &ErrBudgetExhausted{Reason: fmt.Sprintf("model calls reached %d", g.cfg.MaxModelCalls)}
+	}
+	if g.cfg.MaxTokens > 0 && s.tokens >= int64(g.cfg.MaxTokens) {
+		return nil, &ErrBudgetExhausted{Reason: fmt.Sprintf("tokens reached %d", g.cfg.MaxTokens)}
 	}
 	return s, nil
 }
 
 // nearLimit 报告是否已越过软阈值(任一维度 ≥80%)。
-func (b *budgetModel) nearLimit(s *spend) bool {
-	cfg := b.t.cfg
-	b.t.mu.Lock()
-	defer b.t.mu.Unlock()
-	if cfg.MaxModelCalls > 0 && s.calls*10 >= int64(cfg.MaxModelCalls)*8 {
+func (g *BudgetGate) nearLimit(s *spend) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.cfg.MaxModelCalls > 0 && s.calls*10 >= int64(g.cfg.MaxModelCalls)*8 {
 		return true
 	}
-	if cfg.MaxTokens > 0 && s.tokens*10 >= int64(cfg.MaxTokens)*8 {
+	if g.cfg.MaxTokens > 0 && s.tokens*10 >= int64(g.cfg.MaxTokens)*8 {
 		return true
 	}
 	return false
 }
 
-func (b *budgetModel) prepare(s *spend, msgs []*schema.Message) []*schema.Message {
-	if !b.nearLimit(s) {
-		return msgs
-	}
-	return append(msgs, schema.SystemMessage(
-		"[预算提醒] 本次会话预算即将耗尽。请基于已获得的信息立即给出最终回答,不要再调用工具。"))
-}
-
-func (b *budgetModel) add(s *spend, calls, tokens int64) {
-	b.t.mu.Lock()
-	defer b.t.mu.Unlock()
+func (g *BudgetGate) add(s *spend, calls, tokens int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	s.calls += calls
 	s.tokens += tokens
 }
 
+type keyBudget struct{}
+
+// WithBudget 把预算门闸装入 ctx,对下游所有 BudgetModel 包装的模型生效。
+func WithBudget(ctx context.Context, g *BudgetGate) context.Context {
+	if g == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, keyBudget{}, g)
+}
+
+func budgetFrom(ctx context.Context) *BudgetGate {
+	g, _ := ctx.Value(keyBudget{}).(*BudgetGate)
+	return g
+}
+
+// BudgetModel 给模型套上预算控制(Ring 0):
+//   - 硬上限:超出即返回 ErrBudgetExhausted,循环终止;
+//   - 软阈值(80%):向输入追加收尾指令,让大脑尽快给出回答而非被硬断。
+//
+// 门闸从 ctx 读取(由 agent 每次运行装入),未装入时透传不设限。
+// 预算按会话隔离,skill/component 内部调用同样计入。
+func BudgetModel(m model.ToolCallingChatModel) model.ToolCallingChatModel {
+	return &budgetModel{inner: m}
+}
+
+type budgetModel struct {
+	inner model.ToolCallingChatModel
+}
+
 func (b *budgetModel) Generate(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	s, err := b.state(ctx)
+	g := budgetFrom(ctx)
+	if g == nil {
+		return b.inner.Generate(ctx, msgs, opts...)
+	}
+	s, err := g.check(runctx.Session(ctx))
 	if err != nil {
 		return nil, err
 	}
-	b.add(s, 1, 0)
-	out, err := b.inner.Generate(ctx, b.prepare(s, msgs), opts...)
+	g.add(s, 1, 0)
+	if g.nearLimit(s) {
+		msgs = append(msgs, schema.SystemMessage(
+			"[预算提醒] 本次会话预算即将耗尽。请基于已获得的信息立即给出最终回答,不要再调用工具。"))
+	}
+	out, err := b.inner.Generate(ctx, msgs, opts...)
 	if err != nil {
 		return nil, err
 	}
-	b.add(s, 0, countTokens(msgs, out))
+	g.add(s, 0, countTokens(msgs, out))
 	return out, nil
 }
 
 func (b *budgetModel) Stream(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	s, err := b.state(ctx)
+	g := budgetFrom(ctx)
+	if g == nil {
+		return b.inner.Stream(ctx, msgs, opts...)
+	}
+	s, err := g.check(runctx.Session(ctx))
 	if err != nil {
 		return nil, err
 	}
-	b.add(s, 1, estimate(msgs)) // 流式:仅按输入估算,输出不阻塞统计
-	return b.inner.Stream(ctx, b.prepare(s, msgs), opts...)
+	g.add(s, 1, estimate(msgs)) // 流式:仅按输入估算,输出不阻塞统计
+	if g.nearLimit(s) {
+		msgs = append(msgs, schema.SystemMessage(
+			"[预算提醒] 本次会话预算即将耗尽。请基于已获得的信息立即给出最终回答,不要再调用工具。"))
+	}
+	return b.inner.Stream(ctx, msgs, opts...)
 }
 
 func (b *budgetModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
@@ -147,7 +167,7 @@ func (b *budgetModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChat
 	if err != nil {
 		return nil, err
 	}
-	return &budgetModel{inner: inner, t: b.t}, nil // 共享同一 tracker
+	return &budgetModel{inner: inner}, nil
 }
 
 // countTokens 优先用平台回报的用量,缺失时按字符估算(约 3 字符/token)。

@@ -34,18 +34,24 @@ type Agent struct {
 	model       model.ToolCallingChatModel
 	structured  *loop.StructuredEnforcer // nil = 不启用
 	interactor  runctx.Interactor        // 默认交互通道,可被 ctx 覆盖
+	approval    loop.ApprovalMode
+	budget      *loop.BudgetGate
 }
 
 // Options 是 New 的可选项。
 type Options struct {
-	Store      session.Store
-	Window     int
+	Store  session.Store
+	Window int
 	// Compaction 启用后做滚动摘要持久化:历史超阈值时把早期部分
 	// 摘要成一条带 covered 标记的记录追加进 store(不删原始消息,
 	// file 后端保留全量可审计);后续织入时视图 = 最新摘要 + 其后消息。
 	Compaction loop.CompactionConfig
 	Structured *loop.StructuredEnforcer
 	Interactor runctx.Interactor
+	// ApprovalMode 与 Budget 在每次运行时装入 ctx,对主循环与
+	// skill/component 内部的 Ring 0 闸门统一生效。
+	ApprovalMode loop.ApprovalMode
+	Budget       *loop.BudgetGate
 }
 
 // New 组装一个 Agent。model 用于结构化输出修复与滚动摘要等门面级调用。
@@ -54,6 +60,7 @@ func New(name, description string, runner engine.Runner, m model.ToolCallingChat
 		name: name, description: description, runner: runner, model: m,
 		store: opts.Store, window: opts.Window, compaction: opts.Compaction,
 		structured: opts.Structured, interactor: opts.Interactor,
+		approval: opts.ApprovalMode, budget: opts.Budget,
 	}
 }
 
@@ -134,6 +141,9 @@ func (a *Agent) prepare(ctx context.Context, sessionID string) context.Context {
 	if a.interactor != nil && runctx.GetInteractor(ctx) == nil {
 		ctx = runctx.WithInteractor(ctx, a.interactor)
 	}
+	// Ring 0 策略随 ctx 下发:主循环与 skill/component 内部统一生效。
+	ctx = loop.WithApprovalMode(ctx, a.approval)
+	ctx = loop.WithBudget(ctx, a.budget)
 	return ctx
 }
 

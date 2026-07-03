@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -60,6 +61,8 @@ type Declaration struct {
 	} `yaml:"capabilities"`
 	Model    *ModelDecl `yaml:"model"`
 	MaxSteps int        `yaml:"max_steps"`
+	// Compaction 启用内部循环的上下文压缩(长任务 skill 建议开启)。
+	Compaction loop.CompactionConfig `yaml:"compaction"`
 }
 
 // Deps 是装配 skill 所需的环境。
@@ -69,6 +72,13 @@ type Deps struct {
 	DefaultModel model.ToolCallingChatModel
 	// LoopPrompt 是 L1 框架规约,skill 内部小循环复用,保持运行纪律一致。
 	LoopPrompt string
+	// Capabilities 是预解析的工具面。非空时跳过 Catalog 选品,由调用方
+	// (命名空间装配层)负责引用解析与边界校验。
+	Capabilities []capability.Capability
+	// ToolTimeout 是内部工具面的单次调用超时(0 默认,<0 关闭)。
+	ToolTimeout time.Duration
+	// Retry 是 skill 专属模型的瞬时错误重试策略(DefaultModel 由上层包装)。
+	Retry loop.RetryConfig
 }
 
 // Build 把声明装配为能力:解析全部引用并锁版本 → 检查依赖 →
@@ -83,20 +93,23 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		engineName = "react"
 	}
 
-	// 模型:专属或跟随宿主
+	// 模型:专属或跟随宿主。专属模型在此套 Ring 0 中间件
+	// (重试 + 预算,预算门闸经 ctx 生效);DefaultModel 由上层包装。
 	m := deps.DefaultModel
 	if decl.Model != nil {
 		if m, err = registry.BuildModel(ctx, decl.Model.Provider, decl.Model.Config); err != nil {
 			return nil, fmt.Errorf("skill %s: build model: %w", decl.Name, err)
 		}
+		m = loop.BudgetModel(loop.RetryModel(m, deps.Retry))
 	}
 	if m == nil {
 		return nil, fmt.Errorf("skill %s: no model (declare model or provide default)", decl.Name)
 	}
 
-	// 工具子集:依赖解析失败即拒绝装配(fail fast,不等大脑调用时才炸)
-	var caps []capability.Capability
-	if len(decl.Capabilities.Include) > 0 {
+	// 工具子集:预解析优先(命名空间装配);否则按 CapRef 从目录选品,
+	// 依赖解析失败即拒绝装配(fail fast,不等大脑调用时才炸)。
+	caps := deps.Capabilities
+	if caps == nil && len(decl.Capabilities.Include) > 0 {
 		caps, err = deps.Catalog.Select(decl.Capabilities.Include, decl.Capabilities.Exclude)
 		if err != nil {
 			return nil, fmt.Errorf("skill %s: select capabilities: %w", decl.Name, err)
@@ -124,11 +137,20 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
 	}
 
+	// 内部工具面下沉全部 Ring 0 闸门(治理不再止步于 agent 主循环):
+	// 超时(最内,只计执行时间)→ 截断 → 审批(最外,批准等待不占超时)。
+	// 审批模式与预算门闸经调用方 ctx 生效,同一 skill 被不同策略的
+	// agent 复用时各自独立。
+	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
+	caps = loop.TruncateResults(caps, 0)
+	caps = loop.GateApprovalCtx(caps)
+
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
 		Model:        m,
-		Capabilities: loop.TruncateResults(caps, 0), // 内部工具面同样受结果截断保护
+		Capabilities: caps,
 		MaxSteps:     decl.MaxSteps,
 		Modifier:     loop.PromptLayers{Loop: deps.LoopPrompt}.Modifier(),
+		Rewriter:     loop.Compactor(m, decl.Compaction), // 内部长循环可压缩
 		Prompts:      prompts,
 		Config:       engineConf,
 	})
