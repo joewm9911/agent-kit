@@ -12,20 +12,9 @@ prompt_sources:
     config: {dir: ./prompts}
 prompt_default_label: production
 
-# ---- 能力供给源(多源聚合进目录,namespace = source 名)----
+# ---- 全局能力供给源(兼容路径:直挂 agent 的通用工具面)----
+# 新配置建议把工具声明进 namespaces 的 tools 层;这里保留 fs 演示兼容路径。
 sources:
-  # HTTP 接口 → 工具,纯配置
-  - name: weather
-    type: http
-    config:
-      tools:
-        - name: get_weather
-          description: 查询指定城市的当前天气,返回一行摘要
-          method: GET
-          url: "https://wttr.in/{city}?format=3"   # 格式钉死在 URL,不让模型选
-          params:
-            city: {type: string, desc: 城市名(拼音或英文), required: true, in: path}
-
   # MCP server → 工具,纯配置(可选源:连不上只告警,不阻塞启动)
   - name: fs
     type: mcp
@@ -55,13 +44,15 @@ reliability:
 # suspend:
 #   dir: ./data/pending
 
-# ---- 命名空间:三层结构的主路径 ----
-# tools(ns 内共享,对外不可见)→ components(执行单元声明,不进目录)
-# → skills(对外产品,唯一被 agent 发现的单元)。
+# ---- 命名空间:三层结构,声明与使用分离 ----
+# tools(有什么原子能力,ns 内共享、对外不可见)
+# → components(执行单元是什么:引擎+提示词+工具子集,ns 内复用、不进目录)
+# → skills(对外长什么样、怎么串:描述+参数+steps 纯引用,唯一被 agent 发现)。
 # 边界:工具与 component 不出命名空间,跨 ns 只能引用 cap://skill。
 namespaces:
+  # 例一:多步编排——工具节点 + 模型节点串成钉死的链
   - name: briefing
-    tools:                              # 工具定义:声明一次,ns 内共享
+    tools:
       - name: wx
         type: http
         config:
@@ -73,16 +64,16 @@ namespaces:
               params:
                 city: {type: string, desc: 城市名, required: true, in: path}
 
-    components:                         # 执行单元:引擎+提示词+工具子集
+    components:
       - name: writer                    # 无工具的 react 退化为单次模型调用
         prompt: "根据天气「{wx}」为用户写一句今日出行建议,不超过 30 字。"
 
-    skills:                             # 对外产品:接口 + 编排(DAG)
+    skills:
       - name: daily-brief
         description: 查天气并生成一句出行建议(固定流程,顺序钉死)
         params:
           city: {type: string, desc: 城市名, required: true}
-        steps:                          # 缺省依赖上一步 = 串行链;
+        steps:                          # 缺省依赖上一步 = 串行链
           - {name: wx,    use: "tools/wx/get_weather", args: '{"city":"{city}"}', timeout: 30s, retry: 1}
           - {name: brief, use: "components/writer",    args: '{"wx":"{wx}"}'}
         # 并行示例:显式 needs 表达分叉与汇合
@@ -92,6 +83,43 @@ namespaces:
         #   - {name: c, use: ..., needs: [a]}          # b、c 并行
         #   - {name: d, use: ..., needs: [b, c], args: '{"x":"{b}","y":"{c}"}'}
 
+  # 例二:重型执行单元(plan-execute)包装为单步 skill 导出
+  - name: research
+    tools:
+      - name: weather
+        type: http
+        config:
+          tools:
+            - name: get_weather
+              description: 查询指定城市的当前天气,返回一行摘要
+              method: GET
+              url: "https://wttr.in/{city}?format=3"
+              params:
+                city: {type: string, desc: 城市名(拼音或英文), required: true, in: path}
+
+    components:
+      - name: competitor_report         # 内部是 plan-execute 循环,对外不可见
+        prompt: {ref: "cap://prompt.file/pp/competitor-brief"}
+        engine: plan-execute
+        engine_config:
+          max_rounds: 3
+          step_max_steps: 10
+          on_exhausted: summarize
+        tools:
+          - "tools/weather/get_weather"
+
+    skills:
+      - name: competitor_report         # 对外接口:描述+参数;单步透传 component
+        version: "1"
+        description: >
+          对指定竞品生成结构化分析报告。任务耗时较长,仅在用户明确需要
+          完整竞品报告时调用;只是随口问竞品的某个点,不要调用。
+        params:
+          company: {type: string, desc: 竞品公司名, required: true}
+          focus:   {type: string, desc: 额外关注的方面,可选}
+        steps:
+          - {name: report, use: "components/competitor_report", args: '{"company":"{company}","focus":"{focus}"}'}
+
 # ---- 默认模型(skill/workflow 与未声明 model 的 agent 使用)----
 default_model:
   provider: minimax          # 或 openai(兼容所有 OpenAI 协议网关)
@@ -100,35 +128,9 @@ default_model:
   # provider: openai
   # config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}
 
-# ---- Skill:结构下沉的载体;engine 决定内部循环形态 ----
-skills:
-  - name: research/competitor_report
-    version: "1"
-    description: >
-      对指定竞品生成结构化分析报告。任务耗时较长,仅在用户明确需要
-      完整竞品报告时调用;只是随口问竞品的某个点,不要调用。
-    params:
-      company: {type: string, desc: 竞品公司名, required: true}
-      focus:   {type: string, desc: 额外关注的方面,可选}
-    prompt: {ref: "cap://prompt.file/pp/competitor-brief"}
-    engine: plan-execute            # 内部是 plan-execute 循环,对大脑不可见
-    engine_config:
-      max_rounds: 3
-      step_max_steps: 10
-      on_exhausted: summarize
-    capabilities:
-      include:
-        - "cap://tool.http/weather/get_weather"
-
-# ---- Workflow:强保证场景的逃生舱,orchestrator 就是这张图 ----
-workflows:
-  - name: daily-brief
-    description: 固定流程:查天气 → 生成早报(无大脑,节点钉死)
-    steps:
-      - {name: wx,    use: "cap://tool.http/weather/get_weather", args: '{"city":"{input}","format":"3"}'}
-      - {name: brief, use: model, args: "根据天气「{wx}」写一句今日出行建议。"}
-
 # ---- Agents:唯一的主循环是 ReAct,没有 pattern 字段 ----
+# 工具面以命名空间导出的 skill 为主;fs 直挂演示兼容路径
+# (平铺的 skills:/workflows: 段仍可用,新配置建议全部走 namespaces)。
 agents:
   - name: assistant
     description: 会查天气、能写竞品报告、可以记住用户偏好的助手
@@ -136,11 +138,9 @@ agents:
     max_steps: 30
     capabilities:
       include:
-        - "cap://tool.http/weather/*"
-        - "cap://tool.mcp/fs/*"
-        - "cap://skill.plan-execute/research/*"
-        - "cap://skill.graph/briefing/daily-brief"   # 命名空间导出的 skill
-        - "cap://flow.workflow/workflows/daily-brief"
+        - "cap://skill.graph/briefing/daily-brief"      # 命名空间导出的 skill
+        - "cap://skill.graph/research/competitor_report"
+        - "cap://tool.mcp/fs/*"                          # 兼容路径:通用工具直挂
       exclude:
         - "cap://tool.mcp/fs/write_file"
     memory:
