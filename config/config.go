@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
@@ -30,6 +32,7 @@ import (
 	"github.com/joewm9911/agent-kit/session"
 	"github.com/joewm9911/agent-kit/skill"
 	"github.com/joewm9911/agent-kit/source"
+	"github.com/joewm9911/agent-kit/store"
 	"github.com/joewm9911/agent-kit/suspend"
 	"github.com/joewm9911/agent-kit/workflow"
 )
@@ -56,6 +59,26 @@ type PromptSourceConfig struct {
 	Config map[string]any `yaml:"config"`
 }
 
+// StoreInstance 是一个具名存储实例声明(agent 层,私有作用域)。
+// 模块块的 store 槽用 cap://store/<kind>/<name> 引用它;换后端=改 type、
+// 或声明另一实例把 store 指过去;跨 agent 共享=各自声明指向同一后端。
+type StoreInstance struct {
+	Name   string         `yaml:"name"`
+	Kind   string         `yaml:"kind"` // session | memory | todo | result
+	Type   string         `yaml:"type"` // inmemory | file | redis | ...(各自后端注册表)
+	Config map[string]any `yaml:"config"`
+	TTL    loop.Duration  `yaml:"ttl"` // 保留时长(todo/result),0=不过期
+}
+
+// RetrieverInstance 是一个具名召回器实例声明;auto_recall 用
+// cap://retriever/<kind>/<name> 引用它。
+type RetrieverInstance struct {
+	Name   string         `yaml:"name"`
+	Kind   string         `yaml:"kind"` // session
+	Type   string         `yaml:"type"` // bigram | vector | ...
+	Config map[string]any `yaml:"config"`
+}
+
 // AgentConfig 声明一个 agent:唯一的主循环是 ReAct,没有 pattern 字段;
 // plan-execute 等结构以 skill 的形式出现在 capabilities 里。
 type AgentConfig struct {
@@ -71,9 +94,18 @@ type AgentConfig struct {
 		Exclude []string `yaml:"exclude"`
 	} `yaml:"capabilities"`
 
+	// Stores/Retrievers 是具名实例声明,模块块的 store/retriever 槽用
+	// cap://store/... · cap://retriever/... 引用(见 StoreInstance)。
+	Stores     []StoreInstance     `yaml:"stores"`
+	Retrievers []RetrieverInstance `yaml:"retrievers"`
+
 	// 内置能力开关(默认开启,显式 false 关闭)。
 	Todo    *bool `yaml:"todo"`
 	AskUser *bool `yaml:"ask_user"`
+	// TodoStore 是 todo 计划的存储后端引用(cap://store/todo/<name> 或裸
+	// type)。分布式多副本下须指向 redis 等外置后端,否则计划不跨副本。
+	// 进程级全局:同进程多 agent 应指向同一后端(键按 agent/会话隔离)。
+	TodoStore string `yaml:"todo_store"`
 
 	Memory struct {
 		Window      int            `yaml:"window"`       // 0 = 不启用会话记忆
@@ -128,6 +160,10 @@ type AgentConfig struct {
 	// 工具不再污染上下文。截断闸仍在其后兜底。
 	ContextHygiene struct {
 		DigestOver int `yaml:"digest_over"`
+		// Store 是大结果暂存的后端引用(cap://store/result/<name> 或裸
+		// type)。分布式下须指向 redis 等外置后端,否则被消化的原文不能
+		// 跨挂起/恢复、跨副本用 read_result 取回。进程级全局。
+		Store string `yaml:"store"`
 	} `yaml:"context_hygiene"`
 
 	Budget           loop.BudgetConfig     `yaml:"budget"`
@@ -484,6 +520,76 @@ func agentModel(ctx context.Context, own, def *ModelConfig,
 // buildAgent 用已选品的能力面与已解析的模型装配 agent。
 // 选品与模型解析由调用方完成(单文件路径按 include 选品;多文件路径
 // 自动挂载关联 namespace 的全部导出 skill)。
+// resolveStoreRef 解析 store 槽引用:cap://store/<kind>/<name> → 具名实例
+// 的 (type, config, ttl);裸字符串(inmemory/file/...)当作缺省简写直接
+// 作 type 返回,存量零迁移。ref 为空返回空 type(上游按默认处理)。
+func resolveStoreRef(ref string, stores []StoreInstance, wantKind string) (string, map[string]any, time.Duration, error) {
+	if ref == "" || !strings.HasPrefix(ref, "cap://") {
+		return ref, nil, 0, nil
+	}
+	r, err := capability.ParseRef(ref)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	if r.Kind != "store" {
+		return "", nil, 0, fmt.Errorf("%s: 不是 store 引用(kind=%s)", ref, r.Kind)
+	}
+	if r.Domain != wantKind {
+		return "", nil, 0, fmt.Errorf("%s: store kind 为 %q,该槽需要 %q", ref, r.Domain, wantKind)
+	}
+	for _, s := range stores {
+		if s.Name == r.Name {
+			if s.Kind != wantKind {
+				return "", nil, 0, fmt.Errorf("store 实例 %q 的 kind 为 %q,与槽 %q 不符", s.Name, s.Kind, wantKind)
+			}
+			return s.Type, s.Config, s.TTL.Std(), nil
+		}
+	}
+	return "", nil, 0, fmt.Errorf("%s: 未声明名为 %q 的 store 实例", ref, r.Name)
+}
+
+// resolveRetrieverRef 解析 retriever 槽引用:cap://retriever/<kind>/<name>
+// → 具名实例的 (type, config);裸字符串当作缺省简写。
+func resolveRetrieverRef(ref string, retrievers []RetrieverInstance, wantKind string) (string, map[string]any, error) {
+	if ref == "" || !strings.HasPrefix(ref, "cap://") {
+		return ref, nil, nil
+	}
+	r, err := capability.ParseRef(ref)
+	if err != nil {
+		return "", nil, err
+	}
+	if r.Kind != "retriever" {
+		return "", nil, fmt.Errorf("%s: 不是 retriever 引用(kind=%s)", ref, r.Kind)
+	}
+	if r.Domain != wantKind {
+		return "", nil, fmt.Errorf("%s: retriever kind 为 %q,该槽需要 %q", ref, r.Domain, wantKind)
+	}
+	for _, rv := range retrievers {
+		if rv.Name == r.Name {
+			return rv.Type, rv.Config, nil
+		}
+	}
+	return "", nil, fmt.Errorf("%s: 未声明名为 %q 的 retriever 实例", ref, r.Name)
+}
+
+// wireGlobalStore 解析并构建一个 KV 后端,注入进程级全局槽(todo/result)。
+// ref 为空则不动(保持默认 inmemory)。
+func wireGlobalStore(ref string, stores []StoreInstance, wantKind string, set func(store.KV, time.Duration)) error {
+	if ref == "" {
+		return nil
+	}
+	typ, conf, ttl, err := resolveStoreRef(ref, stores, wantKind)
+	if err != nil {
+		return err
+	}
+	kv, err := store.NewBackend(typ, conf)
+	if err != nil {
+		return fmt.Errorf("%s store backend: %w", wantKind, err)
+	}
+	set(kv, ttl)
+	return nil
+}
+
 func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capability,
 	prompts *prompt.Resolver, m model.ToolCallingChatModel,
 	rel ReliabilityConfig, interactor runctx.Interactor, logger *slog.Logger) (*agent.Agent, error) {
@@ -494,6 +600,16 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 
 	if m == nil {
 		return nil, fmt.Errorf("no model (declare model or default_model)")
+	}
+
+	// 进程级存储后端注入(todo 计划、result 大结果暂存):分布式多副本
+	// 下须指向外置后端。键按 agent/会话隔离,同进程多 agent 共享同一后端
+	// 无碰撞;未配置则保持默认 inmemory。
+	if err := wireGlobalStore(ac.TodoStore, ac.Stores, "todo", builtin.SetStore); err != nil {
+		return nil, err
+	}
+	if err := wireGlobalStore(ac.ContextHygiene.Store, ac.Stores, "result", loop.SetResultBackend); err != nil {
+		return nil, err
 	}
 
 	// 内置能力 + 审批闸门
@@ -526,8 +642,14 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	scope := memory.ScopeConfig{Write: ac.Memory.LongTerm.WriteScope, Read: ac.Memory.LongTerm.ReadScopes}
 	var kv memory.KV
 	if ac.Memory.LongTermTools || kvK > 0 {
-		var err error
-		if kv, err = memory.New(ac.Memory.LongTermStore, ac.Memory.LongTermConfig); err != nil {
+		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.LongTermStore, ac.Stores, "memory")
+		if err != nil {
+			return nil, err
+		}
+		if ltConf == nil {
+			ltConf = ac.Memory.LongTermConfig // 裸 type 时沿用就地 config
+		}
+		if kv, err = memory.New(ltType, ltConf); err != nil {
 			return nil, err
 		}
 		// 共享池 seed:域共享知识的运维写入口,装配期灌入(非对话路径)。
@@ -566,15 +688,21 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	caps = loop.RecordTools(caps) // 轨迹记录(最外层:记模型实际看到的)
 
 	// 会话记忆
-	var store session.Store
+	var sessStore session.Store
 	if ac.Memory.Window > 0 {
-		var err error
-		if store, err = session.New(ac.Memory.Store, ac.Memory.StoreConfig, ac.Memory.Window); err != nil {
+		sType, sConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "session")
+		if err != nil {
+			return nil, err
+		}
+		if sConf == nil {
+			sConf = ac.Memory.StoreConfig // 裸 type 时沿用就地 config
+		}
+		if sessStore, err = session.New(sType, sConf, ac.Memory.Window); err != nil {
 			return nil, err
 		}
 		// FullLoader 是滚动摘要与窗外召回的前提:自定义后端没实现时
 		// 这两项能力静默消失——装配期把降级喊出来,不让它悄悄发生。
-		if _, ok := store.(session.FullLoader); !ok {
+		if _, ok := sessStore.(session.FullLoader); !ok {
 			if ac.Compaction.Enabled() || ac.Memory.AutoRecall.TopK > 0 {
 				logger.Warn("session store lacks FullLoader: rolling summary and beyond-window recall are DISABLED",
 					slog.String("agent", ac.Name), slog.String("store", ac.Memory.Store))
@@ -612,7 +740,14 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		var retr session.Retriever
 		if sessK > 0 {
 			var err error // 装配期解析检索器名,未注册即拒绝(fail fast)
-			if retr, err = session.NewRetriever(ar.Session.Retriever, ar.Session.RetrieverConfig); err != nil {
+			rType, rConf, rerr := resolveRetrieverRef(ar.Session.Retriever, ac.Retrievers, "session")
+			if rerr != nil {
+				return nil, rerr
+			}
+			if rConf == nil {
+				rConf = ar.Session.RetrieverConfig
+			}
+			if retr, err = session.NewRetriever(rType, rConf); err != nil {
 				return nil, err
 			}
 		}
@@ -640,7 +775,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		record = loop.RecordSummary
 	}
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
-		Store: store, Window: ac.Memory.Window, Compaction: ac.Compaction,
+		Store: sessStore, Window: ac.Memory.Window, Compaction: ac.Compaction,
 		Structured: enforcer, Interactor: interactor,
 		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget),
 		RecordTools: record,

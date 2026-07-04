@@ -1,5 +1,5 @@
 // Package mcptool 把 MCP server 接入为 Source:server 的每个工具
-// 成为一个 cap://tool.mcp/<source名>/<工具名> 能力。
+// 成为一个 cap://tool/<source名>/<工具名> 能力。
 package mcptool
 
 import (
@@ -87,7 +87,7 @@ func (s *mcpSource) Sync(ctx context.Context) ([]capability.Capability, error) {
 			}
 		}
 		ref := capability.Ref{
-			Kind: "tool", Provider: "mcp", Namespace: s.name,
+			Kind: "tool", Domain: s.name,
 			Name: info.Name, Version: s.cfg.Version,
 		}
 		c, err := capability.FromTool(ctx, t, ref, risk)

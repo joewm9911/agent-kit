@@ -131,6 +131,25 @@ func (c *Catalog) Select(include, exclude []string) ([]capability.Capability, er
 	return assignToolNames(picked), nil
 }
 
+// SelectAll 选中目录里全部能力(exclude 可屏蔽)。「挂载全部」是显式
+// 操作,不走 kind 通配匹配——通配不变式要求 kind 段精确。
+func (c *Catalog) SelectAll(exclude []string) ([]capability.Capability, error) {
+	excPats, err := parsePatterns(exclude)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.RLock()
+	var picked []capability.Capability
+	for _, e := range c.entries {
+		if matchAny(e.cap.Meta().Ref, excPats) {
+			continue
+		}
+		picked = append(picked, e.cap)
+	}
+	c.mu.RUnlock()
+	return assignToolNames(picked), nil
+}
+
 // List 返回目录全量清单(排序稳定),供巡检与调试。
 func (c *Catalog) List() []capability.Meta {
 	c.mu.RLock()
@@ -182,9 +201,9 @@ func assignToolNames(caps []capability.Capability) []capability.Capability {
 		seen := map[string]bool{}
 		for _, cp := range group {
 			ref := cp.Meta().Ref
-			alias := sanitize(ref.Namespace + "_" + name)
+			alias := sanitize(ref.Domain + "_" + name)
 			if seen[alias] {
-				alias = sanitize(ref.Provider + "_" + ref.Namespace + "_" + name)
+				alias = sanitize(ref.Kind + "_" + ref.Domain + "_" + name)
 			}
 			seen[alias] = true
 			out = append(out, capability.Rename(cp, alias))

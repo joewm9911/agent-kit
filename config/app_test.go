@@ -59,7 +59,7 @@ func (s countingSource) Name() string { return s.name }
 func (s countingSource) Sync(context.Context) ([]capability.Capability, error) {
 	syncCount.Add(1)
 	return []capability.Capability{capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "countsrc", Namespace: s.name, Name: "ping"},
+		Ref: capability.Ref{Kind: "tool", Domain: s.name, Name: "ping"},
 	}, func(_ context.Context, in string) (string, error) { return "pong", nil })}, nil
 }
 
@@ -119,7 +119,7 @@ skills:
 		t.Fatal("agent helper not built")
 	}
 	// 自动挂载:关联 namespace 的导出 skill 进了 agent 挂载目录
-	if _, err := app.AgentMounts["helper"].Get("cap://skill.graph/ops/lookup"); err != nil {
+	if _, err := app.AgentMounts["helper"].Get("cap://skill/ops/lookup"); err != nil {
 		t.Fatalf("auto-mounted skill missing: %v", err)
 	}
 }
@@ -188,9 +188,9 @@ skills:
 
 	mounted := app.AgentMounts["a"]
 	for skillRef, want := range map[string]string{
-		"cap://skill.graph/mixed/via-own":     "comp-model",  // component 显式声明最优先
-		"cap://skill.graph/mixed/via-inherit": "ns-model",    // ns defaults 覆盖 agent defaults
-		"cap://skill.graph/plain/via-agent":   "agent-model", // 回落 agent defaults
+		"cap://skill/mixed/via-own":     "comp-model",  // component 显式声明最优先
+		"cap://skill/mixed/via-inherit": "ns-model",    // ns defaults 覆盖 agent defaults
+		"cap://skill/plain/via-agent":   "agent-model", // 回落 agent defaults
 	} {
 		sk, err := mounted.Get(skillRef)
 		if err != nil {
@@ -266,7 +266,7 @@ skills:
 	if err != nil {
 		t.Fatal(err)
 	}
-	sk, err := app.AgentMounts["a"].Get("cap://skill.graph/flaky/robust")
+	sk, err := app.AgentMounts["a"].Get("cap://skill/flaky/robust")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func registerFlakySource() {
 	registerFlaky.Do(func() {
 		source.Register("flakysrc", func(_ context.Context, name string, _ map[string]any) (source.Source, error) {
 			c := capability.New(capability.Meta{
-				Ref: capability.Ref{Kind: "tool", Provider: "flakysrc", Namespace: name, Name: "wobble"},
+				Ref: capability.Ref{Kind: "tool", Domain: name, Name: "wobble"},
 			}, func(_ context.Context, in string) (string, error) {
 				if flakyCalls.Add(1) < 3 {
 					return "", errTransientTest

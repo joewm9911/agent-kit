@@ -26,6 +26,6 @@ func FuncWithRisk[T, D any](name, description string, risk capability.Risk, fn f
 	if err != nil {
 		return nil, err
 	}
-	ref := capability.Ref{Kind: "tool", Provider: "local", Namespace: "local", Name: name}
+	ref := capability.Ref{Kind: "tool", Domain: "local", Name: name}
 	return capability.FromTool(context.Background(), t, ref, risk)
 }

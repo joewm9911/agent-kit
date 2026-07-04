@@ -2,7 +2,7 @@
 // 不指望大脑自觉——步骤用 AsLambda 编进 compose.Graph 钉死,没有大脑
 // 做选择,orchestrator 就是这张图,模型只在图里的固定节点上出现。
 //
-// 产物同样是 capability.Capability(cap://flow.workflow/...):既可以
+// 产物同样是 capability.Capability(cap://skill/...):既可以
 // 独立服务,也可以作为一个工具挂回某个大脑的工具面——静态编排与
 // 动态编排通过双形态抽象互相嵌套。
 package workflow
@@ -105,7 +105,7 @@ func Build(ctx context.Context, cfg Config, catalog *source.Catalog, m model.Too
 	}
 
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "flow", Provider: "workflow", Namespace: "workflows", Name: cfg.Name},
+		Ref:         capability.Ref{Kind: "skill", Domain: "workflows", Name: cfg.Name},
 		Description: cfg.Description,
 		Params:      capability.SingleParam("input", "工作流输入"),
 	}

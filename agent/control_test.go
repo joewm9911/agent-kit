@@ -23,13 +23,13 @@ func TestAgentInterruptMidRun(t *testing.T) {
 	var secondRan bool
 
 	first := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "slow_step"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "slow_step"},
 	}, func(ctx context.Context, in string) (string, error) {
 		ag.Interrupt("s1") // 执行期间用户叫停
 		return "step1-done", nil
 	})
 	second := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "next_step"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "next_step"},
 	}, func(ctx context.Context, in string) (string, error) {
 		secondRan = true
 		return "step2-done", nil
@@ -74,7 +74,7 @@ func TestAgentSteerMidRun(t *testing.T) {
 	var secondInput string
 
 	first := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "step_one"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "step_one"},
 	}, func(ctx context.Context, in string) (string, error) {
 		ag.Steer("s1", "顺便只看今天的数据") // 执行期间用户插话
 		return "one-done", nil
@@ -82,7 +82,7 @@ func TestAgentSteerMidRun(t *testing.T) {
 	// 模型第二次调用的输入里应包含插话(经工具结果)——用假模型看不到
 	// 输入,改为在第二个工具处断言:执行到它说明循环仍在推进。
 	second := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "step_two"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "step_two"},
 	}, func(ctx context.Context, in string) (string, error) {
 		secondInput = in
 		return "two-done", nil

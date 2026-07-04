@@ -26,7 +26,7 @@ func setupTestSource() {
 		source.Register("nstest", func(_ context.Context, name string, _ map[string]any) (source.Source, error) {
 			mk := func(toolName string, risk capability.Risk, out string) capability.Capability {
 				return capability.New(capability.Meta{
-					Ref:         capability.Ref{Kind: "tool", Provider: "nstest", Namespace: name, Name: toolName},
+					Ref:         capability.Ref{Kind: "tool", Domain: name, Name: toolName},
 					Description: toolName,
 					Risk:        risk,
 				}, func(_ context.Context, args string) (string, error) {
@@ -82,7 +82,7 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 	if len(metas) != 1 {
 		t.Fatalf("global catalog should contain exactly the skill, got %d entries", len(metas))
 	}
-	if ref := metas[0].Ref.String(); ref != "cap://skill.graph/pipeline/deploy" {
+	if ref := metas[0].Ref.String(); ref != "cap://skill/pipeline/deploy" {
 		t.Fatalf("ref = %s", ref)
 	}
 	// 风险传播:submit 是 mutating → skill 也是
@@ -91,7 +91,7 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 	}
 
 	// 端到端执行:auth → planner(react,无工具调用退化单次)→ submit
-	sk, err := global.Get("cap://skill.graph/pipeline/deploy")
+	sk, err := global.Get("cap://skill/pipeline/deploy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 	if metas := global.List(); len(metas) != 1 {
 		t.Fatalf("catalog entries = %d, want 1", len(metas))
 	}
-	sk, err := global.Get("cap://skill.graph/flows/wide-search")
+	sk, err := global.Get("cap://skill/flows/wide-search")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 		Name: "ns2",
 		Skills: []NamespaceSkill{{
 			Name:  "wrap",
-			Steps: []skill.Step{{Name: "s", Use: "cap://skill.graph/ns1/lookup"}},
+			Steps: []skill.Step{{Name: "s", Use: "cap://skill/ns1/lookup"}},
 		}},
 	}
 	if err := buildNamespace(context.Background(), ns2, nsDeps{
@@ -275,7 +275,7 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 		Name: "ns3",
 		Skills: []NamespaceSkill{{
 			Name:  "steal",
-			Steps: []skill.Step{{Name: "s", Use: "cap://tool.nstest/svc/search"}},
+			Steps: []skill.Step{{Name: "s", Use: "cap://tool/svc/search"}},
 		}},
 	}
 	err := buildNamespace(context.Background(), ns3, nsDeps{

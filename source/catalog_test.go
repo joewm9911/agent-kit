@@ -10,7 +10,7 @@ import (
 
 func mkCap(ns, name string, risk capability.Risk) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: ns, Name: name},
+		Ref:  capability.Ref{Kind: "tool", Domain: ns, Name: name},
 		Risk: risk,
 	}, func(ctx context.Context, _ string) (string, error) { return ns + "/" + name, nil })
 }
@@ -29,7 +29,7 @@ func TestCatalogAdmissionAndSelect(t *testing.T) {
 		t.Fatalf("dangerous capability should be rejected, got %d entries", got)
 	}
 
-	caps, err := c.Select([]string{"cap://tool.test/fs/*"}, []string{"cap://tool.test/fs/write"})
+	caps, err := c.Select([]string{"cap://tool/fs/*"}, []string{"cap://tool/fs/write"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestCatalogAliasUpgrade(t *testing.T) {
 	_ = c.AddSource(ctx, Static("fs", mkCap("fs", "search", 0)), true, 0)
 	_ = c.AddSource(ctx, Static("jira", mkCap("jira", "search", 0)), true, 0)
 
-	caps, err := c.Select([]string{"cap://tool.test/*/*"}, nil)
+	caps, err := c.Select([]string{"cap://tool/*/*"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

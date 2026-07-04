@@ -19,7 +19,7 @@ import (
 func TestToolTrajectoryPersisted(t *testing.T) {
 	ctx := context.Background()
 	weather := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "get_weather"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "get_weather"},
 	}, func(ctx context.Context, args string) (string, error) {
 		return "北京 晴 25°C", nil
 	})
@@ -75,7 +75,7 @@ func TestToolTrajectoryPersisted(t *testing.T) {
 func TestRecordOffKeepsOldBehavior(t *testing.T) {
 	ctx := context.Background()
 	echo := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 	}, func(ctx context.Context, args string) (string, error) { return "ok", nil })
 
 	m := testmodel.New(

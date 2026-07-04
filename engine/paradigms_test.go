@@ -14,7 +14,7 @@ import (
 
 func plainCap(name, desc string, fn func(ctx context.Context, args string) (string, error)) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: name},
+		Ref:         capability.Ref{Kind: "tool", Domain: "t", Name: name},
 		Description: desc,
 	}, fn)
 }

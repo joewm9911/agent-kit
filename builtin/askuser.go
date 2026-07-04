@@ -14,7 +14,7 @@ import (
 // 无通道时以工具结果告知模型,让它自行决定如何继续。
 func AskUser() capability.Capability {
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "builtin", Namespace: "builtin", Name: "ask_user"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "ask_user"},
 		Description: "向用户提一个问题并等待回答。仅在缺少必要信息、且无法通过其他工具获取时使用;一次只问一个问题。",
 		Params:      capability.SingleParam("question", "要问用户的问题,简洁明确"),
 		Tags:        []string{capability.TagInteractive}, // 等人回复不占工具超时

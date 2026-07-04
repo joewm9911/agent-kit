@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -13,56 +15,93 @@ import (
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 )
 
 // TagRawResult 标记一个能力的结果不参与消化(结果本身就是给模型的
 // 受控输出,如 read_result 的分页;供给方也可用它显式豁免)。
 const TagRawResult = "result:raw"
 
-// ResultStore 是一轮运行内的工具结果暂存:被消化的原始全文存在这里,
-// 模型觉得摘要不够时用 read_result 分页取回。由 agent 每次运行装入
-// ctx,随轮次结束丢弃——消化默认省上下文,需要时可追溯。
+const rsep = "\x1f"
+
+// resultKV 是结果暂存的后端,默认进程内;装配期可由 cap://store/result/...
+// 注入替换(见 SetResultBackend)。外置到 redis 后,被消化的原文可跨
+// 挂起/恢复、跨副本取回。resultTTL 是暂存保留时长,0=不过期。
+var (
+	resultKV  store.KV = store.NewInMemory()
+	resultTTL time.Duration
+)
+
+// SetResultBackend 由配置装配注入结果暂存的后端与保留时长。
+func SetResultBackend(kv store.KV, ttl time.Duration) {
+	resultKV = kv
+	resultTTL = ttl
+}
+
+// ResultStore 是一轮运行的工具结果暂存句柄:被消化的原始全文存进后端 KV,
+// 模型觉得摘要不够时用 read_result 分页取回。键按 (agent, session) 作用域,
+// 共享后端下不跨会话碰撞;序号经后端原子自增,跨副本/恢复不撞 id。bytes
+// 是本句柄的软性准入计数(跨副本近似即可,只是防单轮暂存爆量的安全阀)。
 type ResultStore struct {
-	mu      sync.Mutex
-	seq     int
-	entries map[string]storedResult
-	bytes   int
+	mu    sync.Mutex
+	kv    store.KV
+	ttl   time.Duration
+	bytes int
 }
 
-type storedResult struct {
-	tool string
-	text string
-}
-
-// storeMaxBytes 是单轮暂存的总量上限,超出后最早的条目被丢弃语义
-// 简化为:不再接收新条目(返回空 id,消化附言退化为纯截断提示)。
+// storeMaxBytes 是单轮暂存的总量软上限,超出后不再接收新条目(返回空
+// id,消化附言退化为纯截断提示)。
 const storeMaxBytes = 4 << 20 // 4MB
 
-// NewResultStore 创建一轮运行的结果暂存。
+// NewResultStore 创建一轮运行的结果暂存句柄(绑定当前注入的后端)。
 func NewResultStore() *ResultStore {
-	return &ResultStore{entries: map[string]storedResult{}}
+	return &ResultStore{kv: resultKV, ttl: resultTTL}
 }
 
-// Put 存入一条原始结果,返回取回 id;超过总量上限时返回空串。
-func (s *ResultStore) Put(toolName, text string) string {
+// rscope 取 (agent, session) 作为键命名空间,隔离并发会话与多副本。
+func rscope(ctx context.Context) string {
+	return runctx.Agent(ctx) + rsep + runctx.Session(ctx)
+}
+
+// Put 存入一条原始结果,返回取回 id;超过总量软上限时返回空串。
+func (s *ResultStore) Put(ctx context.Context, toolName, text string) string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.bytes+len(text) > storeMaxBytes {
+		s.mu.Unlock()
 		return ""
 	}
-	s.seq++
-	id := fmt.Sprintf("r%d", s.seq)
-	s.entries[id] = storedResult{tool: toolName, text: text}
 	s.bytes += len(text)
+	s.mu.Unlock()
+
+	scope := rscope(ctx)
+	n := s.nextSeq(ctx, scope)
+	id := fmt.Sprintf("r%d", n)
+	_ = s.kv.Update(ctx, scope+rsep+id, func(_ []byte, _ bool) ([]byte, error) {
+		return []byte(text), nil
+	}, s.ttl)
 	return id
 }
 
+// nextSeq 经后端原子自增取下一个序号,保证跨副本/恢复不撞 id。
+func (s *ResultStore) nextSeq(ctx context.Context, scope string) int {
+	var n int
+	_ = s.kv.Update(ctx, scope+rsep+"#seq", func(old []byte, ok bool) ([]byte, error) {
+		if ok {
+			n, _ = strconv.Atoi(string(old))
+		}
+		n++
+		return []byte(strconv.Itoa(n)), nil
+	}, s.ttl)
+	return n
+}
+
 // Get 取回一条原始结果。
-func (s *ResultStore) Get(id string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.entries[id]
-	return e.text, ok
+func (s *ResultStore) Get(ctx context.Context, id string) (string, bool) {
+	b, ok, err := s.kv.Get(ctx, rscope(ctx)+rsep+id)
+	if err != nil || !ok {
+		return "", false
+	}
+	return string(b), true
 }
 
 type keyResultStore struct{}
@@ -166,12 +205,12 @@ func (d *digested) digest(ctx context.Context, out string) string {
 	if len(runes) <= d.over {
 		return out
 	}
-	store := resultStoreFrom(ctx)
-	if store == nil {
+	rs := resultStoreFrom(ctx)
+	if rs == nil {
 		return out
 	}
 	name := d.inner.Meta().Ref.Name
-	id := store.Put(name, out)
+	id := rs.Put(ctx, name, out)
 
 	clipped := out
 	if len(runes) > digestMaxInput {
@@ -206,14 +245,14 @@ func ReadResult() capability.Capability {
 		"offset": {Type: schema.Integer, Desc: "起始字符位置,默认 0"},
 	})
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "builtin", Namespace: "context", Name: "read_result"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "read_result"},
 		Description: "分页读取被消化工具结果的原文。仅当摘要信息不足时使用,按 offset 逐页推进。",
 		Params:      params,
 		Tags:        []string{TagRawResult}, // 自身分页输出不再消化
 	}
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
-		store := resultStoreFrom(ctx)
-		if store == nil {
+		rs := resultStoreFrom(ctx)
+		if rs == nil {
 			return "本轮没有可取回的结果暂存。", nil
 		}
 		var args struct {
@@ -221,7 +260,7 @@ func ReadResult() capability.Capability {
 			Offset int    `json:"offset"`
 		}
 		_ = json.Unmarshal([]byte(argsJSON), &args)
-		text, ok := store.Get(args.ID)
+		text, ok := rs.Get(ctx, args.ID)
 		if !ok {
 			return fmt.Sprintf("结果 %q 不存在或已随轮次结束丢弃。", args.ID), nil
 		}

@@ -187,7 +187,7 @@ func (c ScopeConfig) ReadScopes(ctx context.Context) []string {
 // 接入敏感存储时可自行用 loop.GateApproval 收紧。
 func AsCapabilities(kv KV, scope ScopeConfig) []capability.Capability {
 	save := capability.New(capability.Meta{
-		Ref:         capability.Ref{Kind: "memory", Provider: "builtin", Namespace: "builtin", Name: "memory_save"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_save"},
 		Description: "保存一条长期记忆。当用户告知偏好、事实或值得跨会话记住的信息时调用。",
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"key":   {Type: schema.String, Desc: "记忆的简短标题(名词短语,便于日后检索)", Required: true},
@@ -210,7 +210,7 @@ func AsCapabilities(kv KV, scope ScopeConfig) []capability.Capability {
 	})
 
 	search := capability.New(capability.Meta{
-		Ref:         capability.Ref{Kind: "memory", Provider: "builtin", Namespace: "builtin", Name: "memory_search"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_search"},
 		Description: "按关键词检索长期记忆。回答依赖用户历史偏好或既往事实时先调用。",
 		Params:      capability.SingleParam("query", "检索关键词"),
 	}, func(ctx context.Context, argsJSON string) (string, error) {

@@ -20,7 +20,7 @@ import (
 func TestSkillInternalApprovalGate(t *testing.T) {
 	var executed int32
 	write := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "fs", Name: "write_file"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "fs", Name: "write_file"},
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) {
 		atomic.AddInt32(&executed, 1)
@@ -70,7 +70,7 @@ func TestSkillInternalApprovalGate(t *testing.T) {
 // TestSkillInternalBudget 验证 skill 内部的模型调用计入调用方会话预算。
 func TestSkillInternalBudget(t *testing.T) {
 	read := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "read"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "read"},
 	}, func(ctx context.Context, in string) (string, error) { return "data", nil })
 
 	// 模型脚本:调工具 → 再调工具 → 收尾;预算只够 2 次模型调用

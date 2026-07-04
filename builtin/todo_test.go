@@ -159,7 +159,7 @@ func TestTodoPlanSection(t *testing.T) {
 func TestTodoNudge(t *testing.T) {
 	ctx := testCtx("a", "nudge")
 	work := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "work"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "work"},
 	}, func(_ context.Context, _ string) (string, error) { return "done", nil })
 	wrapped := NudgeTools([]capability.Capability{work})[0]
 

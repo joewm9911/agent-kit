@@ -47,14 +47,14 @@ func TestSuspendResumeAcrossRestart(t *testing.T) {
 	var writeCount, asked int32
 
 	write := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "write"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: "write"},
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) {
 		atomic.AddInt32(&writeCount, 1)
 		return "written", nil
 	})
 	askUser := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "builtin", Namespace: "b", Name: "ask_user"},
+		Ref: capability.Ref{Kind: "tool", Domain: "b", Name: "ask_user"},
 	}, func(ctx context.Context, in string) (string, error) {
 		return runctx.GetInteractor(ctx).Ask(ctx, "确认发布到生产环境吗?")
 	})
@@ -145,7 +145,7 @@ func TestApproveSuspendAndReplay(t *testing.T) {
 	j := NewJournal(store, "t1")
 	it := Interactor(j, func(context.Context, string) error { return nil })
 
-	req := runctx.ApprovalRequest{CapRef: "cap://tool.t/x/y", Description: "写文件", Arguments: `{"f":"a"}`}
+	req := runctx.ApprovalRequest{CapRef: "cap://tool/x/y", Description: "写文件", Arguments: `{"f":"a"}`}
 	_, err := it.Approve(context.Background(), req)
 	var suspended *ErrSuspended
 	if !errors.As(err, &suspended) {

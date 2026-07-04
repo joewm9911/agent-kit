@@ -460,7 +460,7 @@ func RawHistory(all []*schema.Message) (raw []*schema.Message, beyondView int) {
 // Meta 实现 capability.Capability。
 func (a *Agent) Meta() capability.Meta {
 	return capability.Meta{
-		Ref:         capability.Ref{Kind: "agent", Provider: "local", Namespace: "agents", Name: a.name},
+		Ref:         capability.Ref{Kind: "agent", Domain: "agents", Name: a.name},
 		Description: a.description,
 		Params:      capability.SingleParam("task", "交给该 agent 的完整任务描述"),
 	}

@@ -225,6 +225,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
 		}
 		decl := &skill.Declaration{
+			Kind:         "component",
 			Name:         ns.Name + "/" + cc.Name,
 			Prompt:       cc.Prompt,
 			Engine:       cc.Engine,
@@ -342,107 +343,103 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 	}
 	resolver := stepResolver(nsName, local, comps, deps.global, deps.defaultModel)
 	return skill.BuildGraph(ctx, &skill.GraphDeclaration{
+		Kind: "component",
 		Name: cc.Name, Params: cc.Params,
 		Steps:  applyStepDefaults(cc.Steps, 0, 0, eff),
 		Output: cc.Output,
 	}, nsName, resolver)
 }
 
-// resolveToolFace 解析 component 的工具面引用并落实边界规则。
+// resolveRef 是工具面与编排步共用的单引用解析内核(#6 合流)。同一套
+// 引用词汇(tools/ · components/ · model · cap://)在一处解析;两个调用
+// 点的差异降为参数:wildcardOK 控制 tools/ 是否允许通配(工具面允许、
+// 编排步要求精确),m 提供 use: model 的模型(工具面传 nil)。
+//
+// tools/ 通配可返回多个能力,其余恰返回一个;命中 0 个报错。
+func resolveRef(nsName, ref string, local, global *source.Catalog,
+	comps map[string]capability.Capability, m model.ToolCallingChatModel, wildcardOK bool) ([]capability.Capability, error) {
+
+	switch {
+	case ref == "model":
+		if m == nil {
+			return nil, fmt.Errorf("step uses model but no default_model configured")
+		}
+		return []capability.Capability{modelStepCap(m)}, nil
+	case strings.HasPrefix(ref, "tools/"):
+		if !wildcardOK && strings.Contains(ref, "*") {
+			return nil, fmt.Errorf("step reference %q must be exact (no wildcard)", ref)
+		}
+		pattern, err := toolPattern(ref)
+		if err != nil {
+			return nil, err
+		}
+		caps, err := local.Select([]string{pattern}, nil)
+		if err != nil {
+			return nil, err
+		}
+		if len(caps) == 0 {
+			return nil, fmt.Errorf("%s matches no tool in this namespace (工具不跨命名空间)", ref)
+		}
+		return caps, nil
+	case strings.HasPrefix(ref, "components/"):
+		name := strings.TrimPrefix(ref, "components/")
+		c, ok := comps[name]
+		if !ok {
+			return nil, fmt.Errorf("component %q not declared (yet) in namespace %s", name, nsName)
+		}
+		return []capability.Capability{c}, nil
+	case strings.HasPrefix(ref, "cap://"):
+		c, err := crossNamespaceSkill(ref, global)
+		if err != nil {
+			return nil, err
+		}
+		return []capability.Capability{c}, nil
+	default:
+		return nil, fmt.Errorf("bad reference %q: want tools/<source>/<name>, components/<name>, model or cap://skill...", ref)
+	}
+}
+
+// resolveToolFace 解析 component 的工具面引用(允许 tools/ 通配,批量展开)。
 func resolveToolFace(nsName string, refs []string, local *source.Catalog,
 	comps map[string]capability.Capability, global *source.Catalog) ([]capability.Capability, error) {
 
 	var out []capability.Capability
 	for _, ref := range refs {
-		switch {
-		case strings.HasPrefix(ref, "tools/"):
-			pattern, err := toolPattern(ref)
-			if err != nil {
-				return nil, err
-			}
-			caps, err := local.Select([]string{pattern}, nil)
-			if err != nil {
-				return nil, err
-			}
-			if len(caps) == 0 {
-				return nil, fmt.Errorf("%s matches no tool in this namespace (工具不跨命名空间)", ref)
-			}
-			out = append(out, caps...)
-		case strings.HasPrefix(ref, "components/"):
-			name := strings.TrimPrefix(ref, "components/")
-			c, ok := comps[name]
-			if !ok {
-				return nil, fmt.Errorf("component %q not declared (yet) in namespace %s", name, nsName)
-			}
-			out = append(out, c)
-		case strings.HasPrefix(ref, "cap://"):
-			c, err := crossNamespaceSkill(ref, global)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, c)
-		default:
-			return nil, fmt.Errorf("bad reference %q: want tools/<source>/<name>, components/<name> or cap://skill...", ref)
+		caps, err := resolveRef(nsName, ref, local, global, comps, nil, true)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, caps...)
 	}
 	return out, nil
 }
 
-// stepResolver 返回编排步骤的引用解析器(装配期调用)。
+// stepResolver 返回编排步骤的引用解析器(装配期调用):要求精确单一命中。
 func stepResolver(nsName string, local *source.Catalog, comps map[string]capability.Capability,
 	global *source.Catalog, m model.ToolCallingChatModel) skill.StepResolver {
 
 	return func(use string) (capability.Capability, error) {
-		switch {
-		case use == "model":
-			if m == nil {
-				return nil, fmt.Errorf("step uses model but no default_model configured")
-			}
-			return modelStepCap(m), nil
-		case strings.HasPrefix(use, "components/"):
-			name := strings.TrimPrefix(use, "components/")
-			c, ok := comps[name]
-			if !ok {
-				return nil, fmt.Errorf("component %q not declared in namespace %s", name, nsName)
-			}
-			return c, nil
-		case strings.HasPrefix(use, "tools/"):
-			if strings.Contains(use, "*") {
-				return nil, fmt.Errorf("step reference %q must be exact (no wildcard)", use)
-			}
-			pattern, err := toolPattern(use)
-			if err != nil {
-				return nil, err
-			}
-			caps, err := local.Select([]string{pattern}, nil)
-			if err != nil {
-				return nil, err
-			}
-			switch len(caps) {
-			case 0:
-				return nil, fmt.Errorf("%s matches no tool in this namespace (工具不跨命名空间)", use)
-			case 1:
-				return caps[0], nil
-			default:
-				return nil, fmt.Errorf("%s is ambiguous (%d matches)", use, len(caps))
-			}
-		case strings.HasPrefix(use, "cap://"):
-			return crossNamespaceSkill(use, global)
-		default:
-			return nil, fmt.Errorf("bad use %q: want components/<name>, tools/<source>/<name>, model or cap://skill...", use)
+		caps, err := resolveRef(nsName, use, local, global, comps, m, false)
+		if err != nil {
+			return nil, err
 		}
+		if len(caps) != 1 {
+			return nil, fmt.Errorf("%s is ambiguous (%d matches)", use, len(caps))
+		}
+		return caps[0], nil
 	}
 }
 
-// toolPattern 把 tools/<source>/<name> 翻译为本地目录的选品模式
-// (kind/provider 由供给源决定,用通配)。
+// toolPattern 把 tools/<source>/<name> 翻译为本地目录的选品模式。
+// kind 写死 tool(通配不变式:kind 精确),domain=源名、name 原样(可含
+// name 段通配)。
 func toolPattern(ref string) (string, error) {
 	rest := strings.TrimPrefix(ref, "tools/")
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", fmt.Errorf("bad tool reference %q: want tools/<source>/<name>", ref)
 	}
-	return fmt.Sprintf("cap://*.*/%s/%s", parts[0], parts[1]), nil
+	return fmt.Sprintf("cap://tool/%s/%s", parts[0], parts[1]), nil
 }
 
 // crossNamespaceSkill 落实跨命名空间边界:cap:// 全名引用只允许
@@ -463,7 +460,7 @@ func crossNamespaceSkill(refStr string, global *source.Catalog) (capability.Capa
 // 以调用方对话快照 + 提示词起步。
 func modelStepCap(m model.ToolCallingChatModel) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref:         capability.Ref{Kind: "model", Provider: "step", Namespace: "internal", Name: "model"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "model_step"},
 		Description: "单次模型调用",
 	}, func(ctx context.Context, args string) (string, error) {
 		out, err := m.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(args)))

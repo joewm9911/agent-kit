@@ -18,7 +18,7 @@ import (
 // testCap 构造一个记录输入并返回 transform(输入) 的能力。
 func testCap(name string, fn func(ctx context.Context, args string) (string, error)) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: name},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: name},
 	}, fn)
 }
 
@@ -66,7 +66,7 @@ func TestGraphSerialDefaultChain(t *testing.T) {
 	if strings.Join(order, ",") != "a,b,c" {
 		t.Fatalf("order = %v", order)
 	}
-	if ref := sk.Meta().Ref.String(); ref != "cap://skill.graph/ns/chain" {
+	if ref := sk.Meta().Ref.String(); ref != "cap://skill/ns/chain" {
 		t.Fatalf("ref = %s", ref)
 	}
 }
@@ -296,7 +296,7 @@ func TestGraphStateIsolationAcrossInvokes(t *testing.T) {
 
 func TestGraphRiskPropagation(t *testing.T) {
 	mut := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "write"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: "write"},
 		Risk: capability.RiskMutating,
 	}, func(_ context.Context, s string) (string, error) { return "w", nil })
 	caps := map[string]capability.Capability{"w": mut}

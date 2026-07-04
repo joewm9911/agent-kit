@@ -66,8 +66,8 @@ func TestExampleAppLayout(t *testing.T) {
 		t.Fatalf("mounted entries = %d, want 2", len(metas))
 	}
 	for _, ref := range []string{
-		"cap://skill.graph/briefing/daily-brief",
-		"cap://skill.graph/research/competitor_report@1",
+		"cap://skill/briefing/daily-brief",
+		"cap://skill/research/competitor_report@1",
 	} {
 		if _, err := mounted.Get(ref); err != nil {
 			t.Fatalf("missing %s: %v", ref, err)

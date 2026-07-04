@@ -51,7 +51,7 @@ func New(namespace string, m Method, inv Invoker) capability.Capability {
 		}
 	}
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "rpc", Namespace: namespace, Name: name},
+		Ref:         capability.Ref{Kind: "tool", Domain: namespace, Name: name},
 		Description: m.Description,
 		Params:      schema.NewParamsOneOfByParams(params),
 		Risk:        m.Risk,

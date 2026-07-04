@@ -6,7 +6,7 @@
 //   - AsTool:挂到模型的工具面,由"大脑"(LLM)决定何时调用 —— 动态编排;
 //   - AsLambda:挂到 eino Graph 的固定节点,由流程决定何时执行 —— 静态编排。
 //
-// 能力以 Ref(cap://kind.provider/ns/name@version)标识,携带 Risk
+// 能力以 Ref(cap://kind/ns/name@version)标识,携带 Risk
 // 分级供运行时做审批拦截与准入控制。
 package capability
 

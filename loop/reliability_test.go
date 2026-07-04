@@ -81,7 +81,7 @@ func TestRetryModelExhausted(t *testing.T) {
 
 func TestTimeoutToolsHang(t *testing.T) {
 	hang := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "hang"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "hang"},
 	}, func(ctx context.Context, _ string) (string, error) {
 		select {
 		case <-ctx.Done():
@@ -102,7 +102,7 @@ func TestTimeoutToolsHang(t *testing.T) {
 
 func TestTimeoutToolsParentCancel(t *testing.T) {
 	hang := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "hang"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "hang"},
 	}, func(ctx context.Context, _ string) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
@@ -117,7 +117,7 @@ func TestTimeoutToolsParentCancel(t *testing.T) {
 
 func TestTimeoutToolsFastPath(t *testing.T) {
 	fast := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "fast"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "fast"},
 	}, func(ctx context.Context, _ string) (string, error) { return "quick", nil })
 	wrapped := TimeoutTools([]capability.Capability{fast}, time.Minute)
 	out, err := capability.Invoke(context.Background(), wrapped[0], "{}")
@@ -128,7 +128,7 @@ func TestTimeoutToolsFastPath(t *testing.T) {
 
 func TestApprovalGateCtxMode(t *testing.T) {
 	mut := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "write"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: "write"},
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) { return "executed", nil })
 
