@@ -294,8 +294,8 @@ func TestWindowMustFitSummaryView(t *testing.T) {
 		DefaultModel: nil,
 		Agents:       []AgentConfig{{Name: "bad"}},
 	}
-	cfg.Agents[0].Memory.Window = 8
-	cfg.Agents[0].Compaction = loop.CompactionConfig{MaxMessages: 30, KeepRecent: 10}
+	cfg.Agents[0].Session.Window = 8
+	cfg.Agents[0].Session.Compaction = loop.CompactionConfig{MaxMessages: 30, KeepRecent: 10}
 	cfg.Agents[0].Model = &ModelConfig{Provider: "marker", Config: map[string]any{"resp": "x"}}
 	setupAppTestFakes() // 注册 marker 模型
 	_, err := Build(context.Background(), cfg, BuildOptions{})

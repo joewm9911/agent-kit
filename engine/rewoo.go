@@ -198,11 +198,17 @@ func (r *rewooRunner) execute(ctx context.Context, steps []rewooStep) (map[strin
 			go exec(j)
 		}
 	}
+	// 先收集入度为 0 的起点再统一起 goroutine:避免这里读 indeg 与已启动
+	// 分支在锁内递减 indeg(见 exec)并发,构成数据竞争。
+	var roots []int
 	for i, d := range indeg {
 		if d == 0 {
-			wg.Add(1)
-			go exec(i)
+			roots = append(roots, i)
 		}
+	}
+	for _, i := range roots {
+		wg.Add(1)
+		go exec(i)
 	}
 	wg.Wait()
 	return evidence, nil

@@ -107,8 +107,8 @@ func TestRetrieverRegistry(t *testing.T) {
 	}
 }
 
-// TestRecallConfigResolution 验证装配语义:简写统一两路、子块覆盖、
-// 负值显式关闭、未注册检索器装配期拒绝。
+// TestRecallConfigResolution 验证装配语义:session/memory 两路各自独立
+// 配置、负值显式关闭、未注册检索器装配期拒绝。
 func TestRecallConfigResolution(t *testing.T) {
 	setupAppTestFakes()
 	setupCountingRetriever()
@@ -129,11 +129,11 @@ agents: [agents/a.yaml]
 		return BuildApp(context.Background(), spec, BuildOptions{})
 	}
 
-	// 简写形态(两路统一)、分路形态、负值关闭:均合法装配
+	// 两路独立开、指定检索器、负值关闭:均合法装配
 	for _, yaml := range []string{
-		"memory: {window: 10, auto_recall: {top_k: 3}}\n",
-		"memory:\n  window: 10\n  auto_recall:\n    session:   {top_k: 2, retriever: counting}\n    long_term: {top_k: 3}\n",
-		"memory: {window: 10, auto_recall: {top_k: 3, session: {top_k: -1}}}\n",
+		"session: {window: 10, recall: {top_k: 2}}\nmemory: {recall: {top_k: 3}}\n",
+		"session:\n  window: 10\n  recall: {top_k: 2, retriever: counting}\nmemory:\n  recall: {top_k: 3}\n",
+		"session: {window: 10, recall: {top_k: -1}}\n",
 	} {
 		if _, err := build(yaml); err != nil {
 			t.Fatalf("valid config rejected: %v\n%s", err, yaml)
@@ -141,7 +141,7 @@ agents: [agents/a.yaml]
 	}
 
 	// 未注册的检索器名:装配期拒绝(fail fast)
-	if _, err := build("memory: {window: 10, auto_recall: {session: {top_k: 2, retriever: ghost}}}\n"); err == nil ||
+	if _, err := build("session: {window: 10, recall: {top_k: 2, retriever: ghost}}\n"); err == nil ||
 		!strings.Contains(err.Error(), "unknown retriever") {
 		t.Fatalf("expect assembly-time rejection, got %v", err)
 	}

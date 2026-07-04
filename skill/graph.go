@@ -356,11 +356,17 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 			go exec(j)
 		}
 	}
+	// 先收集入度为 0 的起点,再统一起 goroutine:避免这里读 indeg 与
+	// 已启动分支在锁内递减 indeg(见 exec)并发,构成数据竞争。
+	var roots []int
 	for i, d := range indeg {
 		if d == 0 {
-			wg.Add(1)
-			go exec(i)
+			roots = append(roots, i)
 		}
+	}
+	for _, i := range roots {
+		wg.Add(1)
+		go exec(i)
 	}
 	wg.Wait()
 	if firstErr != nil {

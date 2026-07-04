@@ -13,30 +13,40 @@ namespaces:
 defaults:
   step_retry: 1
 
-# 具名存储实例:模块块的 store 槽用 cap://store/<kind>/<name> 引用。
-# 分布式部署把 type 换成 redis(config: {addr: ...})即可,键按
-# agent/会话隔离,多副本共享同一后端不碰撞;此处用 file/inmemory 保持
-# 冒烟离线可跑。
+# 具名存储实例:四类内部状态各一个实例,模块块的 store 槽用
+# cap://store/<kind>/<name> 引用。分布式部署把 type 换成 redis
+# (config: {addr: ...})即可,键按 agent/会话隔离,多副本共享同一后端不
+# 碰撞;此处用 file/inmemory 保持冒烟离线可跑。
+#   kind=session → 会话短期记忆   kind=memory → 长期记忆(向量库换 qdrant)
+#   kind=todo    → 计划清单        kind=result → digest 大结果暂存
 stores:
   - {name: sessions, kind: session, type: file, config: {dir: "${SMOKE_DATA_DIR}/ops-sessions"}}
+  - {name: ltm,      kind: memory,  type: inmemory}   # 分布式向量后端换 type: qdrant
   - {name: plans,    kind: todo,    type: inmemory}
   - {name: cache,    kind: result,  type: inmemory}
 
-todo_store: cap://store/todo/plans   # 计划外置(分布式下须 redis)
-
-memory:
+# ---- 四大模块各自独立,store 槽引用上面的具名实例 ----
+session:                                     # ① 会话短期记忆
+  store: cap://store/session/sessions        #    会话历史后端
   window: 40
-  store: cap://store/session/sessions   # 会话历史后端(引用具名实例)
-  long_term_tools: true
-  auto_recall: {top_k: 3}
   record_tools: summary
+  recall: {top_k: 3}                         #    窗外会话召回
+  compaction: {max_messages: 12, keep_recent: 4}  # 上下文压缩
+
+memory:                                      # ② 长期记忆
+  store: cap://store/memory/ltm              #    memory_save/search 后端
+  tools: true                                #    挂 memory_save/search 工具
+  recall: {top_k: 3}                         #    长期记忆召回
+
+todo:                                        # ③ 计划清单
+  store: cap://store/todo/plans              #    todo_write/read 后端
+
+digest:                                      # ④ 大结果消化 / 暂存
+  over: 4000
+  store: cap://store/result/cache            #    read_result 后端
 
 budget: {max_model_calls: 60, max_tokens: 400000}
-compaction: {max_messages: 12, keep_recent: 4}
 max_tool_result_len: 8000
-context_hygiene:
-  digest_over: 4000
-  store: cap://store/result/cache   # 大结果暂存后端(分布式下须 redis)
 
 approval: interactive
 approval_policy:

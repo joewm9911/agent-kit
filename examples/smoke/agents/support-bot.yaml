@@ -9,13 +9,13 @@ namespaces:
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
 
-memory:
+session:
   window: 20
-  store: file
+  store: file                                # 裸 type 缺省简写(inmemory | file | ...)
   store_config: {dir: "${SMOKE_DATA_DIR}/support-sessions"}
   record_tools: summary
+  compaction: {max_messages: 16, keep_recent: 4}
 
 # 刻意压低:第 5 次模型调用即硬停,冒烟断言 ErrBudgetExhausted
 budget: {max_model_calls: 4}
-compaction: {max_messages: 16, keep_recent: 4}
 approval: auto

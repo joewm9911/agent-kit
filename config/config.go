@@ -70,13 +70,86 @@ type StoreInstance struct {
 	TTL    loop.Duration  `yaml:"ttl"` // 保留时长(todo/result),0=不过期
 }
 
-// RetrieverInstance 是一个具名召回器实例声明;auto_recall 用
+// RetrieverInstance 是一个具名召回器实例声明;session.recall 用
 // cap://retriever/<kind>/<name> 引用它。
 type RetrieverInstance struct {
 	Name   string         `yaml:"name"`
 	Kind   string         `yaml:"kind"` // session
 	Type   string         `yaml:"type"` // bigram | vector | ...
 	Config map[string]any `yaml:"config"`
+}
+
+// 四大上下文/记忆模块各自独立配置,各自的 store 槽用 cap://store/<kind>/
+// <name> 引用 stores: 里的具名实例(或裸 type 作缺省简写)。四模块对称:
+//   session → 会话短期记忆   memory → 长期记忆
+//   todo    → 计划清单        digest → 大结果消化/暂存
+
+// SessionConfig 是会话短期记忆模块:窗口、后端、轨迹详略、窗外召回、
+// 上下文压缩。
+type SessionConfig struct {
+	Window      int            `yaml:"window"`       // 0 = 不启用会话记忆
+	Store       string         `yaml:"store"`        // cap://store/session/<name> 或裸 type(inmemory/file/...)
+	StoreConfig map[string]any `yaml:"store_config"` // 裸 type 时的就地配置
+	// RecordTools 控制本轮工具轨迹随会话持久化的详略:
+	// summary(默认)| full | off。off 退回只存问答(任务连续性受限)。
+	RecordTools string `yaml:"record_tools"`
+	// Recall 是窗口外会话历史的自动召回(L4):top_k>0 启用,retriever 指定
+	// 检索策略(cap://retriever/session/<name> 或裸 type,缺省 bigram 词法)。
+	Recall SessionRecall `yaml:"recall"`
+	// Compaction 是上下文压缩(会话上下文管理):越过阈值滚动摘要。
+	Compaction loop.CompactionConfig `yaml:"compaction"`
+}
+
+// SessionRecall 是窗外会话召回配置。
+type SessionRecall struct {
+	TopK            int            `yaml:"top_k"`
+	Retriever       string         `yaml:"retriever"`
+	RetrieverConfig map[string]any `yaml:"retriever_config"`
+}
+
+// MemoryConfig 是长期记忆模块:后端、工具挂载、作用域隔离、召回、seed。
+type MemoryConfig struct {
+	Store       string         `yaml:"store"`        // cap://store/memory/<name> 或裸 type
+	StoreConfig map[string]any `yaml:"store_config"` // 裸 type 时的就地配置
+	// Tools 挂载 memory_save/search 工具(长期记忆的读写入口)。
+	Tools bool `yaml:"tools"`
+	// Scope 是多用户隔离的作用域策略:write 对话写入落点(user 默认 |
+	// shared | session),read 召回覆盖(缺省 [user, shared])。
+	Scope MemoryScope `yaml:"scope"`
+	// Recall 是长期记忆的自动召回(L4):top_k>0 启用,检索策略由后端决定。
+	Recall struct {
+		TopK int `yaml:"top_k"`
+	} `yaml:"recall"`
+	// Seed 装配期灌入共享池的知识条目(域共享知识的运维写入口)。
+	Seed []MemorySeed `yaml:"seed"`
+}
+
+// MemoryScope 是长期记忆作用域。
+type MemoryScope struct {
+	Write string   `yaml:"write"`
+	Read  []string `yaml:"read"`
+}
+
+// MemorySeed 是共享池 seed 条目。
+type MemorySeed struct {
+	Key   string `yaml:"key"`
+	Value string `yaml:"value"`
+}
+
+// TodoConfig 是计划清单模块:开关 + 后端。
+type TodoConfig struct {
+	Enabled     *bool          `yaml:"enabled"` // 默认 true,显式 false 关闭
+	Store       string         `yaml:"store"`   // cap://store/todo/<name> 或裸 type
+	StoreConfig map[string]any `yaml:"store_config"`
+}
+
+// DigestConfig 是大结果消化/暂存模块:阈值 + 后端。
+type DigestConfig struct {
+	// Over>0 时,超过该 rune 数的工具结果先落暂存,由模型带当前任务提取
+	// 要点后入上下文(附 read_result 取回指针),截断闸在其后兜底。
+	Over        int            `yaml:"over"`
+	Store       string         `yaml:"store"` // cap://store/result/<name> 或裸 type
+	StoreConfig map[string]any `yaml:"store_config"`
 }
 
 // AgentConfig 声明一个 agent:唯一的主循环是 ReAct,没有 pattern 字段;
@@ -94,80 +167,24 @@ type AgentConfig struct {
 		Exclude []string `yaml:"exclude"`
 	} `yaml:"capabilities"`
 
-	// Stores/Retrievers 是具名实例声明,模块块的 store/retriever 槽用
-	// cap://store/... · cap://retriever/... 引用(见 StoreInstance)。
+	// Stores/Retrievers 是具名实例声明(仅定义);四大模块的 store/retriever
+	// 槽用 cap://store/... · cap://retriever/... 引用它们(见 StoreInstance)。
 	Stores     []StoreInstance     `yaml:"stores"`
 	Retrievers []RetrieverInstance `yaml:"retrievers"`
 
-	// 内置能力开关(默认开启,显式 false 关闭)。
-	Todo    *bool `yaml:"todo"`
-	AskUser *bool `yaml:"ask_user"`
-	// TodoStore 是 todo 计划的存储后端引用(cap://store/todo/<name> 或裸
-	// type)。分布式多副本下须指向 redis 等外置后端,否则计划不跨副本。
-	// 进程级全局:同进程多 agent 应指向同一后端(键按 agent/会话隔离)。
-	TodoStore string `yaml:"todo_store"`
+	AskUser *bool `yaml:"ask_user"` // 内置交互能力开关(默认开)
 
-	Memory struct {
-		Window      int            `yaml:"window"`       // 0 = 不启用会话记忆
-		Store       string         `yaml:"store"`        // inmemory(默认)| file | session.Register 注册的自定义类型
-		StoreConfig map[string]any `yaml:"store_config"` //
-		// 长期记忆:挂载 memory_save/search 工具,后端可换
-		// (inmemory 默认 | memory.Register 注册的自定义类型)。
-		LongTermTools  bool           `yaml:"long_term_tools"`
-		LongTermStore  string         `yaml:"long_term_store"`
-		LongTermConfig map[string]any `yaml:"long_term_config"`
-		// LongTerm 是长期记忆的作用域策略(多用户隔离):
-		//   write_scope  对话写入落点:user(默认)| shared | session
-		//   read_scopes  召回覆盖:缺省 [user, shared]
-		//   seed         装配期灌入共享池的知识条目(域共享知识的运维写入口)
-		LongTerm struct {
-			WriteScope string   `yaml:"write_scope"`
-			ReadScopes []string `yaml:"read_scopes"`
-			Seed       []struct {
-				Key   string `yaml:"key"`
-				Value string `yaml:"value"`
-			} `yaml:"seed"`
-		} `yaml:"long_term"`
-		// AutoRecall 启用 L4 自动召回:每轮用当前输入检索长期记忆与
-		// 窗口外的会话历史,命中片段注入消息尾部(标注"非指令")。
-		// 两路独立配置;平铺 top_k 是"两路统一"的简写,子块显式声明
-		// 覆盖简写,子块 top_k 负值显式关闭该路。
-		AutoRecall struct {
-			TopK    int `yaml:"top_k"` // 简写:两路统一,0 = 不启用
-			Session struct {
-				TopK int `yaml:"top_k"`
-				// Retriever 是窗外会话召回的检索策略(Ring 1 注册,
-				// 缺省 bigram 词法保底;向量实现注册后按名引用)。
-				Retriever       string         `yaml:"retriever"`
-				RetrieverConfig map[string]any `yaml:"retriever_config"`
-			} `yaml:"session"`
-			LongTerm struct {
-				TopK int `yaml:"top_k"` // 检索策略由 KV 后端决定
-			} `yaml:"long_term"`
-		} `yaml:"auto_recall"`
-		// RecordTools 控制本轮工具轨迹随会话持久化的详略:
-		// summary(默认)| full | off。off 退回只存问答(任务连续性受限)。
-		RecordTools string `yaml:"record_tools"`
-	} `yaml:"memory"`
+	// 四大上下文/记忆模块,各自独立。
+	Session SessionConfig `yaml:"session"`
+	Memory  MemoryConfig  `yaml:"memory"`
+	Todo    TodoConfig    `yaml:"todo"`
+	Digest  DigestConfig  `yaml:"digest"`
 
 	// MaxToolResultLen 是工具结果进入上下文的截断长度(rune):
 	// 0 = 默认 8000,-1 = 关闭截断。防 MCP 等外部工具返回超大结果打爆窗口。
 	MaxToolResultLen int `yaml:"max_tool_result_len"`
 
-	// ContextHygiene 是上下文卫生策略:digest_over > 0 时,超过该
-	// rune 数的工具结果先落 run 级暂存,由模型带当前任务提取要点后
-	// 入上下文(附 read_result 取回指针)——搜索、捞日志等大数据量
-	// 工具不再污染上下文。截断闸仍在其后兜底。
-	ContextHygiene struct {
-		DigestOver int `yaml:"digest_over"`
-		// Store 是大结果暂存的后端引用(cap://store/result/<name> 或裸
-		// type)。分布式下须指向 redis 等外置后端,否则被消化的原文不能
-		// 跨挂起/恢复、跨副本用 read_result 取回。进程级全局。
-		Store string `yaml:"store"`
-	} `yaml:"context_hygiene"`
-
-	Budget           loop.BudgetConfig     `yaml:"budget"`
-	Compaction       loop.CompactionConfig `yaml:"compaction"`
+	Budget           loop.BudgetConfig    `yaml:"budget"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
 	// Approval:interactive(默认)| auto | deny。
 	Approval string `yaml:"approval"`
@@ -605,31 +622,24 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	// 进程级存储后端注入(todo 计划、result 大结果暂存):分布式多副本
 	// 下须指向外置后端。键按 agent/会话隔离,同进程多 agent 共享同一后端
 	// 无碰撞;未配置则保持默认 inmemory。
-	if err := wireGlobalStore(ac.TodoStore, ac.Stores, "todo", builtin.SetStore); err != nil {
+	if err := wireGlobalStore(ac.Todo.Store, ac.Stores, "todo", builtin.SetStore); err != nil {
 		return nil, err
 	}
-	if err := wireGlobalStore(ac.ContextHygiene.Store, ac.Stores, "result", loop.SetResultBackend); err != nil {
+	if err := wireGlobalStore(ac.Digest.Store, ac.Stores, "result", loop.SetResultBackend); err != nil {
 		return nil, err
 	}
 
 	// 内置能力 + 审批闸门
-	todoOn := ac.Todo == nil || *ac.Todo
+	todoOn := ac.Todo.Enabled == nil || *ac.Todo.Enabled
 	if todoOn {
 		caps = append(caps, builtin.TodoCapabilities()...)
 	}
 	if ac.AskUser == nil || *ac.AskUser {
 		caps = append(caps, builtin.AskUser())
 	}
-	// 召回配置解析:平铺 top_k 是两路统一简写,子块覆盖,负值显式关闭。
-	ar := ac.Memory.AutoRecall
-	sessK := ar.Session.TopK
-	if sessK == 0 {
-		sessK = ar.TopK
-	}
-	kvK := ar.LongTerm.TopK
-	if kvK == 0 {
-		kvK = ar.TopK
-	}
+	// 召回配置:两路各自独立(session.recall / memory.recall),负值=关闭。
+	sessK := ac.Session.Recall.TopK
+	kvK := ac.Memory.Recall.TopK
 	if sessK < 0 {
 		sessK = 0
 	}
@@ -638,27 +648,27 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	}
 
 	// 长期记忆后端:挂工具或启用长期召回任一都需要构建;
-	// 工具面挂载仍只由 long_term_tools 决定。
-	scope := memory.ScopeConfig{Write: ac.Memory.LongTerm.WriteScope, Read: ac.Memory.LongTerm.ReadScopes}
+	// 工具面挂载仍只由 memory.tools 决定。
+	scope := memory.ScopeConfig{Write: ac.Memory.Scope.Write, Read: ac.Memory.Scope.Read}
 	var kv memory.KV
-	if ac.Memory.LongTermTools || kvK > 0 {
-		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.LongTermStore, ac.Stores, "memory")
+	if ac.Memory.Tools || kvK > 0 {
+		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "memory")
 		if err != nil {
 			return nil, err
 		}
 		if ltConf == nil {
-			ltConf = ac.Memory.LongTermConfig // 裸 type 时沿用就地 config
+			ltConf = ac.Memory.StoreConfig // 裸 type 时沿用就地 config
 		}
 		if kv, err = memory.New(ltType, ltConf); err != nil {
 			return nil, err
 		}
 		// 共享池 seed:域共享知识的运维写入口,装配期灌入(非对话路径)。
-		for _, s := range ac.Memory.LongTerm.Seed {
+		for _, s := range ac.Memory.Seed {
 			if err := kv.Put(ctx, memory.SharedScope, s.Key, s.Value); err != nil {
 				return nil, fmt.Errorf("long_term seed: %w", err)
 			}
 		}
-		if ac.Memory.LongTermTools {
+		if ac.Memory.Tools {
 			caps = append(caps, memory.AsCapabilities(kv, scope)...)
 		}
 	}
@@ -673,11 +683,11 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	if err != nil {
 		return nil, err
 	}
-	if ac.ContextHygiene.DigestOver > 0 {
+	if ac.Digest.Over > 0 {
 		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
 	}
 	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
-	caps = loop.DigestResults(caps, m, ac.ContextHygiene.DigestOver) // 大结果消化
+	caps = loop.DigestResults(caps, m, ac.Digest.Over) // 大结果消化
 	caps = loop.TruncateResults(caps, ac.MaxToolResultLen)           // 工具结果截断(Ring 0)
 	caps = suspend.DurableEffects(caps)                              // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
@@ -689,35 +699,35 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 
 	// 会话记忆
 	var sessStore session.Store
-	if ac.Memory.Window > 0 {
-		sType, sConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "session")
+	if ac.Session.Window > 0 {
+		sType, sConf, _, err := resolveStoreRef(ac.Session.Store, ac.Stores, "session")
 		if err != nil {
 			return nil, err
 		}
 		if sConf == nil {
-			sConf = ac.Memory.StoreConfig // 裸 type 时沿用就地 config
+			sConf = ac.Session.StoreConfig // 裸 type 时沿用就地 config
 		}
-		if sessStore, err = session.New(sType, sConf, ac.Memory.Window); err != nil {
+		if sessStore, err = session.New(sType, sConf, ac.Session.Window); err != nil {
 			return nil, err
 		}
 		// FullLoader 是滚动摘要与窗外召回的前提:自定义后端没实现时
 		// 这两项能力静默消失——装配期把降级喊出来,不让它悄悄发生。
 		if _, ok := sessStore.(session.FullLoader); !ok {
-			if ac.Compaction.Enabled() || ac.Memory.AutoRecall.TopK > 0 {
+			if ac.Session.Compaction.Enabled() || sessK > 0 {
 				logger.Warn("session store lacks FullLoader: rolling summary and beyond-window recall are DISABLED",
-					slog.String("agent", ac.Name), slog.String("store", ac.Memory.Store))
+					slog.String("agent", ac.Name), slog.String("store", ac.Session.Store))
 			}
 		}
 		// 窗口必须容得下摘要视图:否则滚动摘要(+锚定)会被窗口裁剪
 		// 静默切掉,跨轮记忆凭空消失。+2 = 摘要 + 锚定两条合成消息。
-		if ac.Compaction.Enabled() && ac.Memory.Window < ac.Compaction.Keep()+2 {
+		if ac.Session.Compaction.Enabled() && ac.Session.Window < ac.Session.Compaction.Keep()+2 {
 			return nil, fmt.Errorf("memory.window (%d) must be >= compaction keep_recent+2 (%d), or the rolling summary gets trimmed away",
-				ac.Memory.Window, ac.Compaction.Keep()+2)
+				ac.Session.Window, ac.Session.Compaction.Keep()+2)
 		}
 	}
 
 	// 摘要提示词(内容策略可配置,归并指令框架追加):装配期解析锁版本
-	if err := ac.Compaction.ResolvePrompt(ctx, prompts); err != nil {
+	if err := ac.Session.Compaction.ResolvePrompt(ctx, prompts); err != nil {
 		return nil, err
 	}
 
@@ -740,18 +750,18 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		var retr session.Retriever
 		if sessK > 0 {
 			var err error // 装配期解析检索器名,未注册即拒绝(fail fast)
-			rType, rConf, rerr := resolveRetrieverRef(ar.Session.Retriever, ac.Retrievers, "session")
+			rType, rConf, rerr := resolveRetrieverRef(ac.Session.Recall.Retriever, ac.Retrievers, "session")
 			if rerr != nil {
 				return nil, rerr
 			}
 			if rConf == nil {
-				rConf = ar.Session.RetrieverConfig
+				rConf = ac.Session.Recall.RetrieverConfig
 			}
 			if retr, err = session.NewRetriever(rType, rConf); err != nil {
 				return nil, err
 			}
 		}
-		layers.Memories = autoRecall(kv, scope, retr, ac.Memory.Window, sessK, kvK)
+		layers.Memories = autoRecall(kv, scope, retr, ac.Session.Window, sessK, kvK)
 	}
 
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
@@ -759,7 +769,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		Capabilities: caps,
 		MaxSteps:     ac.MaxSteps,
 		Modifier:     layers.Modifier(),
-		Rewriter:     loop.Compactor(m, ac.Compaction),
+		Rewriter:     loop.Compactor(m, ac.Session.Compaction),
 	})
 	if err != nil {
 		return nil, err
@@ -770,12 +780,12 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		return nil, err
 	}
 
-	record := loop.RecordMode(ac.Memory.RecordTools)
+	record := loop.RecordMode(ac.Session.RecordTools)
 	if record == "" {
 		record = loop.RecordSummary
 	}
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
-		Store: sessStore, Window: ac.Memory.Window, Compaction: ac.Compaction,
+		Store: sessStore, Window: ac.Session.Window, Compaction: ac.Session.Compaction,
 		Structured: enforcer, Interactor: interactor,
 		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget),
 		RecordTools: record,

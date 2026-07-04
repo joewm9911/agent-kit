@@ -50,7 +50,7 @@ var (
 )
 
 // Register 注册后端类型(redis/向量库/自定义),实现方空导入即可在
-// 配置里以 long_term_store: <type> 引用。
+// 配置里以 memory.store 引用(或 cap://store/memory/<name>)。
 func Register(typ string, f Factory) {
 	facMu.Lock()
 	defer facMu.Unlock()

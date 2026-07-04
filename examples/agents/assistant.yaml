@@ -23,40 +23,33 @@ capabilities:
 #   model: {provider: openai, config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}}
 #   step_retry: 1
 
-memory:
+# ---- 四大上下文/记忆模块,各自独立;store 槽引用 stores: 具名实例或裸 type ----
+session:                  # ① 会话短期记忆
   window: 100             # 会话记忆(运行时织入,模型无感知);store 层硬裁剪
-  store: file             # inmemory | file | session.Register 注册的自定义后端
+  store: file             # 裸 type 缺省简写:inmemory | file | 或 cap://store/session/<name>
   store_config: {dir: ./data/sessions}   # 运行时路径,相对进程工作目录
-  long_term_tools: true   # memory_save / memory_search(大脑自主)
-  # 长期记忆作用域(多用户隔离):默认写用户桶、读用户桶+共享池;
-  # 用户身份由 serving 的 {user} 字段 / 飞书发送者 open_id 提供,
-  # 缺身份时用户记忆写入 fail fast(不静默落共享池)。
-  # long_term:
-  #   write_scope: user            # user(默认)| shared(特权 agent)| session
-  #   read_scopes: [user, shared]  # 召回覆盖的层
-  #   seed:                        # 装配期灌入共享池(域共享知识的运维写入口)
-  #     - {key: "发布流程", value: "灰度→观察24h→全量"}
-  auto_recall: {top_k: 3} # L4 自动召回简写:两路统一 top_k
-  # 分路形态(子块覆盖简写,负值显式关闭该路):
-  # auto_recall:
-  #   session:   {top_k: 2, retriever: bigram}  # 窗外会话召回,检索策略可注册替换
-  #   long_term: {top_k: 3}                     # 长期 KV 召回,策略由 KV 后端决定
   record_tools: summary   # 工具轨迹随会话持久化:summary | full | off
+  recall: {top_k: 3}      # 窗外会话召回(retriever 缺省 bigram,可注册替换)
+  # 压缩:阈值触发(token 维度优先用供应商真实用量校准);摘要内容策略可配
+  # (prompt 支持字面量或 {ref:});要求 window >= keep_recent+2(装配期校验)
+  compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
+  #   prompt: {ref: "cap://prompt/pp/ops-summarize"}   # 领域保留清单
+
+memory:                   # ② 长期记忆(独立模块;向量后端换 store: cap://store/memory/<name>)
+  tools: true             # 挂 memory_save / memory_search(大脑自主)
+  recall: {top_k: 3}      # 长期记忆召回(策略由 KV 后端决定)
+  # 作用域(多用户隔离):默认写用户桶、读用户桶+共享池;用户身份由 serving
+  # 的 {user} / 飞书 open_id 提供,缺身份时用户记忆写入 fail fast。
+  # scope: {write: user, read: [user, shared]}
+  # seed:                 # 装配期灌入共享池(域共享知识的运维写入口)
+  #   - {key: "发布流程", value: "灰度→观察24h→全量"}
+
+digest:                   # ③ 大结果消化/暂存:超阈值消化,全文落暂存供 read_result 取回
+  over: 4000
+  # store: cap://store/result/<name>   # 分布式下指向 redis
 
 budget: {max_model_calls: 40, max_tokens: 200000}
-# 压缩:阈值触发(token 维度优先用供应商真实用量校准);摘要的内容策略
-# 可配置(prompt 支持字面量或 {ref:},归并指令由框架追加);要求
-# window >= keep_recent+2(摘要+锚定要能进窗口,装配期校验)
-compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
-# compaction:
-#   prompt: {ref: "cap://prompt/pp/ops-summarize"}   # 领域保留清单
 max_tool_result_len: 8000
-
-# 上下文卫生:工具结果超过阈值自动消化(模型带当前任务提取要点入上下文,
-# 全文落 run 级暂存,模型可用 read_result 分页取回)。搜索、捞日志等
-# 大数据量工具不再污染上下文;截断闸仍在其后兜底。
-context_hygiene:
-  digest_over: 4000
 
 approval: interactive     # mutating 操作需人工批准(CLI y/n/a/x 或 IM 回复)
 # 参数级审批策略:首条命中生效,无命中回落 ask;remember 启用会话级决策记忆
