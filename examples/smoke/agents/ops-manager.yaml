@@ -3,7 +3,8 @@
 description: 电商运营主管助手,负责定价审查、活动策划、客户跟进
 prompt:
   system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief。多步骤任务先列计划。"
-max_steps: 20
+loop:
+  max_steps: 20
 
 namespaces:
   - ../namespaces/catalog.yaml
@@ -42,12 +43,12 @@ memory:                                      # ② 长期记忆
 todo:                                        # ③ 计划清单
   store: cap://store/todo/plans              #    todo_write/read 后端
 
-digest:                                      # ④ 大结果消化 / 暂存
-  over: 4000
+digest:                                      # ④ 大工具结果处理:消化 + 硬截断
+  over: 4000                                 #    超阈值 → 消化
+  truncate: 8000                             #    硬截断兜底(原 max_tool_result_len)
   store: cap://store/result/cache            #    read_result 后端
 
 budget: {max_model_calls: 60, max_tokens: 400000}
-max_tool_result_len: 8000
 
 approval:                     # 治理:审批模式 + 参数级策略(合一)
   mode: interactive

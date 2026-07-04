@@ -3,7 +3,8 @@
 description: 售后客服机器人
 prompt:
   system: "[SUPPORT]你是售后客服。来询用 route-inquiry 分诊,商品问题用 quick-product-qa,客户信息用 customer-brief。"
-max_steps: 10
+loop:
+  max_steps: 10
 
 namespaces:
   - ../namespaces/catalog.yaml

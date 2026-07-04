@@ -59,6 +59,12 @@ type PromptSourceConfig struct {
 	Config map[string]any `yaml:"config"`
 }
 
+// PromptsConfig 是 app 级提示词供给模块:供给源 + 默认版本标签。
+type PromptsConfig struct {
+	Sources      []PromptSourceConfig `yaml:"sources"`
+	DefaultLabel string               `yaml:"default_label"`
+}
+
 // StoreInstance 是一个具名存储实例声明(agent 层,私有作用域)。
 // 模块块的 store 槽用 cap://store/<kind>/<name> 引用它;换后端=改 type、
 // 或声明另一实例把 store 指过去;跨 agent 共享=各自声明指向同一后端。
@@ -143,13 +149,22 @@ type TodoConfig struct {
 	StoreConfig map[string]any `yaml:"store_config"`
 }
 
-// DigestConfig 是大结果消化/暂存模块:阈值 + 后端。
+// DigestConfig 是「大工具结果进上下文前的处理」模块:同一环节两道闸——
+// over 触发消化、truncate 硬截断兜底。
 type DigestConfig struct {
 	// Over>0 时,超过该 rune 数的工具结果先落暂存,由模型带当前任务提取
 	// 要点后入上下文(附 read_result 取回指针),截断闸在其后兜底。
-	Over        int            `yaml:"over"`
+	Over int `yaml:"over"`
+	// Truncate 是所有工具结果进上下文的硬截断长度(rune):0=默认 8000,
+	// -1=关闭。作用于每个工具结果(不只被消化的),是消化之后的最终兜底。
+	Truncate    int            `yaml:"truncate"`
 	Store       string         `yaml:"store"` // cap://store/result/<name> 或裸 type
 	StoreConfig map[string]any `yaml:"store_config"`
+}
+
+// LoopConfig 是主循环(ReAct)控制。
+type LoopConfig struct {
+	MaxSteps int `yaml:"max_steps"` // 主循环迭代上限(外层兜底,是否完成由模型自然表达)
 }
 
 // PromptConfig 是提示词分层模块:L1 框架规约 + L2 业务 persona,均支持
@@ -173,33 +188,30 @@ type ApprovalConfig struct {
 	loop.ApprovalPolicy `yaml:",inline"`     // remember, rules
 }
 
-// AgentConfig 声明一个 agent(唯一主循环是 ReAct)。配置全部模块化,YAML
-// 顶层各块各司其职:身份(name/description/model/max_steps)· prompt 提示词
-// 分层 · capabilities 能力选品 · stores/retrievers 存储定义 · session/memory/
-// todo/digest 四大上下文模块 · approval/budget/structured_output 治理边界。
+// AgentConfig 声明一个 agent(唯一主循环是 ReAct)。配置全部按执行环节
+// 模块化,YAML 顶层各块各司其职:身份(name/description/model)· prompt
+// 提示词分层 · capabilities 能力选品 · loop 主循环 · stores/retrievers 存储
+// 定义 · session/memory/todo/digest 四大上下文模块 · approval/budget/
+// structured_output 治理边界。
 type AgentConfig struct {
 	Name        string       `yaml:"name"`
 	Description string       `yaml:"description"`
-	Model       *ModelConfig `yaml:"model"`     // nil 用顶层 default_model
-	MaxSteps    int          `yaml:"max_steps"` // 主循环步数上限
+	Model       *ModelConfig `yaml:"model"` // nil 用顶层 default_model
 
 	Prompt       PromptConfig       `yaml:"prompt"`       // 提示词分层(L1 loop / L2 system)
 	Capabilities CapabilitiesConfig `yaml:"capabilities"` // 能力选品 + 内置开关
+	Loop         LoopConfig         `yaml:"loop"`         // 主循环控制(max_steps)
 
 	// Stores/Retrievers 是具名实例声明(仅定义);四大模块的 store/retriever
 	// 槽用 cap://store/... · cap://retriever/... 引用它们(见 StoreInstance)。
 	Stores     []StoreInstance     `yaml:"stores"`
 	Retrievers []RetrieverInstance `yaml:"retrievers"`
 
-	// 四大上下文/记忆模块,各自独立。
+	// 四大上下文/记忆模块,各自独立(digest 含工具结果截断 truncate)。
 	Session SessionConfig `yaml:"session"`
 	Memory  MemoryConfig  `yaml:"memory"`
 	Todo    TodoConfig    `yaml:"todo"`
 	Digest  DigestConfig  `yaml:"digest"`
-
-	// MaxToolResultLen 是工具结果进入上下文的截断长度(rune):
-	// 0 = 默认 8000,-1 = 关闭截断。防 MCP 等外部工具返回超大结果打爆窗口。
-	MaxToolResultLen int `yaml:"max_tool_result_len"`
 
 	// 治理边界(Ring 0,agent 独占、不被 namespace 覆盖):审批 + 预算 +
 	// 结构化输出,三块各自顶层,与四大上下文模块并列。
@@ -259,8 +271,7 @@ type ObservabilityConfig struct {
 type Config struct {
 	Secrets SecretsConfig `yaml:"secrets"`
 
-	PromptSources      []PromptSourceConfig `yaml:"prompt_sources"`
-	PromptDefaultLabel string               `yaml:"prompt_default_label"`
+	Prompts PromptsConfig `yaml:"prompts"`
 
 	Sources []SourceConfig `yaml:"sources"`
 	Catalog CatalogConfig  `yaml:"catalog"`
@@ -381,9 +392,9 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 
 	// 2. 提示词
 	var prompts *prompt.Resolver
-	if len(cfg.PromptSources) > 0 {
-		prompts = prompt.NewResolver(cfg.PromptDefaultLabel)
-		for _, ps := range cfg.PromptSources {
+	if len(cfg.Prompts.Sources) > 0 {
+		prompts = prompt.NewResolver(cfg.Prompts.DefaultLabel)
+		for _, ps := range cfg.Prompts.Sources {
 			p, err := prompt.NewProvider(ps.Type, ps.Config)
 			if err != nil {
 				return nil, fmt.Errorf("prompt source %s: %w", ps.Name, err)
@@ -704,7 +715,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	}
 	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
 	caps = loop.DigestResults(caps, m, ac.Digest.Over) // 大结果消化
-	caps = loop.TruncateResults(caps, ac.MaxToolResultLen)           // 工具结果截断(Ring 0)
+	caps = loop.TruncateResults(caps, ac.Digest.Truncate)            // 工具结果硬截断(Ring 0)
 	caps = suspend.DurableEffects(caps)                              // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
 	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)
@@ -783,7 +794,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
 		Model:        m,
 		Capabilities: caps,
-		MaxSteps:     ac.MaxSteps,
+		MaxSteps:     ac.Loop.MaxSteps,
 		Modifier:     layers.Modifier(),
 		Rewriter:     loop.Compactor(m, ac.Session.Compaction),
 	})

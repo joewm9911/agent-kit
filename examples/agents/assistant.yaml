@@ -5,7 +5,8 @@
 description: 会查天气、能写竞品报告、可以记住用户偏好的助手
 prompt:
   system: {ref: "cap://prompt/pp/assistant-persona"}   # L2 persona;L1 loop 用内置规约
-max_steps: 30
+loop:
+  max_steps: 30
 
 # ---- 能力域关联:挂载 namespace 即获得其全部导出 skill(路径相对本文件)----
 namespaces:
@@ -45,12 +46,12 @@ memory:                   # ② 长期记忆(独立模块;向量后端换 store:
   # seed:                 # 装配期灌入共享池(域共享知识的运维写入口)
   #   - {key: "发布流程", value: "灰度→观察24h→全量"}
 
-digest:                   # ③ 大结果消化/暂存:超阈值消化,全文落暂存供 read_result 取回
-  over: 4000
+digest:                   # ③ 大工具结果处理:消化 + 硬截断(同环节两道闸)
+  over: 4000              # 超阈值 → 消化,全文落暂存供 read_result 取回
+  truncate: 8000          # 硬截断兜底(原 max_tool_result_len),作用于每个工具结果
   # store: cap://store/result/<name>   # 分布式下指向 redis
 
 budget: {max_model_calls: 40, max_tokens: 200000}
-max_tool_result_len: 8000
 
 approval:                  # 治理:审批模式 + 参数级策略(合一)
   mode: interactive        # mutating 操作需人工批准(CLI y/n/a/x 或 IM 回复)

@@ -7,11 +7,12 @@ secrets:
   provider: env
 
 # ---- 提示词供给:本地目录,可换 http 型对接提示词平台 ----
-prompt_sources:
-  - name: pp
-    type: file
-    config: {dir: ./prompts}
-prompt_default_label: production
+prompts:                          # 提示词供给:源 + 默认版本标签
+  sources:
+    - name: pp
+      type: file
+      config: {dir: ./prompts}
+  default_label: production
 
 # ---- 全局兼容源:直挂 agent 工具面的通用工具(业务工具请进 namespace)----
 sources:

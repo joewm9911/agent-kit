@@ -96,8 +96,7 @@ func (d Defaults) merge(nearer Defaults) Defaults {
 type AppConfig struct {
 	Secrets SecretsConfig `yaml:"secrets"`
 
-	PromptSources      []PromptSourceConfig `yaml:"prompt_sources"`
-	PromptDefaultLabel string               `yaml:"prompt_default_label"`
+	Prompts PromptsConfig `yaml:"prompts"`
 
 	// Sources 是全局兼容源(直挂 agent 工具面的通用工具,如 fs)。
 	Sources []SourceConfig `yaml:"sources"`
@@ -260,9 +259,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 
 	// 2. 提示词
 	var prompts *prompt.Resolver
-	if len(ac.PromptSources) > 0 {
-		prompts = prompt.NewResolver(ac.PromptDefaultLabel)
-		for _, ps := range ac.PromptSources {
+	if len(ac.Prompts.Sources) > 0 {
+		prompts = prompt.NewResolver(ac.Prompts.DefaultLabel)
+		for _, ps := range ac.Prompts.Sources {
 			p, err := prompt.NewProvider(ps.Type, ps.Config)
 			if err != nil {
 				return nil, fmt.Errorf("prompt source %s: %w", ps.Name, err)
