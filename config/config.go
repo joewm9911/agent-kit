@@ -34,7 +34,6 @@ import (
 	"github.com/joewm9911/agent-kit/source"
 	"github.com/joewm9911/agent-kit/store"
 	"github.com/joewm9911/agent-kit/suspend"
-	"github.com/joewm9911/agent-kit/workflow"
 )
 
 // ModelConfig 声明一个模型。
@@ -285,10 +284,10 @@ type Config struct {
 	// (执行单元声明)→ skills(对外产品,唯一进目录的编排单元)。
 	Namespaces []NamespaceConfig `yaml:"namespaces"`
 
-	// Skills/Workflows 是平铺声明的兼容路径,新配置建议用 namespaces。
-	Skills    []*skill.Declaration `yaml:"skills"`
-	Workflows []workflow.Config    `yaml:"workflows"`
-	Agents    []AgentConfig        `yaml:"agents"`
+	// Skills 是平铺声明的兼容路径,新配置建议用 namespaces。
+	// (workflow 不再单列:顺序编排用 namespace 的 engine: workflow component/skill。)
+	Skills []*skill.Declaration `yaml:"skills"`
+	Agents []AgentConfig        `yaml:"agents"`
 
 	Serving  ServingConfig   `yaml:"serving"`
 	Channels []ChannelConfig `yaml:"channels"`
@@ -453,16 +452,6 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 	}
 
-	// 5. workflows:编译后入目录(可被 agent 挂载,也可经 A2A 暴露)
-	for _, wf := range cfg.Workflows {
-		c, err := workflow.Build(ctx, wf, catalog, defaultModel)
-		if err != nil {
-			return nil, err
-		}
-		if err := catalog.Add(c); err != nil {
-			return nil, err
-		}
-	}
 
 	// 5b. namespaces:三层结构装配(tools → components → skills),
 	// 只有 skills 进全局目录;声明顺序决定跨 ns 引用的可见性。
