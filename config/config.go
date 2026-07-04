@@ -84,6 +84,18 @@ type AgentConfig struct {
 		LongTermTools  bool           `yaml:"long_term_tools"`
 		LongTermStore  string         `yaml:"long_term_store"`
 		LongTermConfig map[string]any `yaml:"long_term_config"`
+		// LongTerm 是长期记忆的作用域策略(多用户隔离):
+		//   write_scope  对话写入落点:user(默认)| shared | session
+		//   read_scopes  召回覆盖:缺省 [user, shared]
+		//   seed         装配期灌入共享池的知识条目(域共享知识的运维写入口)
+		LongTerm struct {
+			WriteScope string   `yaml:"write_scope"`
+			ReadScopes []string `yaml:"read_scopes"`
+			Seed       []struct {
+				Key   string `yaml:"key"`
+				Value string `yaml:"value"`
+			} `yaml:"seed"`
+		} `yaml:"long_term"`
 		// AutoRecall 启用 L4 自动召回:每轮用当前输入检索长期记忆与
 		// 窗口外的会话历史,命中片段注入消息尾部(标注"非指令")。
 		// 两路独立配置;平铺 top_k 是"两路统一"的简写,子块显式声明
@@ -511,14 +523,21 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 
 	// 长期记忆后端:挂工具或启用长期召回任一都需要构建;
 	// 工具面挂载仍只由 long_term_tools 决定。
+	scope := memory.ScopeConfig{Write: ac.Memory.LongTerm.WriteScope, Read: ac.Memory.LongTerm.ReadScopes}
 	var kv memory.KV
 	if ac.Memory.LongTermTools || kvK > 0 {
 		var err error
 		if kv, err = memory.New(ac.Memory.LongTermStore, ac.Memory.LongTermConfig); err != nil {
 			return nil, err
 		}
+		// 共享池 seed:域共享知识的运维写入口,装配期灌入(非对话路径)。
+		for _, s := range ac.Memory.LongTerm.Seed {
+			if err := kv.Put(ctx, memory.SharedScope, s.Key, s.Value); err != nil {
+				return nil, fmt.Errorf("long_term seed: %w", err)
+			}
+		}
 		if ac.Memory.LongTermTools {
-			caps = append(caps, memory.AsCapabilities(kv)...)
+			caps = append(caps, memory.AsCapabilities(kv, scope)...)
 		}
 	}
 	// Ring 0 闸门:超时(最内)→ 截断 → 审批(最外,批准等待不占超时)。
@@ -597,7 +616,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 				return nil, err
 			}
 		}
-		layers.Memories = autoRecall(kv, retr, ac.Memory.Window, sessK, kvK)
+		layers.Memories = autoRecall(kv, scope, retr, ac.Memory.Window, sessK, kvK)
 	}
 
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
@@ -633,7 +652,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 // Retriever),两路独立配置,命中片段注入消息尾部第四层。
 // 会话历史来自 agent 本轮已加载的全量记录(ctx 共享,一轮只读一次
 // store);同轮多次模型调用的查询不变,结果按轮 memo,不重复检索。
-func autoRecall(kv memory.KV, retr session.Retriever, window, sessK, kvK int) func(ctx context.Context) []string {
+func autoRecall(kv memory.KV, scope memory.ScopeConfig, retr session.Retriever, window, sessK, kvK int) func(ctx context.Context) []string {
 	var mu sync.Mutex
 	memo := map[string]struct {
 		input  string
@@ -656,7 +675,7 @@ func autoRecall(kv memory.KV, retr session.Retriever, window, sessK, kvK int) fu
 		var out []string
 		// 长期记忆命中(kvK 路)
 		if kv != nil && kvK > 0 {
-			if hits, err := kv.Search(ctx, query, kvK); err == nil {
+			if hits, err := kv.Search(ctx, scope.ReadScopes(ctx), query, kvK); err == nil {
 				for k, v := range hits {
 					out = append(out, fmt.Sprintf("长期记忆 %s: %s", k, v))
 				}

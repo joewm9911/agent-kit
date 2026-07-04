@@ -28,6 +28,14 @@ memory:
   store: file             # inmemory | file | session.Register 注册的自定义后端
   store_config: {dir: ./data/sessions}   # 运行时路径,相对进程工作目录
   long_term_tools: true   # memory_save / memory_search(大脑自主)
+  # 长期记忆作用域(多用户隔离):默认写用户桶、读用户桶+共享池;
+  # 用户身份由 serving 的 {user} 字段 / 飞书发送者 open_id 提供,
+  # 缺身份时用户记忆写入 fail fast(不静默落共享池)。
+  # long_term:
+  #   write_scope: user            # user(默认)| shared(特权 agent)| session
+  #   read_scopes: [user, shared]  # 召回覆盖的层
+  #   seed:                        # 装配期灌入共享池(域共享知识的运维写入口)
+  #     - {key: "发布流程", value: "灰度→观察24h→全量"}
   auto_recall: {top_k: 3} # L4 自动召回简写:两路统一 top_k
   # 分路形态(子块覆盖简写,负值显式关闭该路):
   # auto_recall:

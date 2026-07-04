@@ -16,6 +16,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/channel"
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // Server 是 Gateway 实例。
@@ -85,6 +86,7 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Session string `json:"session"`
 		Input   string `json:"input"`
+		User    string `json:"user"` // 终端用户身份,长期记忆用户级隔离据此施加
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Input == "" {
 		http.Error(w, "bad request: need {session, input}", http.StatusBadRequest)
@@ -93,12 +95,13 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if req.Session == "" {
 		req.Session = fmt.Sprintf("http-%d", time.Now().UnixNano())
 	}
+	ctx := runctx.WithUser(r.Context(), req.User)
 
 	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
-		s.stream(w, r, a, req.Session, req.Input)
+		s.stream(w, ctx, a, req.Session, req.Input)
 		return
 	}
-	answer, err := a.Run(r.Context(), req.Session, req.Input)
+	answer, err := a.Run(ctx, req.Session, req.Input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -139,13 +142,13 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) stream(w http.ResponseWriter, r *http.Request, a *agent.Agent, session, input string) {
+func (s *Server) stream(w http.ResponseWriter, ctx context.Context, a *agent.Agent, session, input string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	sr, err := a.Stream(r.Context(), session, input)
+	sr, err := a.Stream(ctx, session, input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

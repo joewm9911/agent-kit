@@ -9,6 +9,7 @@ type keyAgent struct{}
 type keySession struct{}
 type keyInteractor struct{}
 type keyInput struct{}
+type keyUser struct{}
 
 // ApprovalRequest 描述一次待批准的改动性操作。
 type ApprovalRequest struct {
@@ -79,5 +80,21 @@ func WithInput(ctx context.Context, input string) context.Context {
 // Input 返回本轮用户输入,未注入时为空串。
 func Input(ctx context.Context) string {
 	s, _ := ctx.Value(keyInput{}).(string)
+	return s
+}
+
+// WithUser 注入终端用户身份(飞书 open_id、HTTP 请求的 user 字段等)。
+// 长期记忆的用户级作用域据此隔离:未注入时"用户记忆"无处安放,
+// 写入按配置 fail fast,而非静默落进共享池。
+func WithUser(ctx context.Context, userID string) context.Context {
+	if userID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, keyUser{}, userID)
+}
+
+// User 返回终端用户身份,未注入时为空串。
+func User(ctx context.Context) string {
+	s, _ := ctx.Value(keyUser{}).(string)
 	return s
 }

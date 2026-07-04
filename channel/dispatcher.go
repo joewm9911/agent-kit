@@ -168,6 +168,8 @@ func (d *Dispatcher) run(key string, j job) {
 	// IM 消息处理与单次请求生命周期解耦,用独立的长超时上下文。
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	// 终端用户身份(IM 的发送者)装入 ctx:长期记忆用户级作用域据此隔离。
+	ctx = runctx.WithUser(ctx, j.in.Conv.User)
 
 	// 挂起模式:可挂起的交互通道 + 效果/交互日志随 ctx 下发。
 	// 非挂起模式:进程内阻塞等待的 HITL 桥接(原行为)。

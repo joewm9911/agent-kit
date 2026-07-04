@@ -33,9 +33,11 @@ func setupCountingRetriever() {
 	})
 }
 
-// recallCtx 构造带窗外历史的调用环境(窗口 2,历史 4 条 → 2 条在窗外)。
+// recallCtx 构造带窗外历史与用户身份的调用环境(窗口 2,历史 4 条 →
+// 2 条在窗外)。用户身份让长期召回能命中用户桶。
 func recallCtx(sessionID, input string) context.Context {
 	ctx := runctx.With(context.Background(), "a", sessionID)
+	ctx = runctx.WithUser(ctx, "u1")
 	ctx = runctx.WithInput(ctx, input)
 	return loop.WithTurnHistory(ctx, []*schema.Message{
 		schema.UserMessage("早前提过预算是100万"),
@@ -49,18 +51,19 @@ func recallCtx(sessionID, input string) context.Context {
 // 完全不被触碰(不是查了不用,而是根本不查)。
 func TestAutoRecallSplitPaths(t *testing.T) {
 	kv := memory.NewInMemoryKV()
-	_ = kv.Put(context.Background(), "预算", "100万")
+	_ = kv.Put(context.Background(), memory.UserScope("u1"), "预算", "100万")
 	retr := &countingRetriever{}
+	scope := memory.ScopeConfig{} // 缺省:写 user、读 user+shared
 
 	// 双路开启:两种来源都出现
-	both := autoRecall(kv, retr, 2, 2, 3)
+	both := autoRecall(kv, scope, retr, 2, 2, 3)
 	joined := strings.Join(both(recallCtx("s1", "预算")), "\n")
 	if !strings.Contains(joined, "长期记忆") || !strings.Contains(joined, "早前对话") {
 		t.Fatalf("both paths expected: %q", joined)
 	}
 
 	// 只开 session 路:KV 不出现
-	sessOnly := autoRecall(kv, retr, 2, 2, 0)
+	sessOnly := autoRecall(kv, scope, retr, 2, 2, 0)
 	joined = strings.Join(sessOnly(recallCtx("s2", "预算")), "\n")
 	if strings.Contains(joined, "长期记忆") || !strings.Contains(joined, "早前对话") {
 		t.Fatalf("session-only expected: %q", joined)
@@ -68,7 +71,7 @@ func TestAutoRecallSplitPaths(t *testing.T) {
 
 	// 只开 long_term 路:检索器完全不被调用
 	before := retr.hits.Load()
-	kvOnly := autoRecall(kv, retr, 2, 0, 3)
+	kvOnly := autoRecall(kv, scope, retr, 2, 0, 3)
 	joined = strings.Join(kvOnly(recallCtx("s3", "预算")), "\n")
 	if !strings.Contains(joined, "长期记忆") || strings.Contains(joined, "早前对话") {
 		t.Fatalf("kv-only expected: %q", joined)

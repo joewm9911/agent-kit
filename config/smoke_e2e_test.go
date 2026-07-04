@@ -455,7 +455,8 @@ func TestSmokeAgentMemoryLoop(t *testing.T) {
 	t.Setenv("SMOKE_DATA_DIR", dataDir)
 	app := buildSmokeApp(t, BuildOptions{})
 	ops := app.Agents["ops-manager"]
-	ctx := context.Background()
+	// 终端用户身份:长期记忆用户级作用域据此隔离(生产由 serving/通道填)。
+	ctx := runctx.WithUser(context.Background(), "boss-uid")
 	sess := "boss"
 
 	// t1:触发 skill 调用(轨迹入会话)
@@ -474,6 +475,19 @@ func TestSmokeAgentMemoryLoop(t *testing.T) {
 	// smokescript 只有在 system 尾部看到"长期记忆"才回 [HIT])
 	if out, err = ops.Run(ctx, sess, "偏好"); err != nil || !strings.Contains(out, "[HIT]") {
 		t.Fatalf("t3 recall = %q %v", out, err)
+	}
+
+	// t4:换一个用户,同一 agent——用户级隔离,召回不到 boss 的偏好
+	other := runctx.WithUser(context.Background(), "peer-uid")
+	if out, err = ops.Run(other, "peer-session", "偏好"); err != nil || strings.Contains(out, "[HIT]") {
+		t.Fatalf("cross-user leak: %q %v", out, err)
+	}
+
+	// t5:无用户身份的会话——用户记忆写入 fail fast,不静默落库
+	anon := context.Background()
+	if out, err = ops.Run(anon, "anon-session", "记住:我喜欢简短汇报"); err != nil ||
+		!strings.Contains(out, "终端用户身份") {
+		t.Fatalf("anonymous write should fail fast: %q %v", out, err)
 	}
 
 	// 会话文件:轨迹记录已持久化
