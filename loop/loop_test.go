@@ -84,11 +84,11 @@ func TestCompactorKeepsToolPairing(t *testing.T) {
 
 func TestApprovalGate(t *testing.T) {
 	mut := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "write"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: "write"},
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) { return "executed", nil })
 	ro := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "read"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "read"},
 	}, func(ctx context.Context, in string) (string, error) { return "read-ok", nil })
 
 	gatedCaps := GateApproval([]capability.Capability{mut, ro}, ApprovalInteractive)
@@ -123,7 +123,7 @@ func (s stubInteractor) Approve(context.Context, runctx.ApprovalRequest) (bool, 
 
 func TestTruncateResults(t *testing.T) {
 	big := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "big"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "big"},
 	}, func(ctx context.Context, _ string) (string, error) {
 		return strings.Repeat("长", 9000), nil
 	})

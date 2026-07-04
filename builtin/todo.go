@@ -145,7 +145,7 @@ const todoWriteDesc = `写入/更新任务计划清单(整体替换)。使用规
 // TodoCapabilities 返回 todo_write / todo_read 两个能力。
 func TodoCapabilities() []capability.Capability {
 	writeMeta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "builtin", Namespace: "builtin", Name: "todo_write"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_write"},
 		Description: todoWriteDesc,
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"todos": {
@@ -189,7 +189,7 @@ func TodoCapabilities() []capability.Capability {
 	})
 
 	readMeta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "builtin", Namespace: "builtin", Name: "todo_read"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_read"},
 		Description: "读取当前任务计划清单。",
 		Params:      schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}
@@ -230,7 +230,7 @@ func NudgeTools(caps []capability.Capability) []capability.Capability {
 }
 
 func isTodoTool(ref capability.Ref) bool {
-	return ref.Provider == "builtin" && strings.HasPrefix(ref.Name, "todo_")
+	return ref.Domain == "builtin" && strings.HasPrefix(ref.Name, "todo_")
 }
 
 type nudged struct {

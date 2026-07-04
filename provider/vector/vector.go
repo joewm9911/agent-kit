@@ -126,7 +126,7 @@ func init() {
 // newRetrieverCapability 把 eino Retriever 包成一个检索能力(双形态)。
 func newRetrieverCapability(ns, toolName, desc string, topK, maxDocLen int, r retriever.Retriever) capability.Capability {
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "retriever", Provider: "vector", Namespace: ns, Name: toolName},
+		Ref:         capability.Ref{Kind: "tool", Domain: ns, Name: toolName},
 		Description: desc,
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"query": {Type: schema.String, Desc: "检索查询语句", Required: true},

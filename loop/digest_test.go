@@ -14,7 +14,7 @@ import (
 
 func bigTool(name string, out string) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: name},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: name},
 	}, func(ctx context.Context, _ string) (string, error) { return out, nil })
 }
 
@@ -69,7 +69,7 @@ func TestDigestNoStoreFallsBack(t *testing.T) {
 func TestDigestRawTagExempt(t *testing.T) {
 	raw := strings.Repeat("x", 9000)
 	exempt := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "dump"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: "dump"},
 		Tags: []string{TagRawResult},
 	}, func(ctx context.Context, _ string) (string, error) { return raw, nil })
 	m := testmodel.New()

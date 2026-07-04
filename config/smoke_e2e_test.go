@@ -355,22 +355,22 @@ func TestSmokeAssembly(t *testing.T) {
 		t.Fatalf("mounted entries = %d, want 9", got)
 	}
 	for _, ref := range []string{
-		"cap://skill.graph/catalog/price-review",
-		"cap://skill.graph/catalog/quick-product-qa",
-		"cap://skill.graph/catalog/apply-price",
-		"cap://skill.graph/catalog/bulk-audit",
-		"cap://skill.graph/catalog/audit-product",
-		"cap://skill.graph/marketing/route-inquiry",
-		"cap://skill.graph/marketing/launch-campaign",
-		"cap://skill.graph/marketing/deep-research",
-		"cap://skill.graph/crm/customer-brief",
+		"cap://skill/catalog/price-review",
+		"cap://skill/catalog/quick-product-qa",
+		"cap://skill/catalog/apply-price",
+		"cap://skill/catalog/bulk-audit",
+		"cap://skill/catalog/audit-product",
+		"cap://skill/marketing/route-inquiry",
+		"cap://skill/marketing/launch-campaign",
+		"cap://skill/marketing/deep-research",
+		"cap://skill/crm/customer-brief",
 	} {
 		if _, err := mounted.Get(ref); err != nil {
 			t.Fatalf("missing %s: %v", ref, err)
 		}
 	}
 	// mutating 风险传播:update_price → apply-price skill
-	sk, _ := mounted.Get("cap://skill.graph/catalog/apply-price")
+	sk, _ := mounted.Get("cap://skill/catalog/apply-price")
 	if sk.Meta().Risk != capability.RiskMutating {
 		t.Fatalf("apply-price risk = %v, want mutating", sk.Meta().Risk)
 	}
@@ -380,7 +380,7 @@ func TestSmokeAssembly(t *testing.T) {
 func TestSmokeGraphForkDigest(t *testing.T) {
 	setupSmokeEnv(t)
 	app := buildSmokeApp(t, BuildOptions{})
-	sk, err := app.AgentMounts["ops-manager"].Get("cap://skill.graph/catalog/price-review")
+	sk, err := app.AgentMounts["ops-manager"].Get("cap://skill/catalog/price-review")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,35 +418,35 @@ func TestSmokeEngineMatrix(t *testing.T) {
 	}
 
 	// workflow + use: 入口(audit_flow)
-	if out := invoke("cap://skill.graph/catalog/audit-product", `{"id":"P100"}`, "审计"); !strings.Contains(out, "[AUDIT]") {
+	if out := invoke("cap://skill/catalog/audit-product", `{"id":"P100"}`, "审计"); !strings.Contains(out, "[AUDIT]") {
 		t.Fatalf("workflow: %q", out)
 	}
 	// direct + graph component + use:(qa_flow → catalog_qa)
-	if out := invoke("cap://skill.graph/catalog/quick-product-qa", `{"q":"降噪耳机怎么样"}`, "问答"); !strings.Contains(out, "[QA]") {
+	if out := invoke("cap://skill/catalog/quick-product-qa", `{"q":"降噪耳机怎么样"}`, "问答"); !strings.Contains(out, "[QA]") {
 		t.Fatalf("direct: %q", out)
 	}
 	// rewoo:一次规划并行执行
-	if out := invoke("cap://skill.graph/catalog/bulk-audit", `{"category":"耳机"}`, "盘点"); !strings.Contains(out, "[REWOO]") {
+	if out := invoke("cap://skill/catalog/bulk-audit", `{"category":"耳机"}`, "盘点"); !strings.Contains(out, "[REWOO]") {
 		t.Fatalf("rewoo: %q", out)
 	}
 	// router:分诊到 faq_bot
-	if out := invoke("cap://skill.graph/marketing/route-inquiry", `{"q":"怎么退货"}`, "退货"); !strings.Contains(out, "[FAQBOT]") {
+	if out := invoke("cap://skill/marketing/route-inquiry", `{"q":"怎么退货"}`, "退货"); !strings.Contains(out, "[FAQBOT]") {
 		t.Fatalf("router: %q", out)
 	}
 	// plan-execute(跨 ns 引用 catalog skill)+ reflection(产稿→评审→修订)
-	if out := invoke("cap://skill.graph/marketing/launch-campaign", `{"topic":"双十一"}`, "活动"); !strings.Contains(out, "文案v2[REV]") {
+	if out := invoke("cap://skill/marketing/launch-campaign", `{"topic":"双十一"}`, "活动"); !strings.Contains(out, "文案v2[REV]") {
 		t.Fatalf("plan-execute+reflection: %q", out)
 	}
 	// react + 调用级 todo:计划注入 + 即弃
 	resetSmokeSeen()
-	if out := invoke("cap://skill.graph/marketing/deep-research", `{"topic":"直播带货"}`, "研究"); !strings.Contains(out, "[RESEARCH]") {
+	if out := invoke("cap://skill/marketing/deep-research", `{"topic":"直播带货"}`, "研究"); !strings.Contains(out, "[RESEARCH]") {
 		t.Fatalf("deep-research: %q", out)
 	}
 	if !smokeSawSystemContaining("当前任务计划") {
 		t.Fatal("component todo plan was not injected into the loop")
 	}
 	// react(analyst)+ fork + crm
-	if out := invoke("cap://skill.graph/crm/customer-brief", `{"id":"C1"}`, "客户"); !strings.Contains(out, "[CRM]") {
+	if out := invoke("cap://skill/crm/customer-brief", `{"id":"C1"}`, "客户"); !strings.Contains(out, "[CRM]") {
 		t.Fatalf("crm: %q", out)
 	}
 }

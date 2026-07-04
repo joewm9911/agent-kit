@@ -15,7 +15,7 @@ import (
 func TestWorkflowSequentialGraph(t *testing.T) {
 	catalog := source.NewCatalog(capability.RiskMutating, nil)
 	upper := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "upper"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "upper"},
 	}, func(ctx context.Context, in string) (string, error) {
 		return strings.ToUpper(in), nil
 	})
@@ -28,7 +28,7 @@ func TestWorkflowSequentialGraph(t *testing.T) {
 		Name:        "demo",
 		Description: "upper → model",
 		Steps: []Step{
-			{Name: "up", Use: "cap://tool.test/t/upper", Args: "{input}"},
+			{Name: "up", Use: "cap://tool/t/upper", Args: "{input}"},
 			{Name: "sum", Use: "model", Args: "总结:{up}"},
 		},
 	}, catalog, m)
@@ -36,7 +36,7 @@ func TestWorkflowSequentialGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if wf.Meta().Ref.String() != "cap://flow.workflow/workflows/demo" {
+	if wf.Meta().Ref.String() != "cap://skill/workflows/demo" {
 		t.Fatalf("ref = %s", wf.Meta().Ref)
 	}
 	out, err := capability.Invoke(context.Background(), wf, `{"input":"hello"}`)
@@ -52,7 +52,7 @@ func TestWorkflowUnknownCapability(t *testing.T) {
 	catalog := source.NewCatalog(capability.RiskMutating, nil)
 	_, err := Build(context.Background(), Config{
 		Name:  "bad",
-		Steps: []Step{{Name: "s", Use: "cap://tool.test/t/none"}},
+		Steps: []Step{{Name: "s", Use: "cap://tool/t/none"}},
 	}, catalog, nil)
 	if err == nil {
 		t.Fatal("expect error for unresolved step capability")

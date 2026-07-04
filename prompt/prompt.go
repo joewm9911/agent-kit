@@ -94,10 +94,10 @@ func (r *Resolver) Resolve(ctx context.Context, refStr string) (*Template, error
 		return nil, fmt.Errorf("prompt: ref %s is not a prompt ref", refStr)
 	}
 	r.mu.RLock()
-	p, ok := r.providers[ref.Namespace]
+	p, ok := r.providers[ref.Domain]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("prompt: unknown prompt source %q in ref %s", ref.Namespace, refStr)
+		return nil, fmt.Errorf("prompt: unknown prompt source %q in ref %s", ref.Domain, refStr)
 	}
 	label := ref.Version
 	if label == "" {

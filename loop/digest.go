@@ -245,7 +245,7 @@ func ReadResult() capability.Capability {
 		"offset": {Type: schema.Integer, Desc: "起始字符位置,默认 0"},
 	})
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "builtin", Namespace: "context", Name: "read_result"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "read_result"},
 		Description: "分页读取被消化工具结果的原文。仅当摘要信息不足时使用,按 offset 逐页推进。",
 		Params:      params,
 		Tags:        []string{TagRawResult}, // 自身分页输出不再消化

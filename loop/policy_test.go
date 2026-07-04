@@ -12,7 +12,7 @@ import (
 
 func mutCap(name string, executed *int32) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "im", Name: name},
+		Ref:  capability.Ref{Kind: "tool", Domain: "im", Name: name},
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) {
 		atomic.AddInt32(executed, 1)
@@ -26,8 +26,8 @@ func TestApprovalPolicyRules(t *testing.T) {
 
 	st, err := NewApprovalState(ApprovalInteractive, ApprovalPolicy{
 		Rules: []ApprovalRule{
-			{Ref: "cap://tool.test/im/send_message", Args: map[string]string{"to": "team-*"}, Action: "allow"},
-			{Ref: "cap://tool.test/im/send_message", Args: map[string]string{"to": "boss"}, Action: "deny"},
+			{Ref: "cap://tool/im/send_message", Args: map[string]string{"to": "team-*"}, Action: "allow"},
+			{Ref: "cap://tool/im/send_message", Args: map[string]string{"to": "boss"}, Action: "deny"},
 		},
 	})
 	if err != nil {

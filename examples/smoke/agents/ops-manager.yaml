@@ -31,4 +31,4 @@ approval_policy:
   remember: true
   rules:
     # 灰度 SKU 免批;其余调价照常审批(参数级规则)
-    - {ref: "cap://skill.graph/catalog/apply-price", args: {sku: "CANARY-*"}, action: allow}
+    - {ref: "cap://skill/catalog/apply-price", args: {sku: "CANARY-*"}, action: allow}

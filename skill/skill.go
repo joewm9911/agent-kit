@@ -205,7 +205,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	}
 
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "skill", Provider: engineName, Namespace: ns, Name: name, Version: decl.Version},
+		Ref:         capability.Ref{Kind: "skill", Domain: ns, Name: name, Version: decl.Version},
 		Description: decl.Description,
 		Params:      paramsSchema(decl.Params),
 		Risk:        risk,

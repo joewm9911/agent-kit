@@ -11,7 +11,7 @@ import (
 
 func TestControlSteerInjectsIntoResult(t *testing.T) {
 	echo := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 	}, func(ctx context.Context, in string) (string, error) { return "result", nil })
 	wrapped := ControlTools([]capability.Capability{echo})
 
@@ -35,7 +35,7 @@ func TestControlSteerInjectsIntoResult(t *testing.T) {
 
 func TestControlInterruptStopsNextCall(t *testing.T) {
 	echo := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 	}, func(ctx context.Context, in string) (string, error) { return "result", nil })
 	wrapped := ControlTools([]capability.Capability{echo})
 
@@ -58,7 +58,7 @@ func TestControlInterruptStopsNextCall(t *testing.T) {
 
 func TestControlNoStateZeroOverhead(t *testing.T) {
 	echo := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 	}, func(ctx context.Context, in string) (string, error) { return "plain", nil })
 	wrapped := ControlTools([]capability.Capability{echo})
 	if out, err := capability.Invoke(context.Background(), wrapped[0], "{}"); err != nil || out != "plain" {

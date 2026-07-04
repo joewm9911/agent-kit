@@ -100,7 +100,7 @@ func BuildGraph(_ context.Context, decl *GraphDeclaration, ns string, resolve St
 	}
 
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "skill", Provider: "graph", Namespace: ns, Name: decl.Name, Version: decl.Version},
+		Ref:         capability.Ref{Kind: "skill", Domain: ns, Name: decl.Name, Version: decl.Version},
 		Description: decl.Description,
 		Params:      paramsSchema(decl.Params),
 		Risk:        risk,

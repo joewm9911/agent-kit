@@ -48,7 +48,7 @@ components:
     engine_config: {max_rounds: 2, step_max_steps: 4, on_exhausted: summarize}
     prompt: "策划一场关于「{topic}」的促销活动,需要时审查相关商品定价。"
     tools:
-      - "cap://skill.graph/catalog/price-review"
+      - "cap://skill/catalog/price-review"
 
   # react + 调用级 todo:研究型长循环的例外通道
   - name: deep_research

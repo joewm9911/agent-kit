@@ -1,5 +1,5 @@
 // Package httptool 把 HTTP 接口声明为 Source:一段配置声明一批接口,
-// 每个接口成为一个 cap://tool.http/<source名>/<接口名> 能力,无需写代码。
+// 每个接口成为一个 cap://tool/<source名>/<接口名> 能力,无需写代码。
 //
 // 模型产出的参数按 In 字段分发:path 参数替换 URL 占位符,query 参数
 // 拼到查询串,body 参数合并为 JSON 请求体。
@@ -109,7 +109,7 @@ func New(namespace string, cfg Config) (capability.Capability, error) {
 		}
 	}
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "http", Namespace: namespace, Name: cfg.Name},
+		Ref:         capability.Ref{Kind: "tool", Domain: namespace, Name: cfg.Name},
 		Description: cfg.Description,
 		Params:      schema.NewParamsOneOfByParams(params),
 		Risk:        risk,

@@ -13,7 +13,7 @@ import (
 
 func echoCap() capability.Capability {
 	return capability.New(capability.Meta{
-		Ref:         capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 		Description: "回显输入",
 	}, func(ctx context.Context, argsJSON string) (string, error) {
 		return "echo:" + capability.ParseSingle(argsJSON, "input"), nil

@@ -92,7 +92,7 @@ digest:
 
 ### 四条不变式（写进协议定义，解决 #3/#5/#6 的「理解成本」，不改格式）
 - **domain 不变式**：`domain` = 该 `kind` 下 `name` 的归属域；解析永远 **kind 优先**。callable→源/ns；store/retriever→slot-kind；prompt→prompt 源。因 kind 优先，`cap://store/session/x` 与 `cap://tool/session/x` 永不互比，「session 多义」消解。
-- **通配不变式**：**kind 段永远精确，通配只出现在 name 段**（domain 也精确）。旧 `cap://*.*/x/y` 的 kind 通配是「短路径不知 provider」的残留——去 provider 后 `tools/x/y` 的 kind 必然是 `tool`，写死即可。这是 domain 不变式（kind 优先 dispatch）能成立的前提：`*`-kind 无法选解析域。`Ref.Match` 因此只需在 name 段留通配逻辑；唯一真实通配用法 `tools/crm/*`（整源引入）是 name 通配，不受影响。
+- **通配不变式**：**kind 段永远精确**；domain/name 段可通配（`*` 与 name 前缀 `foo*`）。旧 `cap://*.*/x/y` 的 kind 通配是「短路径不知 provider」的残留——去 provider 后 `tools/x/y` 的 kind 必然是 `tool`，写死即可。kind 精确是 domain 不变式（kind 优先 dispatch）的前提：`*`-kind 无法选解析域。domain 仍可通配（「某 kind 全部」如 `cap://tool/*/*`）；「跨 kind 挂载全部」不走通配匹配，是 `Catalog.SelectAll` 的显式操作。
 - **ref 资格原则**：只有能在配置里被命名/引用的才有 cap ref；纯内部 graph 节点 id 不配 ref。据此删掉假的 `cap://model.step/internal/model`（graph 内部 label）；model 从不被引用，同理不入 cap 体系（保持内联 ModelConfig）。
 - **Key/version**：`Key()=kind/domain/name`（**不含 version**）。registry 存 `Key→{version→entry}`；ref 带 `@ver` 选版本、不带取 latest；priority shadowing 按 **(Key,version)** 比。仅 prompt 用 version，其余 version 空=唯一默认条目。
 

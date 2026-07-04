@@ -17,7 +17,7 @@ func testCatalog(t *testing.T) *source.Catalog {
 	t.Helper()
 	c := source.NewCatalog(capability.RiskMutating, nil)
 	write := capability.New(capability.Meta{
-		Ref:  capability.Ref{Kind: "tool", Provider: "test", Namespace: "fs", Name: "write_file"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "fs", Name: "write_file"},
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) { return "written", nil })
 	if err := c.Add(write); err != nil {
@@ -40,7 +40,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 		Capabilities: struct {
 			Include []string `yaml:"include"`
 			Exclude []string `yaml:"exclude"`
-		}{Include: []string{"cap://tool.test/fs/write_file"}},
+		}{Include: []string{"cap://tool/fs/write_file"}},
 	}
 	cap_, err := Build(context.Background(), decl, Deps{Catalog: testCatalog(t), DefaultModel: m})
 	if err != nil {
@@ -48,7 +48,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 	}
 
 	meta := cap_.Meta()
-	if meta.Ref.String() != "cap://skill.react/research/report@1" {
+	if meta.Ref.String() != "cap://skill/research/report@1" {
 		t.Fatalf("ref = %s", meta.Ref)
 	}
 	// 风险传播:绑定了 mutating 工具,skill 整体应为 mutating
@@ -72,7 +72,7 @@ func TestSkillDependencyCheck(t *testing.T) {
 		Capabilities: struct {
 			Include []string `yaml:"include"`
 			Exclude []string `yaml:"exclude"`
-		}{Include: []string{"cap://tool.test/fs/not_exist"}},
+		}{Include: []string{"cap://tool/fs/not_exist"}},
 	}
 	_, err := Build(context.Background(), decl, Deps{Catalog: testCatalog(t), DefaultModel: testmodel.New()})
 	if err == nil || !strings.Contains(err.Error(), "not found") {

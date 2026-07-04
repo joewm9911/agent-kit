@@ -31,7 +31,7 @@ func TestVectorSourceRetrieval(t *testing.T) {
 	c := caps[0]
 
 	// Ref:kind=retriever provider=vector namespace=源名,能被 tools/kb/... 匹配
-	if ref := c.Meta().Ref.String(); ref != "cap://retriever.vector/kb/search_knowledge_base" {
+	if ref := c.Meta().Ref.String(); ref != "cap://tool/kb/search_knowledge_base" {
 		t.Fatalf("ref = %s", ref)
 	}
 

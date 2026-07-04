@@ -384,7 +384,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, global *source.Catal
 	}
 
 	// 自动挂载:关联 namespaces 的全部导出 skill(exclude 可屏蔽)
-	caps, err := mounted.Select([]string{"cap://*.*/*/*"}, as.Capabilities.Exclude)
+	caps, err := mounted.SelectAll(as.Capabilities.Exclude)
 	if err != nil {
 		return nil, nil, err
 	}

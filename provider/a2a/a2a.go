@@ -111,7 +111,7 @@ func (s *a2aSource) Sync(ctx context.Context) ([]capability.Capability, error) {
 
 func (s *a2aSource) wrap(a agentInfo, risk capability.Risk) capability.Capability {
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "agent", Provider: "a2a", Namespace: s.name, Name: a.Name},
+		Ref:         capability.Ref{Kind: "agent", Domain: s.name, Name: a.Name},
 		Description: a.Description,
 		Params:      capability.SingleParam("task", "交给该远端 agent 的完整任务描述"),
 		Risk:        risk,

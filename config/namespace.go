@@ -442,7 +442,7 @@ func toolPattern(ref string) (string, error) {
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", fmt.Errorf("bad tool reference %q: want tools/<source>/<name>", ref)
 	}
-	return fmt.Sprintf("cap://*.*/%s/%s", parts[0], parts[1]), nil
+	return fmt.Sprintf("cap://tool/%s/%s", parts[0], parts[1]), nil
 }
 
 // crossNamespaceSkill 落实跨命名空间边界:cap:// 全名引用只允许
@@ -463,7 +463,7 @@ func crossNamespaceSkill(refStr string, global *source.Catalog) (capability.Capa
 // 以调用方对话快照 + 提示词起步。
 func modelStepCap(m model.ToolCallingChatModel) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref:         capability.Ref{Kind: "model", Provider: "step", Namespace: "internal", Name: "model"},
+		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "model_step"},
 		Description: "单次模型调用",
 	}, func(ctx context.Context, args string) (string, error) {
 		out, err := m.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(args)))

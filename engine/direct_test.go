@@ -15,7 +15,7 @@ import (
 func TestDirectWithToolRound(t *testing.T) {
 	var executed int32
 	echo := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 	}, func(_ context.Context, args string) (string, error) {
 		atomic.AddInt32(&executed, 1)
 		return "echo:" + args, nil
@@ -50,7 +50,7 @@ func TestDirectWithToolRound(t *testing.T) {
 
 func TestDirectAnswersWithoutTool(t *testing.T) {
 	echo := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "echo"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "echo"},
 	}, func(_ context.Context, args string) (string, error) { return "x", nil })
 	m := testmodel.New(schema.AssistantMessage("直接作答", nil))
 	r, err := Build(context.Background(), "direct", &Assembly{
@@ -70,7 +70,7 @@ func TestDirectAnswersWithoutTool(t *testing.T) {
 
 func TestDirectToolErrorFlowsToWrapUp(t *testing.T) {
 	boom := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Provider: "test", Namespace: "t", Name: "boom"},
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "boom"},
 	}, func(_ context.Context, args string) (string, error) {
 		return "", context.DeadlineExceeded
 	})
