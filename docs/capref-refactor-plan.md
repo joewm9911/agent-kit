@@ -111,6 +111,19 @@ tool/prompt/retriever 已各有「按 type 注册 provider」注册表（`source
 - skill/component/agent 供给维持现状；引擎保持闭合 switch（Ring 0 安全攸关，不开注册表，避免第三方引擎绕过治理）。
 - 一致性的真收益在**引用侧统一**（Resolver 门面）+ 对外 cap:// 协议统一，不在供给侧泛型化。
 
+## 进度（capref-refactor 分支）
+- ✅ #1 KV 原语层（commit 4eb6574）
+- ✅ #2 todo/result 适配 KV（commit 4eb6574）
+- ✅ #3 ref.go 4 段 + 不变式（commit 35994c2）
+- ✅ #4 全部构造点 + 假 source 并 builtin + 删 model-step（commit 35994c2）
+- ✅ #5 component 升 kind（commit 待记）
+- ✅ #6 解析器合流（commit 待记）
+- ⬜ #7 stores:/retrievers: 具名实例 + 四模块块（**未做，见下方决策**）
+- ⬜ #8 示例 store 块迁移（依赖 #7；ref 格式部分已随 #4 迁移）
+- ⬜ #9 README
+
+**#7 的性质与 #1-6 不同**：现有 config 已能内联配 session/long_term/retriever/digest 后端（memory.store 等），backend 仅注册了 inmemory（redis 未实现）。#7 是把这些重排成 `session:/memory:/todo:/digest:` 模块块 + `cap://store/` 引用层——**破坏性 config 改动 + 命名/共享糖，且无 redis 无法实测**。待与用户确认是否值得做。
+
 ## 实现清单（建议 commit 顺序）
 1. **KV 原语层**：`store.KV` 接口（`Update` 原子 RMW + TTL）+ `store.RegisterBackend`（现有 session/retriever 注册表同款，不搞泛型）+ inmemory 后端 ~90。**验收：redis 语义的原子 `Update` + 多副本并发测试**（1、2 的关键，不可省）。
 2. todo/result 两个薄适配器架到 KV 上：todo 去掉包级 map 与 4096 hack，result 抽出 ResultStore → KV — builtin/todo.go + loop/digest.go ~90（依赖 1）
