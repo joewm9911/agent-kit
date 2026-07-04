@@ -13,10 +13,20 @@ namespaces:
 defaults:
   step_retry: 1
 
+# 具名存储实例:模块块的 store 槽用 cap://store/<kind>/<name> 引用。
+# 分布式部署把 type 换成 redis(config: {addr: ...})即可,键按
+# agent/会话隔离,多副本共享同一后端不碰撞;此处用 file/inmemory 保持
+# 冒烟离线可跑。
+stores:
+  - {name: sessions, kind: session, type: file, config: {dir: "${SMOKE_DATA_DIR}/ops-sessions"}}
+  - {name: plans,    kind: todo,    type: inmemory}
+  - {name: cache,    kind: result,  type: inmemory}
+
+todo_store: cap://store/todo/plans   # 计划外置(分布式下须 redis)
+
 memory:
   window: 40
-  store: file
-  store_config: {dir: "${SMOKE_DATA_DIR}/ops-sessions"}
+  store: cap://store/session/sessions   # 会话历史后端(引用具名实例)
   long_term_tools: true
   auto_recall: {top_k: 3}
   record_tools: summary
@@ -24,7 +34,9 @@ memory:
 budget: {max_model_calls: 60, max_tokens: 400000}
 compaction: {max_messages: 12, keep_recent: 4}
 max_tool_result_len: 8000
-context_hygiene: {digest_over: 4000}
+context_hygiene:
+  digest_over: 4000
+  store: cap://store/result/cache   # 大结果暂存后端(分布式下须 redis)
 
 approval: interactive
 approval_policy:
