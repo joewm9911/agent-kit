@@ -36,7 +36,7 @@ func TestDigestOverThreshold(t *testing.T) {
 		t.Fatalf("digest should carry retrieval pointer, got %q", out)
 	}
 	// 全文进了暂存
-	if full, ok := store.Get("r1"); !ok || len([]rune(full)) != 8000 {
+	if full, ok := store.Get(ctx, "r1"); !ok || len([]rune(full)) != 8000 {
 		t.Fatalf("full result not stored: ok=%v len=%d", ok, len([]rune(full)))
 	}
 	// 消化器收到了当前任务背景
@@ -84,9 +84,9 @@ func TestDigestRawTagExempt(t *testing.T) {
 func TestReadResultPaging(t *testing.T) {
 	store := NewResultStore()
 	full := strings.Repeat("甲", 5000)
-	id := store.Put("search", full)
-	rr := ReadResult()
 	ctx := WithResultStore(context.Background(), store)
+	id := store.Put(ctx, "search", full)
+	rr := ReadResult()
 
 	out, err := capability.Invoke(ctx, rr, `{"id":"`+id+`"}`)
 	if err != nil || !strings.Contains(out, "[0-3000 / 共 5000 字符]") {

@@ -16,7 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -24,6 +24,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 )
 
 type todoItem struct {
@@ -40,22 +41,65 @@ const (
 	sep               = "\x1f"
 )
 
-// todoStore 按 (agent, session, 执行域) 隔离的进程内计划存储。
-type todoStore struct {
-	mu    sync.Mutex
-	lists map[string][]todoItem
-	stale map[string]int // 自上次计划更新以来的非 todo 工具调用数(nudge 用)
+// todoState 是一个执行域的完整计划状态,整体作为一个 KV 值原子读改写:
+// list 与 stale(nudge 卡住计数)同键,一次 Update 覆盖,多副本下不丢更新。
+type todoState struct {
+	List  []todoItem `json:"list"`
+	Stale int        `json:"stale"` // 自上次计划更新以来的非 todo 工具调用数
 }
 
-var todos = &todoStore{lists: map[string][]todoItem{}, stale: map[string]int{}}
+// todoKV 是 todo 的存储后端,默认进程内;装配期可由 cap://store/todo/...
+// 注入替换(见 SetStore)。todoTTL 为计划保留时长,0=不过期(默认,保持
+// 原进程内语义),生产可经 retention 配置设为有限值兜底泄漏。
+var (
+	todoKV  store.KV = store.NewInMemory()
+	todoTTL time.Duration
+)
 
-// sessionKey 用不可见分隔符拼接,agent 名/会话 ID/执行域含 "/" 也不碰撞。
-func sessionKey(ctx context.Context) string {
-	key := runctx.Agent(ctx) + sep + runctx.Session(ctx)
-	if scope := runctx.Scope(ctx); scope != "" {
+// SetStore 由配置装配注入 todo 的存储后端与保留时长。
+func SetStore(kv store.KV, ttl time.Duration) {
+	todoKV = kv
+	todoTTL = ttl
+}
+
+// keyFor 用不可见分隔符拼接,agent 名/会话 ID/执行域含 "/" 也不碰撞。
+func keyFor(agentName, sessionID, scope string) string {
+	key := agentName + sep + sessionID
+	if scope != "" {
 		key += sep + scope
 	}
 	return key
+}
+
+// sessionKey 取 ctx 当前执行域的键。
+func sessionKey(ctx context.Context) string {
+	return keyFor(runctx.Agent(ctx), runctx.Session(ctx), runctx.Scope(ctx))
+}
+
+// loadState 读取一个执行域的计划状态,缺失/损坏返回空状态。
+func loadState(ctx context.Context, key string) todoState {
+	b, ok, err := todoKV.Get(ctx, key)
+	if err != nil || !ok {
+		return todoState{}
+	}
+	var st todoState
+	_ = json.Unmarshal(b, &st)
+	return st
+}
+
+func encodeState(st todoState) []byte {
+	b, _ := json.Marshal(st)
+	return b
+}
+
+// firstInProgress 返回首个进行中任务的内容,无则空串。
+func firstInProgress(list []todoItem) string {
+	for _, t := range list {
+		if t.Status == "in_progress" {
+			return t.Content
+		}
+	}
+	return ""
 }
 
 // validate 校验一次写入,返回给模型的纠正信息;通过返回空串。
@@ -128,20 +172,19 @@ func TodoCapabilities() []capability.Capability {
 			return msg, nil // 违规以结果回传纠正,循环不中断
 		}
 		key := sessionKey(ctx)
-		todos.mu.Lock()
-		if len(todos.lists) > 4096 { // 粗粒度防泄漏
-			todos.lists = map[string][]todoItem{}
-			todos.stale = map[string]int{}
-		}
 		if len(args.Todos) == 0 {
-			delete(todos.lists, key)
-			delete(todos.stale, key)
-			todos.mu.Unlock()
+			if err := todoKV.Delete(ctx, key); err != nil {
+				return "", err
+			}
 			return "计划已清空。", nil
 		}
-		todos.lists[key] = args.Todos
-		todos.stale[key] = 0 // 更新计划即重置卡住计数
-		todos.mu.Unlock()
+		// 整体替换:list 覆盖,stale 归零(更新计划即重置卡住计数)。
+		err := todoKV.Update(ctx, key, func(_ []byte, _ bool) ([]byte, error) {
+			return encodeState(todoState{List: args.Todos, Stale: 0}), nil
+		}, todoTTL)
+		if err != nil {
+			return "", err
+		}
 		return render(args.Todos), nil
 	})
 
@@ -151,9 +194,7 @@ func TodoCapabilities() []capability.Capability {
 		Params:      schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}
 	read := capability.New(readMeta, func(ctx context.Context, _ string) (string, error) {
-		todos.mu.Lock()
-		list := todos.lists[sessionKey(ctx)]
-		todos.mu.Unlock()
+		list := loadState(ctx, sessionKey(ctx)).List
 		if len(list) == 0 {
 			return "计划为空。", nil
 		}
@@ -166,9 +207,7 @@ func TodoCapabilities() []capability.Capability {
 // PlanSection 渲染当前执行域的计划,供 L 层每轮注入消息尾部
 // (loop.PromptLayers.Plan)。计划为空时返回空串(不注入)。
 func PlanSection(ctx context.Context) string {
-	todos.mu.Lock()
-	list := todos.lists[sessionKey(ctx)]
-	todos.mu.Unlock()
+	list := loadState(ctx, sessionKey(ctx)).List
 	if len(list) == 0 {
 		return ""
 	}
@@ -238,27 +277,31 @@ func (t *nudgedTool) InvokableRun(ctx context.Context, argsJSON string, opts ...
 	return withNudge(ctx, out), nil
 }
 
-// withNudge 推进卡住计数,到阈值时在结果后附加提醒并重置。
+// withNudge 推进卡住计数,到阈值时在结果后附加提醒并重置。计数自增是
+// 原子读改写(与 todo_write 竞争同键也不丢),阈值判定的输出经闭包捕获。
 func withNudge(ctx context.Context, result string) string {
 	key := sessionKey(ctx)
-	todos.mu.Lock()
-	defer todos.mu.Unlock()
-	list := todos.lists[key]
-	current := ""
-	for _, t := range list {
-		if t.Status == "in_progress" {
-			current = t.Content
-			break
+	var current string
+	fire := false
+	err := todoKV.Update(ctx, key, func(old []byte, ok bool) ([]byte, error) {
+		var st todoState
+		if ok {
+			_ = json.Unmarshal(old, &st)
 		}
-	}
-	if current == "" {
-		return result // 没有进行中的任务,不催
-	}
-	todos.stale[key]++
-	if todos.stale[key] < nudgeAfterCalls {
+		current = firstInProgress(st.List)
+		if current == "" {
+			return old, nil // 没有进行中的任务,不催、原样写回(缺失则为无操作删除)
+		}
+		st.Stale++
+		if st.Stale >= nudgeAfterCalls {
+			st.Stale = 0
+			fire = true
+		}
+		return encodeState(st), nil
+	}, todoTTL)
+	if err != nil || !fire {
 		return result
 	}
-	todos.stale[key] = 0
 	return result + fmt.Sprintf(
 		"\n\n[计划提醒] 任务「%s」已进行多步:若已完成,立刻用 todo_write 标记并推进下一项;若计划有变,更新清单。",
 		current)
@@ -266,9 +309,7 @@ func withNudge(ctx context.Context, result string) string {
 
 // Snapshot 返回某会话主执行域的计划渲染文本,供通道(飞书卡片等)展示进度。
 func Snapshot(agentName, sessionID string) string {
-	todos.mu.Lock()
-	defer todos.mu.Unlock()
-	list := todos.lists[agentName+sep+sessionID]
+	list := loadState(context.Background(), keyFor(agentName, sessionID, "")).List
 	if len(list) == 0 {
 		return ""
 	}
@@ -277,21 +318,13 @@ func Snapshot(agentName, sessionID string) string {
 
 // Clear 清空某会话主执行域的计划,供通道/运维主动终结。
 func Clear(agentName, sessionID string) {
-	key := agentName + sep + sessionID
-	todos.mu.Lock()
-	defer todos.mu.Unlock()
-	delete(todos.lists, key)
-	delete(todos.stale, key)
+	_ = todoKV.Delete(context.Background(), keyFor(agentName, sessionID, ""))
 }
 
 // ClearCurrent 清空 ctx 当前执行域的计划。组件级临时清单在调用结束时
 // 用它即弃——草稿纸和窗口同生命周期,不留跨调用状态。
 func ClearCurrent(ctx context.Context) {
-	key := sessionKey(ctx)
-	todos.mu.Lock()
-	defer todos.mu.Unlock()
-	delete(todos.lists, key)
-	delete(todos.stale, key)
+	_ = todoKV.Delete(ctx, sessionKey(ctx))
 }
 
 func render(list []todoItem) string {
