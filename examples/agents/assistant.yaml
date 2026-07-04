@@ -28,7 +28,11 @@ memory:
   store: file             # inmemory | file | session.Register 注册的自定义后端
   store_config: {dir: ./data/sessions}   # 运行时路径,相对进程工作目录
   long_term_tools: true   # memory_save / memory_search(大脑自主)
-  auto_recall: {top_k: 3} # L4 自动召回:每轮用当前输入检索长期记忆+窗口外历史
+  auto_recall: {top_k: 3} # L4 自动召回简写:两路统一 top_k
+  # 分路形态(子块覆盖简写,负值显式关闭该路):
+  # auto_recall:
+  #   session:   {top_k: 2, retriever: bigram}  # 窗外会话召回,检索策略可注册替换
+  #   long_term: {top_k: 3}                     # 长期 KV 召回,策略由 KV 后端决定
   record_tools: summary   # 工具轨迹随会话持久化:summary | full | off
 
 budget: {max_model_calls: 40, max_tokens: 200000}

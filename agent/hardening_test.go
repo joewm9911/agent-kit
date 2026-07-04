@@ -112,7 +112,7 @@ func TestFailedTurnLeavesTrace(t *testing.T) {
 func TestTurnHistorySharedViaCtx(t *testing.T) {
 	var seen int
 	runner := &stubRunner{fn: func(ctx context.Context, msgs []*schema.Message) (*schema.Message, error) {
-		seen = len(TurnHistory(ctx))
+		seen = len(loop.TurnHistory(ctx))
 		return schema.AssistantMessage("ok", nil), nil
 	}}
 	store := session.NewInMemory(0)

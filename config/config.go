@@ -85,9 +85,21 @@ type AgentConfig struct {
 		LongTermStore  string         `yaml:"long_term_store"`
 		LongTermConfig map[string]any `yaml:"long_term_config"`
 		// AutoRecall 启用 L4 自动召回:每轮用当前输入检索长期记忆与
-		// 窗口外的会话历史,命中片段注入 system prompt(标注"非指令")。
+		// 窗口外的会话历史,命中片段注入消息尾部(标注"非指令")。
+		// 两路独立配置;平铺 top_k 是"两路统一"的简写,子块显式声明
+		// 覆盖简写,子块 top_k 负值显式关闭该路。
 		AutoRecall struct {
-			TopK int `yaml:"top_k"` // 0 = 不启用
+			TopK    int `yaml:"top_k"` // 简写:两路统一,0 = 不启用
+			Session struct {
+				TopK int `yaml:"top_k"`
+				// Retriever 是窗外会话召回的检索策略(Ring 1 注册,
+				// 缺省 bigram 词法保底;向量实现注册后按名引用)。
+				Retriever       string         `yaml:"retriever"`
+				RetrieverConfig map[string]any `yaml:"retriever_config"`
+			} `yaml:"session"`
+			LongTerm struct {
+				TopK int `yaml:"top_k"` // 检索策略由 KV 后端决定
+			} `yaml:"long_term"`
 		} `yaml:"auto_recall"`
 		// RecordTools 控制本轮工具轨迹随会话持久化的详略:
 		// summary(默认)| full | off。off 退回只存问答(任务连续性受限)。
@@ -480,13 +492,34 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	if ac.AskUser == nil || *ac.AskUser {
 		caps = append(caps, builtin.AskUser())
 	}
+	// 召回配置解析:平铺 top_k 是两路统一简写,子块覆盖,负值显式关闭。
+	ar := ac.Memory.AutoRecall
+	sessK := ar.Session.TopK
+	if sessK == 0 {
+		sessK = ar.TopK
+	}
+	kvK := ar.LongTerm.TopK
+	if kvK == 0 {
+		kvK = ar.TopK
+	}
+	if sessK < 0 {
+		sessK = 0
+	}
+	if kvK < 0 {
+		kvK = 0
+	}
+
+	// 长期记忆后端:挂工具或启用长期召回任一都需要构建;
+	// 工具面挂载仍只由 long_term_tools 决定。
 	var kv memory.KV
-	if ac.Memory.LongTermTools {
+	if ac.Memory.LongTermTools || kvK > 0 {
 		var err error
 		if kv, err = memory.New(ac.Memory.LongTermStore, ac.Memory.LongTermConfig); err != nil {
 			return nil, err
 		}
-		caps = append(caps, memory.AsCapabilities(kv)...)
+		if ac.Memory.LongTermTools {
+			caps = append(caps, memory.AsCapabilities(kv)...)
+		}
 	}
 	// Ring 0 闸门:超时(最内)→ 截断 → 审批(最外,批准等待不占超时)。
 	// 审批运行态(模式+参数级策略+决策记忆)与预算门闸由 agent 每次
@@ -556,8 +589,15 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	} else if layers.Loop == "" {
 		layers.Loop = loop.DefaultLoopPromptNoTodo // 关闭 todo:提示词不承诺不存在的工具
 	}
-	if topK := ac.Memory.AutoRecall.TopK; topK > 0 {
-		layers.Memories = autoRecall(kv, ac.Memory.Window, topK)
+	if sessK > 0 || kvK > 0 {
+		var retr session.Retriever
+		if sessK > 0 {
+			var err error // 装配期解析检索器名,未注册即拒绝(fail fast)
+			if retr, err = session.NewRetriever(ar.Session.Retriever, ar.Session.RetrieverConfig); err != nil {
+				return nil, err
+			}
+		}
+		layers.Memories = autoRecall(kv, retr, ac.Memory.Window, sessK, kvK)
 	}
 
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
@@ -589,10 +629,11 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 }
 
 // autoRecall 是 L4 自动召回钩子:每次模型调用前,用本轮用户输入
-// 检索长期记忆与窗口外的会话历史,命中片段注入消息尾部第四层。
+// 检索长期记忆(KV,策略在后端)与窗口外的会话历史(策略在注册的
+// Retriever),两路独立配置,命中片段注入消息尾部第四层。
 // 会话历史来自 agent 本轮已加载的全量记录(ctx 共享,一轮只读一次
 // store);同轮多次模型调用的查询不变,结果按轮 memo,不重复检索。
-func autoRecall(kv memory.KV, window, topK int) func(ctx context.Context) []string {
+func autoRecall(kv memory.KV, retr session.Retriever, window, sessK, kvK int) func(ctx context.Context) []string {
 	var mu sync.Mutex
 	memo := map[string]struct {
 		input  string
@@ -613,21 +654,23 @@ func autoRecall(kv memory.KV, window, topK int) func(ctx context.Context) []stri
 		mu.Unlock()
 
 		var out []string
-		// 长期记忆命中
-		if kv != nil {
-			if hits, err := kv.Search(ctx, query, topK); err == nil {
+		// 长期记忆命中(kvK 路)
+		if kv != nil && kvK > 0 {
+			if hits, err := kv.Search(ctx, query, kvK); err == nil {
 				for k, v := range hits {
 					out = append(out, fmt.Sprintf("长期记忆 %s: %s", k, v))
 				}
 			}
 		}
-		// 窗口外的会话历史命中(本轮加载的全量记录,不再回读 store)
-		if all := agent.TurnHistory(ctx); len(all) > 0 {
-			raw, _ := agent.RawHistory(all)
-			if window > 0 && len(raw) > window {
-				older := raw[:len(raw)-window]
-				for _, s := range session.SearchRelevant(older, query, topK) {
-					out = append(out, "早前对话 "+s)
+		// 窗口外的会话历史命中(sessK 路;本轮加载的全量记录,不回读 store)
+		if retr != nil && sessK > 0 {
+			if all := loop.TurnHistory(ctx); len(all) > 0 {
+				raw, _ := agent.RawHistory(all)
+				if window > 0 && len(raw) > window {
+					older := raw[:len(raw)-window]
+					for _, s := range retr.Retrieve(ctx, older, query, sessK) {
+						out = append(out, "早前对话 "+s)
+					}
 				}
 			}
 		}

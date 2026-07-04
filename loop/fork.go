@@ -34,6 +34,24 @@ func ConversationSnapshot(ctx context.Context) []*schema.Message {
 	return msgs
 }
 
+type keyTurnHistory struct{}
+
+// WithTurnHistory 把本轮开始时加载的全量会话记录(含摘要标记)装入
+// ctx,由 agent 每轮安装。与快照/预算/记录器同族:本轮运行态经 ctx
+// 下发,下游组件(L4 召回等)复用同一份数据,一轮只读一次 store。
+func WithTurnHistory(ctx context.Context, all []*schema.Message) context.Context {
+	if len(all) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, keyTurnHistory{}, all)
+}
+
+// TurnHistory 返回本轮的全量会话记录,未装入时为 nil。
+func TurnHistory(ctx context.Context) []*schema.Message {
+	all, _ := ctx.Value(keyTurnHistory{}).([]*schema.Message)
+	return all
+}
+
 type keyFork struct{}
 
 // WithForkContext 声明本次调用请求继承调用方上下文(由使用点包装

@@ -147,7 +147,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	if err != nil {
 		return "", err
 	}
-	ctx = withTurnHistory(ctx, all)
+	ctx = loop.WithTurnHistory(ctx, all)
 	// 本轮上下文卫生:结果暂存(digest 的取回来源)与对话快照(fork 的
 	// 背景来源)随 ctx 下发,skill/component 内部同样可见。
 	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
@@ -237,7 +237,7 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 	if err != nil {
 		return nil, err
 	}
-	ctx = withTurnHistory(ctx, all)
+	ctx = loop.WithTurnHistory(ctx, all)
 	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
 	ctx = loop.WithConversationSnapshot(ctx, msgs)
 	sr, err := a.runner.Stream(ctx, msgs)
@@ -312,22 +312,6 @@ func (a *Agent) loadTurn(ctx context.Context, sessionID, input string) (all, msg
 		}
 	}
 	return all, append(msgs, schema.UserMessage(input)), nil
-}
-
-type keyTurnHistory struct{}
-
-func withTurnHistory(ctx context.Context, all []*schema.Message) context.Context {
-	if len(all) == 0 {
-		return ctx
-	}
-	return context.WithValue(ctx, keyTurnHistory{}, all)
-}
-
-// TurnHistory 返回本轮开始时加载的全量会话记录(含摘要标记),供
-// L4 召回等运行时组件复用——一轮只读一次 store。未装入时为 nil。
-func TurnHistory(ctx context.Context) []*schema.Message {
-	all, _ := ctx.Value(keyTurnHistory{}).([]*schema.Message)
-	return all
 }
 
 // scheduleCompact 异步触发滚动摘要:摘要是后台维护工作(一次模型
