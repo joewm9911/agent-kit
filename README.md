@@ -53,7 +53,10 @@ type Capability interface {
 source 供货(可选源断连自动降级)、catalog 治理(冲突报错、优先级遮蔽、
 风险准入)、agent 用 include/exclude 通配选品。供给类型:`mcp`(stdio/
 sse/http)、`http`(纯配置声明接口)、`rpc`(泛化调用契约)、`local`
-(Go 函数泛型推断 schema)、`a2a`(远端 agent,与本框架 serving 协议互通)。
+(Go 函数泛型推断 schema)、`a2a`(远端 agent,与本框架 serving 协议互通)、
+`vector`(向量知识库检索,即 RAG——是 tools 层的一种工具而非独立组件;
+内置词法保底后端,真实向量库经 vector.RegisterBackend 接入;离线摄入
+不归框架管)。
 
 ## 提示词即资源
 

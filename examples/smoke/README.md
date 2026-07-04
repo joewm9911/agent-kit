@@ -25,6 +25,7 @@ namespaces/
 | 三层装配/边界/风险传播/多 agent | 全树 | TestSmokeAssembly |
 | graph 并行汇合 + fork 快照 + digest 消化 | price-review | TestSmokeGraphForkDigest |
 | 8 种引擎(direct/react/plan-execute/reflection/router/rewoo/workflow/graph) | 各 skill | TestSmokeEngineMatrix |
+| RAG(vector 知识库工具,agentic 检索后作答) | faq_bot → tools/kb | TestSmokeEngineMatrix |
 | use: 入口引用 | quick-product-qa / audit-product | TestSmokeEngineMatrix |
 | 跨 ns skill 引用 | campaign_planner → catalog/price-review | TestSmokeEngineMatrix |
 | 调用级 todo + 计划注入 | deep_research | TestSmokeEngineMatrix |

@@ -1,4 +1,17 @@
-# 营销域:reflection / router / plan-execute / 调用级 todo / 跨 ns skill 引用。
+# 营销域:reflection / router / plan-execute / 调用级 todo / 跨 ns skill 引用
+# + vector 知识库(RAG = tools 层的一种工具)。
+
+tools:
+  - name: kb
+    type: vector
+    config:
+      description: 售后政策知识库(退货/物流/会员权益)
+      tool_name: search_kb
+      top_k: 2
+      docs:
+        - "退货政策:自签收起7天内无理由退货,商品需保持完好。"
+        - "物流政策:偏远地区加收运费,一般地区满99包邮。"
+        - "会员权益:黑卡会员全场免运费,享专属客服。"
 
 components:
   # reflection:文案执行者产稿 → 评审者挑错 → 修订,轮次代码钉死
@@ -10,9 +23,11 @@ components:
     prompt: "为活动「{brief}」撰写推广文案。"
 
   # router 的两个下游:无工具 direct,单次作答
-  - name: faq_bot
+  - name: faq_bot                 # RAG:direct 引擎查知识库(agentic RAG)
     engine: direct
-    prompt: "[FAQ]你是售后FAQ助手,直接回答:{q}"
+    prompt: "[FAQ]你是售后FAQ助手。用户问题:{q}。查知识库后作答。"
+    tools:
+      - "tools/kb/search_kb"
   - name: human_handoff
     engine: direct
     prompt: "[HANDOFF]生成一段转人工的引导话术,问题:{q}"

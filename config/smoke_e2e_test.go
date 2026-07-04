@@ -33,6 +33,7 @@ import (
 
 	_ "github.com/joewm9911/agent-kit/provider/httptool"
 	_ "github.com/joewm9911/agent-kit/provider/models"
+	_ "github.com/joewm9911/agent-kit/provider/vector"
 )
 
 // ---- 自适应脚本模型 ----
@@ -193,7 +194,10 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...mo
 		}
 		return reply("[QA]在售款为P100")
 	case strings.Contains(userT, "[FAQ]"):
-		return reply("[FAQBOT]支持7天无理由退货")
+		if toolMsgs == 0 { // agentic RAG:先查知识库
+			return call("search_kb", `{"query":"退货"}`), nil
+		}
+		return reply("[FAQBOT]根据知识库:" + clipStr(toolT, 40)) // 用检索结果作答
 	case strings.Contains(userT, "[HANDOFF]"):
 		return reply("[HANDOFF]已为您转接人工")
 	case strings.Contains(userT, "深入研究课题"):
