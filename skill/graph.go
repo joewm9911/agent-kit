@@ -51,6 +51,8 @@ type Step struct {
 // + Params)加编排(Steps)。执行单元与工具的声明在命名空间层,这里
 // 只出现引用。
 type GraphDeclaration struct {
+	// Kind 是产物的 cap kind:空=skill;component 装配时置 "component"。
+	Kind        string               `yaml:"-"`
 	Name        string               `yaml:"name"`
 	Version     string               `yaml:"version"`
 	Description string               `yaml:"description"`
@@ -99,8 +101,12 @@ func BuildGraph(_ context.Context, decl *GraphDeclaration, ns string, resolve St
 		}
 	}
 
+	kind := decl.Kind
+	if kind == "" {
+		kind = "skill"
+	}
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "skill", Domain: ns, Name: decl.Name, Version: decl.Version},
+		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: decl.Name, Version: decl.Version},
 		Description: decl.Description,
 		Params:      paramsSchema(decl.Params),
 		Risk:        risk,

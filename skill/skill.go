@@ -47,6 +47,9 @@ type ModelDecl struct {
 
 // Declaration 是一个 skill 的完整声明(可来自 YAML 或代码)。
 type Declaration struct {
+	// Kind 是产物的 cap kind:空=skill(导出成品);component 装配时置
+	// "component"(私有执行单元 cap://component/<ns>/<name>)。
+	Kind string `yaml:"-"`
 	// Name 形如 "research/competitor_report",namespace/name。
 	Name        string               `yaml:"name"`
 	Version     string               `yaml:"version"`
@@ -204,8 +207,12 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		return nil, fmt.Errorf("skill %s: build engine %s: %w", decl.Name, engineName, err)
 	}
 
+	kind := decl.Kind
+	if kind == "" {
+		kind = "skill"
+	}
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "skill", Domain: ns, Name: name, Version: decl.Version},
+		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: name, Version: decl.Version},
 		Description: decl.Description,
 		Params:      paramsSchema(decl.Params),
 		Risk:        risk,
