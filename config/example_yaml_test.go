@@ -31,8 +31,8 @@ func TestExampleAppLayout(t *testing.T) {
 		t.Fatalf("mounts = %s, %s", as.Mounts[0].Name, as.Mounts[1].Name)
 	}
 	// 治理配置收在 agent 文件里
-	if as.Approval != "interactive" || as.Budget.MaxModelCalls != 40 {
-		t.Fatalf("agent governance config: approval=%q budget=%+v", as.Approval, as.Budget)
+	if as.Approval.Mode != "interactive" || as.Budget.MaxModelCalls != 40 {
+		t.Fatalf("agent governance config: approval=%q budget=%+v", as.Approval.Mode, as.Budget)
 	}
 
 	// 两个命名空间可完整装配(镜像 buildAgentFromSpec 的实例化路径)

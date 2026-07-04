@@ -3,7 +3,8 @@
 # 治理策略(approval/budget)是 agent 独占的安全边界,不被 namespace 覆盖。
 
 description: 会查天气、能写竞品报告、可以记住用户偏好的助手
-system_prompt: {ref: "cap://prompt/pp/assistant-persona"}   # L2,L1 用内置规约
+prompt:
+  system: {ref: "cap://prompt/pp/assistant-persona"}   # L2 persona;L1 loop 用内置规约
 max_steps: 30
 
 # ---- 能力域关联:挂载 namespace 即获得其全部导出 skill(路径相对本文件)----
@@ -51,9 +52,9 @@ digest:                   # ③ 大结果消化/暂存:超阈值消化,全文落
 budget: {max_model_calls: 40, max_tokens: 200000}
 max_tool_result_len: 8000
 
-approval: interactive     # mutating 操作需人工批准(CLI y/n/a/x 或 IM 回复)
-# 参数级审批策略:首条命中生效,无命中回落 ask;remember 启用会话级决策记忆
-# approval_policy:
-#   remember: true
-#   rules:
-#     - {ref: "cap://tool/fs/write_file", args: {path: "/tmp/*"}, action: allow}
+approval:                  # 治理:审批模式 + 参数级策略(合一)
+  mode: interactive        # mutating 操作需人工批准(CLI y/n/a/x 或 IM 回复)
+  # 参数级策略:首条命中生效,无命中回落 ask;remember 启用会话级决策记忆
+  # remember: true
+  # rules:
+  #   - {ref: "cap://tool/fs/write_file", args: {path: "/tmp/*"}, action: allow}

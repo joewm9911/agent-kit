@@ -1,7 +1,8 @@
 # 运营主管:挂满三个能力域,治理与记忆全开——冒烟主对象。
 
 description: 电商运营主管助手,负责定价审查、活动策划、客户跟进
-system_prompt: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief。多步骤任务先列计划。"
+prompt:
+  system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief。多步骤任务先列计划。"
 max_steps: 20
 
 namespaces:
@@ -48,8 +49,8 @@ digest:                                      # ④ 大结果消化 / 暂存
 budget: {max_model_calls: 60, max_tokens: 400000}
 max_tool_result_len: 8000
 
-approval: interactive
-approval_policy:
+approval:                     # 治理:审批模式 + 参数级策略(合一)
+  mode: interactive
   remember: true
   rules:
     # 灰度 SKU 免批;其余调价照常审批(参数级规则)

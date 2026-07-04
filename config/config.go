@@ -152,27 +152,44 @@ type DigestConfig struct {
 	StoreConfig map[string]any `yaml:"store_config"`
 }
 
-// AgentConfig 声明一个 agent:唯一的主循环是 ReAct,没有 pattern 字段;
-// plan-execute 等结构以 skill 的形式出现在 capabilities 里。
-type AgentConfig struct {
-	Name         string       `yaml:"name"`
-	Description  string       `yaml:"description"`
-	Model        *ModelConfig `yaml:"model"`         // nil 用顶层 default_model
-	SystemPrompt prompt.Value `yaml:"system_prompt"` // L2 业务 persona
-	LoopPrompt   prompt.Value `yaml:"loop_prompt"`   // L1 框架规约覆盖(默认内置)
-	MaxSteps     int          `yaml:"max_steps"`
+// PromptConfig 是提示词分层模块:L1 框架规约 + L2 业务 persona,均支持
+// 字面量或 {ref: cap://prompt/...} 引用。
+type PromptConfig struct {
+	System prompt.Value `yaml:"system"` // L2 业务 persona
+	Loop   prompt.Value `yaml:"loop"`   // L1 框架规约覆盖(默认内置)
+}
 
-	Capabilities struct {
-		Include []string `yaml:"include"`
-		Exclude []string `yaml:"exclude"`
-	} `yaml:"capabilities"`
+// CapabilitiesConfig 是能力选品 + 内置交互能力开关。
+type CapabilitiesConfig struct {
+	Include []string `yaml:"include"`
+	Exclude []string `yaml:"exclude"`
+	AskUser *bool    `yaml:"ask_user"` // 内置交互能力(默认开,显式 false 关闭)
+}
+
+// ApprovalConfig 是审批治理模块:模式 + 参数级策略(规则 + 决策记忆);
+// mode 之外的 remember/rules 内联自 loop.ApprovalPolicy。
+type ApprovalConfig struct {
+	Mode                string `yaml:"mode"` // interactive(默认) | auto | deny
+	loop.ApprovalPolicy `yaml:",inline"`     // remember, rules
+}
+
+// AgentConfig 声明一个 agent(唯一主循环是 ReAct)。配置全部模块化,YAML
+// 顶层各块各司其职:身份(name/description/model/max_steps)· prompt 提示词
+// 分层 · capabilities 能力选品 · stores/retrievers 存储定义 · session/memory/
+// todo/digest 四大上下文模块 · approval/budget/structured_output 治理边界。
+type AgentConfig struct {
+	Name        string       `yaml:"name"`
+	Description string       `yaml:"description"`
+	Model       *ModelConfig `yaml:"model"`     // nil 用顶层 default_model
+	MaxSteps    int          `yaml:"max_steps"` // 主循环步数上限
+
+	Prompt       PromptConfig       `yaml:"prompt"`       // 提示词分层(L1 loop / L2 system)
+	Capabilities CapabilitiesConfig `yaml:"capabilities"` // 能力选品 + 内置开关
 
 	// Stores/Retrievers 是具名实例声明(仅定义);四大模块的 store/retriever
 	// 槽用 cap://store/... · cap://retriever/... 引用它们(见 StoreInstance)。
 	Stores     []StoreInstance     `yaml:"stores"`
 	Retrievers []RetrieverInstance `yaml:"retrievers"`
-
-	AskUser *bool `yaml:"ask_user"` // 内置交互能力开关(默认开)
 
 	// 四大上下文/记忆模块,各自独立。
 	Session SessionConfig `yaml:"session"`
@@ -184,12 +201,11 @@ type AgentConfig struct {
 	// 0 = 默认 8000,-1 = 关闭截断。防 MCP 等外部工具返回超大结果打爆窗口。
 	MaxToolResultLen int `yaml:"max_tool_result_len"`
 
-	Budget           loop.BudgetConfig    `yaml:"budget"`
+	// 治理边界(Ring 0,agent 独占、不被 namespace 覆盖):审批 + 预算 +
+	// 结构化输出,三块各自顶层,与四大上下文模块并列。
+	Approval         ApprovalConfig        `yaml:"approval"`
+	Budget           loop.BudgetConfig     `yaml:"budget"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
-	// Approval:interactive(默认)| auto | deny。
-	Approval string `yaml:"approval"`
-	// ApprovalPolicy 是参数级审批规则与决策记忆(interactive 模式下生效)。
-	ApprovalPolicy loop.ApprovalPolicy `yaml:"approval_policy"`
 }
 
 // ReliabilityConfig 是全局可靠性策略。
@@ -634,7 +650,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	if todoOn {
 		caps = append(caps, builtin.TodoCapabilities()...)
 	}
-	if ac.AskUser == nil || *ac.AskUser {
+	if ac.Capabilities.AskUser == nil || *ac.Capabilities.AskUser {
 		caps = append(caps, builtin.AskUser())
 	}
 	// 召回配置:两路各自独立(session.recall / memory.recall),负值=关闭。
@@ -675,11 +691,11 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	// Ring 0 闸门:超时(最内)→ 截断 → 审批(最外,批准等待不占超时)。
 	// 审批运行态(模式+参数级策略+决策记忆)与预算门闸由 agent 每次
 	// 运行装入 ctx,对 skill 内部同样生效。
-	mode := loop.ApprovalMode(ac.Approval)
+	mode := loop.ApprovalMode(ac.Approval.Mode)
 	if mode == "" {
 		mode = loop.ApprovalInteractive
 	}
-	approval, err := loop.NewApprovalState(mode, ac.ApprovalPolicy)
+	approval, err := loop.NewApprovalState(mode, ac.Approval.ApprovalPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -732,13 +748,13 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	}
 
 	// L1-L4 提示词拼装
-	loopTpl, err := ac.LoopPrompt.Resolve(ctx, prompts)
+	loopTpl, err := ac.Prompt.Loop.Resolve(ctx, prompts)
 	if err != nil {
-		return nil, fmt.Errorf("resolve loop_prompt: %w", err)
+		return nil, fmt.Errorf("resolve prompt.loop: %w", err)
 	}
-	personaTpl, err := ac.SystemPrompt.Resolve(ctx, prompts)
+	personaTpl, err := ac.Prompt.System.Resolve(ctx, prompts)
 	if err != nil {
-		return nil, fmt.Errorf("resolve system_prompt: %w", err)
+		return nil, fmt.Errorf("resolve prompt.system: %w", err)
 	}
 	layers := loop.PromptLayers{Loop: loopTpl.Text, Persona: personaTpl.Text}
 	if todoOn {
