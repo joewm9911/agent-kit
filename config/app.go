@@ -43,25 +43,6 @@ import (
 	"github.com/joewm9911/agent-kit/suspend"
 )
 
-// Defaults 是可被下层重定义的执行参数默认值(治理策略不在此列)。
-// 全部为指针/可判空字段:只有显式写了的键参与覆盖,零值不污染链条。
-type Defaults struct {
-	// Model 是 component 未声明专属模型时的默认(component → ns → agent → app)。
-	Model *ModelConfig `yaml:"model"`
-	// MaxSteps 是 component 内部循环的默认步数上限。
-	MaxSteps *int `yaml:"max_steps"`
-	// Compaction 是 component 内部循环的默认压缩策略。
-	Compaction *loop.CompactionConfig `yaml:"compaction"`
-	// ToolTimeout/Retry 是 component 内部工具面与专属模型的可靠性默认。
-	ToolTimeout *loop.Duration    `yaml:"tool_timeout"`
-	Retry       *loop.RetryConfig `yaml:"retry"`
-	// StepTimeout/StepRetry 是编排步骤未声明 timeout/retry 时的默认。
-	StepTimeout *loop.Duration `yaml:"step_timeout"`
-	StepRetry   *int           `yaml:"step_retry"`
-	// DigestOver 是 component 内部工具面的大结果消化阈值默认。
-	DigestOver *int `yaml:"digest_over"`
-}
-
 // merge 返回合并结果:nearer(更近层级)显式设置的键覆盖 d。
 func (d Defaults) merge(nearer Defaults) Defaults {
 	out := d
@@ -90,46 +71,6 @@ func (d Defaults) merge(nearer Defaults) Defaults {
 		out.DigestOver = nearer.DigestOver
 	}
 	return out
-}
-
-// AppConfig 是应用级入口(app.yaml):进程级资源与接线板。
-type AppConfig struct {
-	Secrets SecretsConfig `yaml:"secrets"`
-
-	Prompts PromptsConfig `yaml:"prompts"`
-
-	// Sources 是全局兼容源(直挂 agent 工具面的通用工具,如 fs)。
-	Sources []SourceConfig `yaml:"sources"`
-	Catalog CatalogConfig  `yaml:"catalog"`
-
-	DefaultModel *ModelConfig      `yaml:"default_model"`
-	Reliability  ReliabilityConfig `yaml:"reliability"`
-
-	// Agents 是 agent 文件路径列表,相对 app.yaml 所在目录。
-	Agents []string `yaml:"agents"`
-
-	Serving  ServingConfig   `yaml:"serving"`
-	Channels []ChannelConfig `yaml:"channels"`
-	Suspend  SuspendConfig   `yaml:"suspend"`
-
-	Observability ObservabilityConfig `yaml:"observability"`
-}
-
-// AgentFile 是 agent 维度的配置文件(agents/<name>.yaml)。
-type AgentFile struct {
-	AgentConfig `yaml:",inline"`
-	// Namespaces 是关联的 namespace 文件路径(相对本文件),自动挂载
-	// 其全部导出 skill;capabilities.exclude 可屏蔽个别。
-	Namespaces []string `yaml:"namespaces"`
-	// Defaults 是 agent 级执行参数默认值,namespace/component 未声明时回落至此。
-	Defaults Defaults `yaml:"defaults"`
-}
-
-// NamespaceFile 是 namespace 维度的配置文件(namespaces/<name>.yaml)。
-type NamespaceFile struct {
-	NamespaceConfig `yaml:",inline"`
-	// Defaults 是 namespace 级执行参数默认值,覆盖 agent 级。
-	Defaults Defaults `yaml:"defaults"`
 }
 
 // AgentSpec 是解析后的 agent 文件及其关联的 namespace 文件(保序)。

@@ -27,68 +27,6 @@ import (
 	"github.com/joewm9911/agent-kit/source"
 )
 
-// ComponentConfig 声明一个执行单元:能力声明与能力使用分离的"声明"侧。
-// 不进全局目录、对外不可见。engine **必填**——执行形态决定成本模型与
-// 行为保证,是读配置的人最需要一眼看到的事实,不做隐式默认:
-//
-//	循环族(prompt + tools):engine = direct(单发:一次调用+一轮工具+
-//	  收尾,无循环)| react(自主循环)| plan-execute(规划循环)| 已注册模板;
-//	编排族(steps):engine = graph(DAG,可并行)| workflow(纯顺序,
-//	  禁 needs)。无脑钉死序列,复用 skill 的图执行器,params 显式化
-//	  入参契约。两族字段互斥。
-type ComponentConfig struct {
-	Name   string       `yaml:"name"`
-	Engine string       `yaml:"engine"`
-	Prompt prompt.Value `yaml:"prompt"`
-	// Tools 是循环族的工具面引用:tools/<source>/<name|*>(本 ns 工具)、
-	// components/<name>(本 ns 执行单元)、cap://skill 引用(跨 ns)。
-	Tools        []string              `yaml:"tools"`
-	Model        *ModelConfig          `yaml:"model"`
-	MaxSteps     int                   `yaml:"max_steps"`
-	EngineConfig map[string]any        `yaml:"engine_config"`
-	Compaction   loop.CompactionConfig `yaml:"compaction"`
-	// DigestOver 启用内部工具面的大结果消化(0 = 未声明,走 defaults 链)。
-	DigestOver int `yaml:"digest_over"`
-	// Todo 给内部循环挂调用级临时清单(仅 react;调用结束即弃)。
-	// 默认关——component 长到需要计划通常是"该拆成结构"的信号,
-	// 这是给确实拆不动的研究型长循环的例外通道。
-	Todo bool `yaml:"todo"`
-
-	// 编排族:私有的无脑序列/图(字段语义同 skill 的对应项)。
-	Params map[string]skill.ParamDecl `yaml:"params"`
-	Steps  []skill.Step               `yaml:"steps"`
-	Output string                     `yaml:"output"`
-}
-
-// NamespaceSkill 声明一个对外 skill:接口(描述+参数)+ 编排(steps,
-// 纯引用)。steps 的语义是 DAG,见 skill.Step。
-type NamespaceSkill struct {
-	Name        string                     `yaml:"name"`
-	Version     string                     `yaml:"version"`
-	Description string                     `yaml:"description"`
-	Params      map[string]skill.ParamDecl `yaml:"params"`
-	Steps       []skill.Step               `yaml:"steps"`
-	Output      string                     `yaml:"output"`
-	// Use 是入口引用形态(与 steps 互斥):skill 退化为纯接口声明
-	// (description + params),执行整体委托给一个 component
-	// (通常是 graph/workflow 形态),params JSON 原样透传。
-	Use string `yaml:"use"`
-	// StepDefaults 是本 skill 步骤未声明 timeout/retry 时的缺省
-	// (override 链的 skill 层;更下层的步骤显式声明优先)。
-	StepDefaults struct {
-		Timeout loop.Duration `yaml:"timeout"`
-		Retry   int           `yaml:"retry"`
-	} `yaml:"step_defaults"`
-}
-
-// NamespaceConfig 是一个配置命名空间的完整声明。
-type NamespaceConfig struct {
-	Name       string            `yaml:"name"`
-	Tools      []SourceConfig    `yaml:"tools"`
-	Components []ComponentConfig `yaml:"components"`
-	Skills     []NamespaceSkill  `yaml:"skills"`
-}
-
 // nsDeps 是命名空间装配的环境。
 type nsDeps struct {
 	global       *source.Catalog // skills 的落点,亦是跨 ns cap://skill 引用的解析域
