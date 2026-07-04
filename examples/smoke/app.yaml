@@ -1,0 +1,33 @@
+# examples/smoke —— 端到端冒烟场景:电商运营中台。
+# 这棵配置树刻意用满框架全部能力,是能力覆盖的活文档:
+#   3 个 namespace(catalog 商品域 / marketing 营销域 / crm 客户域)
+#   2 个 agent(ops-manager 运营主管 / support-bot 客服)
+#   8 种引擎、并行 graph、fork、{$input}、override 链、审批策略、预算、
+#   digest、会话记忆、todo……逐项由 config 包的 smoke 测试断言。
+#
+# 环境占位(运行前必须设置,fail fast):
+#   SMOKE_MODEL_PROVIDER  模型 provider:测试注入 smokescript,真实运行 minimax
+#   SMOKE_MODEL_BASE      模型 base_url(minimax 国内/海外平台不同;脚本模型忽略)
+#   MINIMAX_API_KEY       真实 key(脚本模型忽略,可设 dummy)
+#   SMOKE_API_BASE        业务工具的 HTTP 后端(测试为本地 httptest 服务器)
+#   SMOKE_DATA_DIR        会话数据目录
+
+secrets:
+  provider: env
+
+reliability:
+  model_retry: {max_attempts: 2, base_delay: 200ms}
+  tool_timeout: 60s
+
+default_model:
+  provider: "${SMOKE_MODEL_PROVIDER}"
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+    base_url: "${SMOKE_MODEL_BASE}"
+
+agents:
+  - agents/ops-manager.yaml
+  - agents/support-bot.yaml
+
+observability:
+  log: false

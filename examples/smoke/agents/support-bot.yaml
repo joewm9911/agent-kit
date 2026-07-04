@@ -1,0 +1,21 @@
+# 客服机器人:低预算 + 精简域——预算硬停与多 agent 共享 namespace 的验证对象。
+
+description: 售后客服机器人
+system_prompt: "[SUPPORT]你是售后客服。来询用 route-inquiry 分诊,商品问题用 quick-product-qa,客户信息用 customer-brief。"
+max_steps: 10
+
+namespaces:
+  - ../namespaces/catalog.yaml
+  - ../namespaces/marketing.yaml
+  - ../namespaces/crm.yaml
+
+memory:
+  window: 20
+  store: file
+  store_config: {dir: "${SMOKE_DATA_DIR}/support-sessions"}
+  record_tools: summary
+
+# 刻意压低:第 5 次模型调用即硬停,冒烟断言 ErrBudgetExhausted
+budget: {max_model_calls: 4}
+compaction: {max_messages: 16, keep_recent: 4}
+approval: auto
