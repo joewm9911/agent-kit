@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
 )
@@ -52,9 +53,9 @@ func TestGraphStepFork(t *testing.T) {
 	}
 
 	resolve := func(use string) (capability.Capability, error) { return comp, nil }
-	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
+	sk, err := engine.BuildGraph(context.Background(), &engine.GraphDeclaration{
 		Name: "probe",
-		Steps: []Step{
+		Steps: []engine.Step{
 			{Name: "fresh", Use: "c", Args: `{"q":"a"}`},
 			{Name: "forked", Use: "c", Args: `{"q":"b"}`, Context: "fork"},
 		},
@@ -94,9 +95,9 @@ func TestGraphStepFork(t *testing.T) {
 
 func TestGraphStepBadContext(t *testing.T) {
 	c := testCap("a", func(_ context.Context, s string) (string, error) { return s, nil })
-	_, err := BuildGraph(context.Background(), &GraphDeclaration{
+	_, err := engine.BuildGraph(context.Background(), &engine.GraphDeclaration{
 		Name:  "bad",
-		Steps: []Step{{Name: "s", Use: "a", Context: "clone"}},
+		Steps: []engine.Step{{Name: "s", Use: "a", Context: "clone"}},
 	}, "ns", resolverFor(map[string]capability.Capability{"a": c}))
 	if err == nil || !strings.Contains(err.Error(), "bad context") {
 		t.Fatalf("expect context validation error, got %v", err)

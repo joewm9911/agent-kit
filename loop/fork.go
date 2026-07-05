@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/joewm9911/agent-kit/runctx"
 )
 
 // fork:带内部循环的能力(component/skill/子 agent)默认从零上下文
@@ -52,25 +54,15 @@ func TurnHistory(ctx context.Context) []*schema.Message {
 	return all
 }
 
-type keyFork struct{}
-
-// WithForkContext 声明本次调用请求继承调用方上下文(由使用点包装
-// 设置,如 graph 步骤的 context: fork)。
-func WithForkContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, keyFork{}, true)
-}
-
-// ForkRequested 报告本次调用是否请求了上下文继承。
-func ForkRequested(ctx context.Context) bool {
-	b, _ := ctx.Value(keyFork{}).(bool)
-	return b
-}
+// fork 请求标志(WithForkContext/ForkRequested)已下沉基座 runctx(纯 ctx 布尔,
+// 见 runctx/fork.go),使 engine 编排也能设置。这里保留需要 eino schema 的快照与
+// 消息组装。
 
 // ForkMessages 组装 fork 起始消息:请求了 fork 且快照存在时,返回
 // [背景标注 + 快照 + task];否则只返回 [task]。供 skill/子 agent 的
 // invoke 路径统一调用。
 func ForkMessages(ctx context.Context, task *schema.Message) []*schema.Message {
-	if !ForkRequested(ctx) {
+	if !runctx.ForkRequested(ctx) {
 		return []*schema.Message{task}
 	}
 	snap := ConversationSnapshot(ctx)

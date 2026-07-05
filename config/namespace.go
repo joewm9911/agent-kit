@@ -21,6 +21,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/skill"
@@ -210,10 +211,10 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			if len(steps) > 0 {
 				return fmt.Errorf("namespace %s: skill %s: use 与 steps 互斥", ns.Name, sc.Name)
 			}
-			steps = []skill.Step{{Name: "main", Use: sc.Use}}
+			steps = []engine.Step{{Name: "main", Use: sc.Use}}
 		}
 		resolver := stepResolver(ns.Name, local, comps, deps.global, deps.defaultModel)
-		c, err := skill.BuildGraph(ctx, &skill.GraphDeclaration{
+		c, err := engine.BuildGraph(ctx, &engine.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
 			Params: sc.Params, Output: sc.Output,
 			Steps: applyStepDefaults(steps, sc.StepDefaults.Timeout, sc.StepDefaults.Retry, nsEff.stepTimeout(), nsEff.stepRetry()),
@@ -232,7 +233,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 // skill 的 step_defaults(sdTimeout/sdRetry)→ 执行画像 steps 默认
 // (defTimeout/defRetry,已含 mount/ns/agent/app 就近合并)。
 // 0 视为未声明,负值表示显式关闭(retry: -1 = 不重试,即便上层有默认)。
-func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int, defTimeout loop.Duration, defRetry int) []skill.Step {
+func applyStepDefaults(steps []engine.Step, sdTimeout loop.Duration, sdRetry int, defTimeout loop.Duration, defRetry int) []engine.Step {
 	if sdTimeout == 0 {
 		sdTimeout = defTimeout
 	}
@@ -242,7 +243,7 @@ func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int,
 	if sdTimeout == 0 && sdRetry == 0 {
 		return steps
 	}
-	out := make([]skill.Step, len(steps))
+	out := make([]engine.Step, len(steps))
 	for i, s := range steps {
 		if s.Timeout == 0 {
 			s.Timeout = sdTimeout
@@ -278,7 +279,7 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", cc.Engine)
 	}
 	resolver := stepResolver(nsName, local, comps, deps.global, deps.defaultModel)
-	return skill.BuildGraph(ctx, &skill.GraphDeclaration{
+	return engine.BuildGraph(ctx, &engine.GraphDeclaration{
 		Kind: "component",
 		Name: cc.Name, Params: cc.Params,
 		Steps:  applyStepDefaults(cc.Steps, 0, 0, eff.stepTimeout(), eff.stepRetry()),
@@ -352,7 +353,7 @@ func resolveToolFace(nsName string, refs []string, local *source.Catalog,
 
 // stepResolver 返回编排步骤的引用解析器(装配期调用):要求精确单一命中。
 func stepResolver(nsName string, local *source.Catalog, comps map[string]capability.Capability,
-	global *source.Catalog, m model.ToolCallingChatModel) skill.StepResolver {
+	global *source.Catalog, m model.ToolCallingChatModel) engine.StepResolver {
 
 	return func(use string) (capability.Capability, error) {
 		caps, err := resolveRef(nsName, use, local, global, comps, m, false)

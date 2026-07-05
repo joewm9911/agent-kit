@@ -35,7 +35,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 		Name:        "research/report",
 		Version:     "1",
 		Description: "生成报告",
-		Params:      map[string]ParamDecl{"topic": {Type: "string", Required: true}},
+		Params:      map[string]capability.ParamDecl{"topic": {Type: "string", Required: true}},
 		Prompt:      prompt.Value{Literal: "为 {topic} 生成报告"},
 		Capabilities: struct {
 			Include []string `yaml:"include"`

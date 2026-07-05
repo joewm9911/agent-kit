@@ -8,6 +8,8 @@
 package config
 
 import (
+	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/skill"
@@ -345,20 +347,20 @@ type ComponentConfig struct {
 	Todo bool `yaml:"todo"`
 
 	// 编排族:私有的无脑序列/图(字段语义同 skill 的对应项)。
-	Params map[string]skill.ParamDecl `yaml:"params"`
-	Steps  []skill.Step               `yaml:"steps"`
-	Output string                     `yaml:"output"`
+	Params map[string]capability.ParamDecl `yaml:"params"`
+	Steps  []engine.Step                   `yaml:"steps"`
+	Output string                          `yaml:"output"`
 }
 
 // NamespaceSkill 声明一个对外 skill:接口(描述+参数)+ 编排(steps,
-// 纯引用)。steps 的语义是 DAG,见 skill.Step。
+// 纯引用)。steps 的语义是 DAG,见 engine.Step。
 type NamespaceSkill struct {
-	Name        string                     `yaml:"name"`
-	Version     string                     `yaml:"version"`
-	Description string                     `yaml:"description"`
-	Params      map[string]skill.ParamDecl `yaml:"params"`
-	Steps       []skill.Step               `yaml:"steps"`
-	Output      string                     `yaml:"output"`
+	Name        string                          `yaml:"name"`
+	Version     string                          `yaml:"version"`
+	Description string                          `yaml:"description"`
+	Params      map[string]capability.ParamDecl `yaml:"params"`
+	Steps       []engine.Step                   `yaml:"steps"`
+	Output      string                          `yaml:"output"`
 	// Use 是入口引用形态(与 steps 互斥):skill 退化为纯接口声明
 	// (description + params),执行整体委托给一个 component
 	// (通常是 graph/workflow 形态),params JSON 原样透传。

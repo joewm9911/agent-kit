@@ -9,10 +9,10 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/skill"
 	"github.com/joewm9911/agent-kit/source"
 )
 
@@ -59,11 +59,11 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 		Skills: []NamespaceSkill{{
 			Name:        "deploy",
 			Description: "鉴权 → 计划 → 提交",
-			Params: map[string]skill.ParamDecl{
+			Params: map[string]capability.ParamDecl{
 				"token":   {Type: "string", Required: true},
 				"request": {Type: "string", Required: true},
 			},
-			Steps: []skill.Step{
+			Steps: []engine.Step{
 				{Name: "auth", Use: "tools/svc/auth", Args: `{"token":"{token}"}`},
 				{Name: "plan", Use: "components/planner", Args: `{"request":"{request}"}`},
 				{Name: "run", Use: "tools/svc/submit", Args: `{"plan":"{plan}"}`},
@@ -143,8 +143,8 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 				// workflow 形态:顺序钉死的私有序列(工具 → 模型),模型只出现一次
 				Name:   "lookup",
 				Engine: "workflow",
-				Params: map[string]skill.ParamDecl{"q": {Type: "string", Required: true}},
-				Steps: []skill.Step{
+				Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
+				Steps: []engine.Step{
 					{Name: "data", Use: "tools/svc/search", Args: `{"q":"{q}"}`},
 					{Name: "say", Use: "model", Args: "总结:{data}"},
 				},
@@ -153,8 +153,8 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 				// graph 形态:并行 fan-out + 汇合,引用前面的编排族 component
 				Name:   "wide",
 				Engine: "graph",
-				Params: map[string]skill.ParamDecl{"q": {Type: "string"}},
-				Steps: []skill.Step{
+				Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
+				Steps: []engine.Step{
 					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: `{"q":"{q}"}`},
 					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: `{"q":"{q}"}`},
 					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: `{"q":"{a}+{b}"}`},
@@ -165,7 +165,7 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 			// use: 入口引用:skill 退化为纯接口,执行委托给 graph component
 			Name:        "wide-search",
 			Description: "并行检索并总结",
-			Params:      map[string]skill.ParamDecl{"q": {Type: "string", Required: true}},
+			Params:      map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
 			Use:         "components/wide",
 		}},
 	}
@@ -201,7 +201,7 @@ func TestWorkflowComponentRejectsNeeds(t *testing.T) {
 		Components: []ComponentConfig{{
 			Name:   "x",
 			Engine: "workflow",
-			Steps: []skill.Step{
+			Steps: []engine.Step{
 				{Name: "a", Use: "tools/svc/search"},
 				{Name: "b", Use: "tools/svc/search", Needs: []string{"a"}},
 			},
@@ -225,7 +225,7 @@ func TestGraphComponentMutuallyExclusive(t *testing.T) {
 			Name:   "bad",
 			Engine: "react",
 			Prompt: promptVal("x"),
-			Steps:  []skill.Step{{Name: "s", Use: "tools/svc/search"}},
+			Steps:  []engine.Step{{Name: "s", Use: "tools/svc/search"}},
 		}},
 	}
 	err := buildNamespace(context.Background(), ns, nsDeps{
@@ -247,7 +247,7 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Skills: []NamespaceSkill{{
 			Name:  "lookup",
-			Steps: []skill.Step{{Name: "s", Use: "tools/svc/search"}},
+			Steps: []engine.Step{{Name: "s", Use: "tools/svc/search"}},
 		}},
 	}
 	if err := buildNamespace(context.Background(), ns1, nsDeps{
@@ -261,7 +261,7 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 		Name: "ns2",
 		Skills: []NamespaceSkill{{
 			Name:  "wrap",
-			Steps: []skill.Step{{Name: "s", Use: "cap://skill/ns1/lookup"}},
+			Steps: []engine.Step{{Name: "s", Use: "cap://skill/ns1/lookup"}},
 		}},
 	}
 	if err := buildNamespace(context.Background(), ns2, nsDeps{
@@ -275,7 +275,7 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 		Name: "ns3",
 		Skills: []NamespaceSkill{{
 			Name:  "steal",
-			Steps: []skill.Step{{Name: "s", Use: "cap://tool/svc/search"}},
+			Steps: []engine.Step{{Name: "s", Use: "cap://tool/svc/search"}},
 		}},
 	}
 	err := buildNamespace(context.Background(), ns3, nsDeps{

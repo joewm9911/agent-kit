@@ -1,12 +1,14 @@
-// graph.go 实现新形态 skill 的编排执行:声明是带 needs 的步骤列表,
-// 语义是 DAG——不写 needs 即依赖上一步(退化为串行链),显式 needs
-// 表达并行与汇合。所有引用在装配期解析锁定并完成校验(fail fast),
-// 运行期没有大脑做路由,执行路径是强保证的。
+// graph.go 是编排族引擎(graph / workflow)的执行器,与循环族引擎
+// (react/direct/…)同处 engine 包,和 `engine:` 配置面一一对应。
+//
+// 声明是带 needs 的步骤列表,语义是 DAG——不写 needs 即依赖上一步
+// (退化为串行链),显式 needs 表达并行与汇合。所有引用在装配期解析
+// 锁定并完成校验(fail fast),运行期没有大脑做路由,执行路径是强保证的。
 //
 // 执行器自持(不经 compose.Graph):步骤级超时/重试、并发状态合并、
 // 以及后续挂起/恢复所需的可序列化执行位置,都要求对执行过程的完全
 // 控制。产物仍是 capability.Capability,双形态挂载不受影响。
-package skill
+package engine
 
 import (
 	"context"
@@ -19,7 +21,6 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/runctx"
 )
 
@@ -38,7 +39,7 @@ type Step struct {
 	// Needs 是依赖的步骤名,缺省为上一声明步骤(首步缺省无依赖)。
 	Needs []string `yaml:"needs"`
 	// Timeout 是本步骤单次执行的超时,超时视为步骤失败(中断整图)。
-	Timeout loop.Duration `yaml:"timeout"`
+	Timeout capability.Duration `yaml:"timeout"`
 	// Retry 是失败后的重试次数(总尝试 = Retry+1),重试间做短退避。
 	Retry int `yaml:"retry"`
 	// Context 声明目标能力的上下文起点:空/fresh(默认,从零起步)
@@ -52,12 +53,12 @@ type Step struct {
 // 只出现引用。
 type GraphDeclaration struct {
 	// Kind 是产物的 cap kind:空=skill;component 装配时置 "component"。
-	Kind        string               `yaml:"-"`
-	Name        string               `yaml:"name"`
-	Version     string               `yaml:"version"`
-	Description string               `yaml:"description"`
-	Params      map[string]ParamDecl `yaml:"params"`
-	Steps       []Step               `yaml:"steps"`
+	Kind        string                          `yaml:"-"`
+	Name        string                          `yaml:"name"`
+	Version     string                          `yaml:"version"`
+	Description string                          `yaml:"description"`
+	Params      map[string]capability.ParamDecl `yaml:"params"`
+	Steps       []Step                          `yaml:"steps"`
 	// Output 是产出步骤名,缺省为最后一个声明的步骤。
 	Output string `yaml:"output"`
 }
@@ -76,7 +77,7 @@ type compiledStep struct {
 
 type graphPlan struct {
 	steps  []compiledStep
-	params map[string]ParamDecl
+	params map[string]capability.ParamDecl
 	output int // 产出步骤下标
 }
 
@@ -108,7 +109,7 @@ func BuildGraph(_ context.Context, decl *GraphDeclaration, ns string, resolve St
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: decl.Name, Version: decl.Version},
 		Description: decl.Description,
-		Params:      paramsSchema(decl.Params),
+		Params:      capability.ParamsSchema(decl.Params),
 		Risk:        risk,
 	}
 	return capability.New(meta, plan.run), nil
@@ -410,7 +411,7 @@ func runStep(ctx context.Context, s *compiledStep, args string) (string, error) 
 
 func invokeStep(ctx context.Context, s *compiledStep, args string) (string, error) {
 	if s.step.Context == "fork" {
-		ctx = loop.WithForkContext(ctx) // 目标能力以调用方对话快照起步
+		ctx = runctx.WithForkContext(ctx) // 目标能力以调用方对话快照起步
 	}
 	d := s.step.Timeout.Std()
 	if d <= 0 {

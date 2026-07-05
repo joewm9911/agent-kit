@@ -1,4 +1,4 @@
-package skill
+package engine
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/runctx"
 )
 
@@ -46,7 +45,7 @@ func TestGraphSerialDefaultChain(t *testing.T) {
 
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "chain",
-		Params: map[string]ParamDecl{"input": {Type: "string", Required: true}},
+		Params: map[string]capability.ParamDecl{"input": {Type: "string", Required: true}},
 		Steps: []Step{
 			{Name: "s1", Use: "a", Args: "{input}"},
 			{Name: "s2", Use: "b", Args: "{s1}"},
@@ -94,7 +93,7 @@ func TestGraphParallelAndJoin(t *testing.T) {
 
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "fanout",
-		Params: map[string]ParamDecl{"q": {Type: "string"}},
+		Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 		Steps: []Step{
 			{Name: "root", Use: "l", Needs: []string{}, Args: "{q}"},
 			{Name: "left", Use: "l", Needs: []string{"root"}, Args: "{q}"},
@@ -238,7 +237,7 @@ func TestGraphStepTimeout(t *testing.T) {
 	}
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:  "slow",
-		Steps: []Step{{Name: "s1", Use: "hang", Timeout: loop.Duration(50 * time.Millisecond)}},
+		Steps: []Step{{Name: "s1", Use: "hang", Timeout: capability.Duration(50 * time.Millisecond)}},
 	}, "ns", resolverFor(caps))
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +252,7 @@ func TestGraphMissingRequiredParam(t *testing.T) {
 	caps := map[string]capability.Capability{"a": testCap("a", func(_ context.Context, s string) (string, error) { return s, nil })}
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "strict",
-		Params: map[string]ParamDecl{"token": {Type: "string", Required: true}},
+		Params: map[string]capability.ParamDecl{"token": {Type: "string", Required: true}},
 		Steps:  []Step{{Name: "s1", Use: "a", Args: "{token}"}},
 	}, "ns", resolverFor(caps))
 	if err != nil {
@@ -273,7 +272,7 @@ func TestGraphStateIsolationAcrossInvokes(t *testing.T) {
 	caps := map[string]capability.Capability{"e": echo}
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "iso",
-		Params: map[string]ParamDecl{"v": {Type: "string"}},
+		Params: map[string]capability.ParamDecl{"v": {Type: "string"}},
 		Steps:  []Step{{Name: "s1", Use: "e", Args: "{v}"}},
 	}, "ns", resolverFor(caps))
 	if err != nil {
@@ -416,7 +415,7 @@ func TestGraphDollarNamesRejected(t *testing.T) {
 	}
 	if _, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "badparam",
-		Params: map[string]ParamDecl{"$input": {Type: "string"}},
+		Params: map[string]capability.ParamDecl{"$input": {Type: "string"}},
 		Steps:  []Step{{Name: "s", Use: "a"}},
 	}, "ns", resolverFor(caps)); err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("expect reserved-name error for param, got %v", err)

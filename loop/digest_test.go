@@ -115,7 +115,7 @@ func TestForkMessages(t *testing.T) {
 		t.Fatalf("without fork request: %d msgs", len(msgs))
 	}
 	// 请求 fork 且有快照:背景标注 + 快照 + 任务
-	ctx := WithForkContext(WithConversationSnapshot(context.Background(), snap))
+	ctx := runctx.WithForkContext(WithConversationSnapshot(context.Background(), snap))
 	msgs = ForkMessages(ctx, task)
 	if len(msgs) != 4 {
 		t.Fatalf("forked: %d msgs", len(msgs))
@@ -124,7 +124,7 @@ func TestForkMessages(t *testing.T) {
 		t.Fatalf("forked shape wrong: %+v", msgs)
 	}
 	// 请求 fork 但无快照:退化为只有任务
-	msgs = ForkMessages(WithForkContext(context.Background()), task)
+	msgs = ForkMessages(runctx.WithForkContext(context.Background()), task)
 	if len(msgs) != 1 {
 		t.Fatalf("fork without snapshot: %d msgs", len(msgs))
 	}

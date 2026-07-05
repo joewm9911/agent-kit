@@ -1,5 +1,9 @@
 # 引擎收口:graph/workflow 挪进 engine/
 
+> **状态:已落地。** `ParamDecl`/`ParamsSchema` 与 `Duration` 下沉 `capability`;
+> graph 执行器移入 `engine/graph.go`;fork 请求标志下沉 `runctx`(打破
+> engine↔loop 潜在环)。`engine` 不再依赖 `loop`,全仓 `-race` 绿。
+
 ## 决策
 `engine:` 配置面已经把 graph/workflow 当引擎选项(编排族),但实现却在
 `skill/graph.go`,与循环族(`engine/`)分居两处。**把编排引擎 graph/workflow

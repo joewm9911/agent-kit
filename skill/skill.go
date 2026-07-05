@@ -32,13 +32,6 @@ import (
 	"github.com/joewm9911/agent-kit/suspend"
 )
 
-// ParamDecl 描述一个 skill 参数。
-type ParamDecl struct {
-	Type     string `yaml:"type" json:"type"`
-	Desc     string `yaml:"desc" json:"desc"`
-	Required bool   `yaml:"required" json:"required"`
-}
-
 // ModelDecl 是 skill 专属模型声明,nil 则跟随宿主。
 type ModelDecl struct {
 	Provider string         `yaml:"provider" json:"provider"`
@@ -51,10 +44,10 @@ type Declaration struct {
 	// "component"(私有执行单元 cap://component/<ns>/<name>)。
 	Kind string `yaml:"-"`
 	// Name 形如 "research/competitor_report",namespace/name。
-	Name        string               `yaml:"name"`
-	Version     string               `yaml:"version"`
-	Description string               `yaml:"description"`
-	Params      map[string]ParamDecl `yaml:"params"`
+	Name        string                          `yaml:"name"`
+	Version     string                          `yaml:"version"`
+	Description string                          `yaml:"description"`
+	Params      map[string]capability.ParamDecl `yaml:"params"`
 	// Prompt 是任务书模板(业务知识所在),params 以 {name} 占位渲染。
 	Prompt prompt.Value `yaml:"prompt"`
 	// Engine 是执行引擎:react(默认)| plan-execute | 已注册的自定义模板。
@@ -214,7 +207,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: name, Version: decl.Version},
 		Description: decl.Description,
-		Params:      paramsSchema(decl.Params),
+		Params:      capability.ParamsSchema(decl.Params),
 		Risk:        risk,
 		Tags:        []string{"prompt:" + brief.Version},
 	}
@@ -315,24 +308,4 @@ func resolveEnginePrompts(ctx context.Context, conf map[string]any, r *prompt.Re
 		}
 	}
 	return prompts, rest, nil
-}
-
-func paramsSchema(params map[string]ParamDecl) *schema.ParamsOneOf {
-	if len(params) == 0 {
-		return capability.SingleParam("input", "输入内容")
-	}
-	out := make(map[string]*schema.ParameterInfo, len(params))
-	for name, p := range params {
-		typ := schema.String
-		switch p.Type {
-		case "number":
-			typ = schema.Number
-		case "integer":
-			typ = schema.Integer
-		case "boolean":
-			typ = schema.Boolean
-		}
-		out[name] = &schema.ParameterInfo{Type: typ, Desc: p.Desc, Required: p.Required}
-	}
-	return schema.NewParamsOneOfByParams(out)
 }
