@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/session"
 	"github.com/joewm9911/agent-kit/store"
@@ -80,7 +80,7 @@ type smokeModel struct {
 	tools []*schema.ToolInfo
 }
 
-func (s *smokeModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+func (s *smokeModel) WithTools(tools []*schema.ToolInfo) (einomodel.ToolCallingChatModel, error) {
 	return &smokeModel{tools: tools}, nil
 }
 
@@ -93,7 +93,7 @@ func (s *smokeModel) hasTool(name string) bool {
 	return false
 }
 
-func (s *smokeModel) Stream(ctx context.Context, in []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (s *smokeModel) Stream(ctx context.Context, in []*schema.Message, opts ...einomodel.Option) (*schema.StreamReader[*schema.Message], error) {
 	out, err := s.Generate(ctx, in, opts...)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func markers(text string) string {
 	return strings.Join(out, "")
 }
 
-func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...einomodel.Option) (*schema.Message, error) {
 	recordSmoke(msgs)
 	var sys, user, toolTxt strings.Builder
 	toolMsgs := 0
@@ -304,7 +304,7 @@ func newSmokeBackend(t *testing.T) (*smokeBackend, *httptest.Server) {
 func setupSmokeEnv(t *testing.T) *smokeBackend {
 	t.Helper()
 	registerSmoke.Do(func() {
-		registry.RegisterModel("smokescript", func(_ context.Context, _ map[string]any) (model.ToolCallingChatModel, error) {
+		model.Register("smokescript", func(_ context.Context, _ map[string]any) (einomodel.ToolCallingChatModel, error) {
 			return &smokeModel{}, nil
 		})
 	})

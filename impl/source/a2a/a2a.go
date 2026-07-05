@@ -23,14 +23,14 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/impl/utils/decode"
 	"github.com/joewm9911/agent-kit/source"
 )
 
 func init() {
 	source.Register("a2a", func(ctx context.Context, name string, conf map[string]any) (source.Source, error) {
 		var cfg Config
-		if err := registry.DecodeConfig(conf, &cfg); err != nil {
+		if err := decode.Config(conf, &cfg); err != nil {
 			return nil, err
 		}
 		if cfg.BaseURL == "" {

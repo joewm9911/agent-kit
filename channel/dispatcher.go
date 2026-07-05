@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/store"
 	"github.com/joewm9911/agent-kit/suspend"
@@ -18,7 +17,7 @@ import (
 // Binding 把一个 Channel 路由到一个 Agent。
 type Binding struct {
 	Channel Channel
-	Agent   *agent.Agent
+	Agent   Runnable
 	// SessionMapping:chat(群共享会话)| chat_user(群内每人独立会话)。
 	SessionMapping string
 	// ReplyMode:text(整段回复)| stream(先发占位,流式刷新,需通道支持 Update)。

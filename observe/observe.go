@@ -1,15 +1,15 @@
 // Package observe 基于 eino callbacks 提供开箱即用的可观测性:
 // 每个组件(模型、工具、图节点)的开始/结束/耗时/错误统一打点。
 //
-// eino 的 callback 是切面机制,全局安装一次即可覆盖所有 Runnable 执行,
-// 包括 react 循环内部的每次模型调用与工具调用。接入 Langfuse / OTel
-// 等平台时,参照 Handler 用对应 SDK 实现同样的五个时机即可。
+// 本包只提供纯构造(Handler/Trajectory 返回 callbacks.Handler),不持有
+// 任何进程级状态;"装没装过"的账本由装配层(config)持有——eino 全局
+// 回调是进程级切面,幂等责任属于装配进程的一方,不属于库。接入
+// Langfuse / OTel 等平台时,参照 Handler 用对应 SDK 实现同样的五个时机。
 package observe
 
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -65,13 +65,4 @@ func cost(ctx context.Context) time.Duration {
 		return time.Since(t)
 	}
 	return 0
-}
-
-var installOnce sync.Once
-
-// Install 全局安装日志切面,进程内幂等。
-func Install(logger *slog.Logger) {
-	installOnce.Do(func() {
-		callbacks.AppendGlobalHandlers(Handler(logger))
-	})
 }

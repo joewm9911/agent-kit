@@ -23,13 +23,13 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/channel"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/impl/utils/decode"
 )
 
 func init() {
 	channel.Register("feishu", func(name string, conf map[string]any) (channel.Channel, error) {
 		var cfg Config
-		if err := registry.DecodeConfig(conf, &cfg); err != nil {
+		if err := decode.Config(conf, &cfg); err != nil {
 			return nil, err
 		}
 		return New(name, cfg)

@@ -85,7 +85,12 @@ func (r *Resolver) Add(name string, p Provider) {
 }
 
 // Resolve 解析 cap://prompt.*/<source>/<name>@<label> 形式的引用。
+// nil 接收者安全:装配层常以可能为 nil 的 *Resolver 满足 Source 接口
+// (typed-nil 穿过接口后非 nil),在此兜底成明确错误而非 panic。
 func (r *Resolver) Resolve(ctx context.Context, refStr string) (*Template, error) {
+	if r == nil {
+		return nil, fmt.Errorf("prompt: ref %s used but no prompt sources configured", refStr)
+	}
 	ref, err := capability.ParseRef(refStr)
 	if err != nil {
 		return nil, err
@@ -140,9 +145,15 @@ func (v *Value) UnmarshalYAML(unmarshal func(any) error) error {
 // IsZero 报告该字段是否未配置。
 func (v Value) IsZero() bool { return v.Literal == "" && v.Ref == "" }
 
+// Source 是引用解析的最小契约:消费方(skill/loop/config 装配)持它而非
+// 具体 *Resolver,测试可注入假源。*Resolver 天然实现。
+type Source interface {
+	Resolve(ctx context.Context, refStr string) (*Template, error)
+}
+
 // Resolve 解析该字段:字面量直接返回(version 记为 inline),
 // 引用则经 resolver 拉取。
-func (v Value) Resolve(ctx context.Context, r *Resolver) (*Template, error) {
+func (v Value) Resolve(ctx context.Context, r Source) (*Template, error) {
 	if v.Literal != "" {
 		return &Template{Name: "inline", Version: "inline", Text: v.Literal}, nil
 	}

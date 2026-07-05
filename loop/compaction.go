@@ -47,7 +47,7 @@ func (c CompactionConfig) Keep() int {
 }
 
 // ResolvePrompt 在装配期解析摘要提示词引用(锁版本)。未配置时空操作。
-func (c *CompactionConfig) ResolvePrompt(ctx context.Context, r *prompt.Resolver) error {
+func (c *CompactionConfig) ResolvePrompt(ctx context.Context, r prompt.Source) error {
 	if c.Prompt.IsZero() {
 		return nil
 	}

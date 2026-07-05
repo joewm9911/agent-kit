@@ -14,25 +14,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/channel"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/suspend"
 )
 
 // Server 是 Gateway 实例。
 type Server struct {
 	addr   string
 	mux    *http.ServeMux
-	agents map[string]*agent.Agent
+	agents map[string]channel.Runnable
 	logger *slog.Logger
 }
 
 // New 创建 Gateway 并注册 agent 路由。
-func New(addr string, agents []*agent.Agent, logger *slog.Logger) *Server {
+func New(addr string, agents []channel.Runnable, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{addr: addr, mux: http.NewServeMux(), agents: map[string]*agent.Agent{}, logger: logger}
+	s := &Server{addr: addr, mux: http.NewServeMux(), agents: map[string]channel.Runnable{}, logger: logger}
 	for _, a := range agents {
 		s.agents[a.Name()] = a
 	}
@@ -93,7 +93,7 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Session == "" {
-		req.Session = fmt.Sprintf("http-%d", time.Now().UnixNano())
+		req.Session = "http-" + suspend.NewTurnID() // 时间+随机,并发不碰撞、可读可排序
 	}
 	ctx := runctx.WithUser(r.Context(), req.User)
 
@@ -142,7 +142,7 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) stream(w http.ResponseWriter, ctx context.Context, a *agent.Agent, session, input string) {
+func (s *Server) stream(w http.ResponseWriter, ctx context.Context, a channel.Runnable, session, input string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -201,7 +201,7 @@ func (s *Server) handleA2ATask(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// A2A 任务无会话延续:每次独立会话,与子 agent 语义一致。
-	session := fmt.Sprintf("a2a-%d", time.Now().UnixNano())
+	session := "a2a-" + suspend.NewTurnID()
 	result, err := a.Run(r.Context(), session, req.Task)
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

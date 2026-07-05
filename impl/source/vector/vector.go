@@ -33,7 +33,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/impl/utils/decode"
 	"github.com/joewm9911/agent-kit/source"
 	"github.com/joewm9911/agent-kit/vectorstore"
 )
@@ -47,7 +47,7 @@ func init() {
 		var c struct {
 			Docs []string `json:"docs"`
 		}
-		if err := registry.DecodeConfig(conf, &c); err != nil {
+		if err := decode.Config(conf, &c); err != nil {
 			return nil, err
 		}
 		return &inmemoryRetriever{docs: c.Docs}, nil
@@ -64,7 +64,7 @@ func init() {
 			BackendConfig map[string]any `json:"backend_config"`
 			Docs          []string       `json:"docs"`
 		}
-		if err := registry.DecodeConfig(conf, &c); err != nil {
+		if err := decode.Config(conf, &c); err != nil {
 			return nil, err
 		}
 		// inmemory 后端的 docs 直接从顶层 config 取(免去嵌套 backend_config)。

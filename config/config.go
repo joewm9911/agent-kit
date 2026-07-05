@@ -10,16 +10,15 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 	"gopkg.in/yaml.v3"
 
 	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/channel"
 	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/observe"
 	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/secrets"
 	"github.com/joewm9911/agent-kit/serving"
@@ -59,15 +58,9 @@ func secretsProviderFor(raw []byte, path string) (secrets.Provider, error) {
 	if err := yaml.Unmarshal(raw, &head); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	switch head.Secrets.Provider {
-	case "", "env":
-		return secrets.Env{}, nil
-	case "file":
-		p, _ := head.Secrets.Config["path"].(string)
-		return secrets.NewFile(p)
-	default:
-		return nil, fmt.Errorf("unknown secrets provider %q", head.Secrets.Provider)
-	}
+	// 经注册表构造(env 随协议包常驻;file/vault 等在 impl/secrets/*,
+	// 空导入注册,未注册即 fail fast)。
+	return secrets.New(head.Secrets.Provider, head.Secrets.Config)
 }
 
 // expandParse 用给定 provider 展开占位符后解析 YAML。
@@ -112,14 +105,9 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		logger = slog.Default()
 	}
 
-	// 1. 可观测性
-	if cfg.Observability.Log {
-		observe.Install(logger)
-	}
-	if p := cfg.Observability.TrajectoryPath; p != "" {
-		if err := observe.InstallTrajectory(p); err != nil {
-			return nil, err
-		}
+	// 1. 可观测性(进程级幂等账本在 observe.go)
+	if err := installObservability(cfg.Observability, logger); err != nil {
+		return nil, err
 	}
 
 	// 2. 提示词
@@ -162,10 +150,10 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	// app 层默认模型(skill/workflow 与未声明 model 的 agent 使用)。
 	// 统一套 Ring 0 中间件:瞬时错误重试 + 预算(门闸经 ctx 生效,
 	// skill/component 内部调用同样计入调用方会话预算)。
-	var defaultModel model.ToolCallingChatModel
+	var defaultModel einomodel.ToolCallingChatModel
 	if cfg.Profile.Model != nil {
 		var err error
-		if defaultModel, err = registry.BuildModel(ctx, cfg.Profile.Model.Provider, cfg.Profile.Model.Config); err != nil {
+		if defaultModel, err = model.Build(ctx, cfg.Profile.Model.Provider, cfg.Profile.Model.Config); err != nil {
 			return nil, fmt.Errorf("model: %w", err)
 		}
 		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry()))
@@ -223,7 +211,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 
 	// 7. gateway 与 IM 通道
 	if cfg.Serving.Addr != "" {
-		agents := make([]*agent.Agent, 0, len(app.Agents))
+		agents := make([]channel.Runnable, 0, len(app.Agents))
 		for _, a := range app.Agents {
 			agents = append(agents, a)
 		}

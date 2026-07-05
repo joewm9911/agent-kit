@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/source"
 )
 
@@ -22,17 +22,17 @@ var registerAppTestFakes sync.Once
 // markerModel 固定返回构造时的标记文本,用于验证 override 链选中了哪个模型。
 type markerModel struct{ resp string }
 
-func (m *markerModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (m *markerModel) Generate(context.Context, []*schema.Message, ...einomodel.Option) (*schema.Message, error) {
 	return schema.AssistantMessage(m.resp, nil), nil
 }
-func (m *markerModel) Stream(ctx context.Context, in []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (m *markerModel) Stream(ctx context.Context, in []*schema.Message, opts ...einomodel.Option) (*schema.StreamReader[*schema.Message], error) {
 	out, _ := m.Generate(ctx, in, opts...)
 	sr, sw := schema.Pipe[*schema.Message](1)
 	sw.Send(out, nil)
 	sw.Close()
 	return sr, nil
 }
-func (m *markerModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+func (m *markerModel) WithTools([]*schema.ToolInfo) (einomodel.ToolCallingChatModel, error) {
 	return m, nil
 }
 
@@ -42,7 +42,7 @@ func setupAppTestFakes() {
 	setupTestSource() // nstest(见 namespace_test.go)
 	registerAppTestFakes.Do(func() {
 		// marker 模型:config.resp 即固定回复
-		registry.RegisterModel("marker", func(_ context.Context, conf map[string]any) (model.ToolCallingChatModel, error) {
+		model.Register("marker", func(_ context.Context, conf map[string]any) (einomodel.ToolCallingChatModel, error) {
 			resp, _ := conf["resp"].(string)
 			return &markerModel{resp: resp}, nil
 		})

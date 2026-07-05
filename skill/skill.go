@@ -18,16 +18,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/source"
 	"github.com/joewm9911/agent-kit/suspend"
 	"github.com/joewm9911/agent-kit/todo"
 )
@@ -70,11 +69,18 @@ type Declaration struct {
 	Todo bool `yaml:"todo"`
 }
 
-// Deps 是装配 skill 所需的环境。
+// Selector 是能力选品的最小契约(消费方定义):按 CapRef include/exclude
+// 选出工具子集。*source.Catalog 天然实现。
+type Selector interface {
+	Select(include, exclude []string) ([]capability.Capability, error)
+}
+
+// Deps 是装配 skill 所需的环境。Catalog/Prompts 均为接口:skill 只依赖
+// "能选品""能解析引用"两个行为,不依赖装配层的具体目录/解析器。
 type Deps struct {
-	Catalog      *source.Catalog
-	Prompts      *prompt.Resolver
-	DefaultModel model.ToolCallingChatModel
+	Catalog      Selector
+	Prompts      prompt.Source
+	DefaultModel einomodel.ToolCallingChatModel
 	// LoopPrompt 是 L1 框架规约,skill 内部小循环复用,保持运行纪律一致。
 	LoopPrompt string
 	// Capabilities 是预解析的工具面。非空时跳过 Catalog 选品,由调用方
@@ -108,7 +114,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	// (重试 + 预算,预算门闸经 ctx 生效);DefaultModel 由上层包装。
 	m := deps.DefaultModel
 	if decl.Model != nil {
-		if m, err = registry.BuildModel(ctx, decl.Model.Provider, decl.Model.Config); err != nil {
+		if m, err = model.Build(ctx, decl.Model.Provider, decl.Model.Config); err != nil {
 			return nil, fmt.Errorf("skill %s: build model: %w", decl.Name, err)
 		}
 		m = loop.BudgetModel(loop.RetryModel(m, deps.Retry))
@@ -284,7 +290,7 @@ func checkExactRefs(include []string, selected []capability.Capability) error {
 
 // resolveEnginePrompts 把 engine_config 中 *_prompt 键解析为文本
 // (支持字面量与 {ref: cap://prompt...}),其余键原样透传给引擎。
-func resolveEnginePrompts(ctx context.Context, conf map[string]any, r *prompt.Resolver) (map[string]string, map[string]any, error) {
+func resolveEnginePrompts(ctx context.Context, conf map[string]any, r prompt.Source) (map[string]string, map[string]any, error) {
 	prompts := map[string]string{}
 	rest := map[string]any{}
 	for k, v := range conf {

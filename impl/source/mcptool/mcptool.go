@@ -12,14 +12,14 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/impl/utils/decode"
 	"github.com/joewm9911/agent-kit/source"
 )
 
 func init() {
 	source.Register("mcp", func(ctx context.Context, name string, conf map[string]any) (source.Source, error) {
 		var cfg Config
-		if err := registry.DecodeConfig(conf, &cfg); err != nil {
+		if err := decode.Config(conf, &cfg); err != nil {
 			return nil, err
 		}
 		return &mcpSource{name: name, cfg: cfg}, nil

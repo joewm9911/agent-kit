@@ -31,15 +31,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 
 	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/channel"
 	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/observe"
 	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/serving"
 	"github.com/joewm9911/agent-kit/source"
 )
@@ -201,14 +200,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	}
 	ac := &spec.App
 
-	// 1. 可观测性
-	if ac.Observability.Log {
-		observe.Install(logger)
-	}
-	if p := ac.Observability.TrajectoryPath; p != "" {
-		if err := observe.InstallTrajectory(p); err != nil {
-			return nil, err
-		}
+	// 1. 可观测性(进程级幂等账本在 observe.go)
+	if err := installObservability(ac.Observability, logger); err != nil {
+		return nil, err
 	}
 
 	// 2. 提示词
@@ -249,9 +243,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	}
 
 	// 4. app 默认模型(Ring 0 包装同单文件路径)
-	var defaultModel model.ToolCallingChatModel
+	var defaultModel einomodel.ToolCallingChatModel
 	if ac.Profile.Model != nil {
-		m, err := registry.BuildModel(ctx, ac.Profile.Model.Provider, ac.Profile.Model.Config)
+		m, err := model.Build(ctx, ac.Profile.Model.Provider, ac.Profile.Model.Config)
 		if err != nil {
 			return nil, fmt.Errorf("model: %w", err)
 		}
@@ -275,7 +269,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 
 	// 6. gateway 与 IM 通道(接线板)
 	if ac.Serving.Addr != "" {
-		agents := make([]*agent.Agent, 0, len(app.Agents))
+		agents := make([]channel.Runnable, 0, len(app.Agents))
 		for _, a := range app.Agents {
 			agents = append(agents, a)
 		}
@@ -315,7 +309,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 // (跨 ns 引用在本 agent 的挂载集合内解析)→ 自动挂载全部导出 skill
 // → 叠加全局兼容源的 include 选品 → 交给 buildAgent。
 func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, global *source.Catalog,
-	prompts *prompt.Resolver, defaultModel model.ToolCallingChatModel,
+	prompts *prompt.Resolver, defaultModel einomodel.ToolCallingChatModel,
 	maxRisk capability.Risk, srcCache *sourceCache,
 	opts BuildOptions) (*agent.Agent, *source.Catalog, error) {
 

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 
 	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/askuser"
@@ -19,7 +19,7 @@ import (
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/memory"
 	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/session"
 	"github.com/joewm9911/agent-kit/store"
@@ -32,7 +32,7 @@ import (
 // (retry 用其解析出的 reliability.retry + 预算);未声明则复用共享的 app
 // 默认(已包装,零重建)。namespace/component 不参与——它们不可自指 model。
 func agentModel(ctx context.Context, own *ModelConfig,
-	fallback model.ToolCallingChatModel, retry loop.RetryConfig) (model.ToolCallingChatModel, error) {
+	fallback einomodel.ToolCallingChatModel, retry loop.RetryConfig) (einomodel.ToolCallingChatModel, error) {
 
 	if own == nil {
 		if fallback == nil {
@@ -40,7 +40,7 @@ func agentModel(ctx context.Context, own *ModelConfig,
 		}
 		return fallback, nil
 	}
-	m, err := registry.BuildModel(ctx, own.Provider, own.Config)
+	m, err := model.Build(ctx, own.Provider, own.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func componentTodo() *todo.Todo {
 // (max_steps/compaction/tool_timeout/retry/digest);会话状态与治理边界
 // 直接读 ac(调用方已把 app 层默认并入)。
 func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capability.Capability,
-	prompts *prompt.Resolver, m model.ToolCallingChatModel,
+	prompts *prompt.Resolver, m einomodel.ToolCallingChatModel,
 	interactor runctx.Interactor, logger *slog.Logger) (*agent.Agent, error) {
 
 	if logger == nil {

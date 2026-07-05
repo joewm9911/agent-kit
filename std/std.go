@@ -10,6 +10,7 @@ package std
 
 import (
 	_ "github.com/joewm9911/agent-kit/impl/memory/inmemory"
+	_ "github.com/joewm9911/agent-kit/impl/secrets/file"
 	_ "github.com/joewm9911/agent-kit/impl/session/bigram"
 	_ "github.com/joewm9911/agent-kit/impl/session/file"
 	_ "github.com/joewm9911/agent-kit/impl/session/inmemory"

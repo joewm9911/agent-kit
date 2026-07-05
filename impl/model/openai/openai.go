@@ -6,20 +6,21 @@ import (
 	"context"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino/components/model"
+	einomodel "github.com/cloudwego/eino/components/model"
 
-	"github.com/joewm9911/agent-kit/registry"
+	"github.com/joewm9911/agent-kit/impl/utils/decode"
+	"github.com/joewm9911/agent-kit/protocol/model"
 )
 
 func init() {
 	// provider: openai —— 兼容所有 OpenAI 协议的服务(含各家代理网关)。
-	registry.RegisterModel("openai", func(ctx context.Context, conf map[string]any) (model.ToolCallingChatModel, error) {
+	model.Register("openai", func(ctx context.Context, conf map[string]any) (einomodel.ToolCallingChatModel, error) {
 		var cfg struct {
 			APIKey  string `json:"api_key"`
 			BaseURL string `json:"base_url"`
 			Model   string `json:"model"`
 		}
-		if err := registry.DecodeConfig(conf, &cfg); err != nil {
+		if err := decode.Config(conf, &cfg); err != nil {
 			return nil, err
 		}
 		return openai.NewChatModel(ctx, &openai.ChatModelConfig{
