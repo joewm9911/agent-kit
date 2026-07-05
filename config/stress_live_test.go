@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/builtin"
+	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
+	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
 	"github.com/joewm9911/agent-kit/loop"
-	_ "github.com/joewm9911/agent-kit/provider/redisstore" // 注册 redis 后端
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/store"
 )

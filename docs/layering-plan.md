@@ -1,6 +1,14 @@
 # 三层分离:协议 / agent-kit 实现(impl)/ 第三方
 
-> 状态:**设计/盘点**,未落地。目标:把"可扩展协议"与"实现"拆干净,让基于
+> **状态:已落地(务实版)。** Tier 1(exec/vectorstore 协议上浮)、Tier 2
+> (provider/* → impl/<模块>/<实现>,消灭 provider/ 泛名)全做。Tier 3 按务实
+> 边界落地:**外部/opt-in 后端 redis 拆到 impl/{session,memory}/redis +
+> impl/utils/redisconn**(消灭最后一个 provider/);而 **零依赖、自注册、且被
+> 直接构造的默认实现(session/memory/store 的 inmemory·file·bigram、prompt 的
+> inline·file·http)保持内聚在各自协议包**——与 store.KV inmemory 内聚一致:
+> 它们被核心测试直接当构造器用、且是 zero-config 的地基,外移只会逼出
+> std+fail-fast 而对第三方无实益。因此**不建 std/、不改 fail-fast**。全仓
+> `-race` 绿。目标:把"可扩展协议"与"实现"拆干净,让基于
 > agent-kit 的开发者清楚看到——哪些是协议(我可以自己实现)、哪些是 agent-kit
 > 给的实现(我可以替换)、我自己的实现该怎么挂进去。
 

@@ -7,7 +7,8 @@ import (
 
 	"github.com/joewm9911/agent-kit/builtin"
 	"github.com/joewm9911/agent-kit/capability"
-	_ "github.com/joewm9911/agent-kit/provider/redisstore" // 注册 redis 后端
+	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
+	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/store"
 )

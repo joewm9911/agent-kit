@@ -15,14 +15,15 @@ import (
 	// 空导入触发 source / channel / model 工厂注册
 	_ "github.com/joewm9911/agent-kit/examples/engines" // 自定义 exec 引擎示例(docker)
 	_ "github.com/joewm9911/agent-kit/impl/channel/feishu"
+	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
 	_ "github.com/joewm9911/agent-kit/impl/model/openai"
+	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
 	_ "github.com/joewm9911/agent-kit/impl/source/a2a"
 	_ "github.com/joewm9911/agent-kit/impl/source/exectool" // 脚本执行工具(cap://tool/<源>/<name>)
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/mcptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/vector"
-	_ "github.com/joewm9911/agent-kit/provider/redisstore" // redis 后端(store: redis / cap://store/...)
 
 	"github.com/cloudwego/eino/callbacks"
 
