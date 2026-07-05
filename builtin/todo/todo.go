@@ -1,15 +1,17 @@
-// Package builtin 提供框架内置能力:todo(计划外化)与 ask_user
-// (人机交互)。
+// Package todo 提供内置的计划外化能力(todo_write/todo_read)。
 //
 // todo 的纪律是 harness 强制的,不靠模型自觉,三道保证:
 //   - 写入校验:状态枚举、最多一个 in_progress、内容规模,违规拒绝并纠正;
 //   - 每轮可见:PlanSection 供 L 层把当前计划渲染进每轮消息尾部;
-//   - 卡住提醒:NudgeTools 检测"有进行中任务却久未更新",在工具结果后附提醒。
+//   - 卡住提醒:Nudge 检测"有进行中任务却久未更新",在工具结果后附提醒。
 //
 // 计划按 (agent, session, 执行域) 隔离:子 agent 压执行域后与宿主分键,
 // 互不覆盖。todo 只属于主循环(agent 与子 agent)——能结构化的任务用
 // steps/引擎表达,不能预先结构化的任务流才需要外化计划。
-package builtin
+//
+// 存储由装配层构造并注入(New(kv, ttl)):消费方持有自己的后端,不读
+// 任何全局单例——同进程多 agent 各持各的 todo 后端,互不覆盖。
+package todo
 
 import (
 	"context"
@@ -48,18 +50,17 @@ type todoState struct {
 	Stale int        `json:"stale"` // 自上次计划更新以来的非 todo 工具调用数
 }
 
-// todoKV 是 todo 的存储后端,默认进程内;装配期可由 cap://store/todo/...
-// 注入替换(见 SetStore)。todoTTL 为计划保留时长,0=不过期(默认,保持
-// 原进程内语义),生产可经 retention 配置设为有限值兜底泄漏。
-var (
-	todoKV  store.KV = store.NewInMemory()
-	todoTTL time.Duration
-)
+// Todo 是 todo 计划外化的持有型对象:持有存储后端(store.KV)与保留时长,
+// 由装配层用 New 注入。能力/提醒/计划渲染/清理都是它的方法,全部走
+// t.kv,不读任何全局。ttl 为计划保留时长,0=不过期。
+type Todo struct {
+	kv  store.KV
+	ttl time.Duration
+}
 
-// SetStore 由配置装配注入 todo 的存储后端与保留时长。
-func SetStore(kv store.KV, ttl time.Duration) {
-	todoKV = kv
-	todoTTL = ttl
+// New 用注入的后端构造一个 todo 持有对象。
+func New(kv store.KV, ttl time.Duration) *Todo {
+	return &Todo{kv: kv, ttl: ttl}
 }
 
 // keyFor 用不可见分隔符拼接,agent 名/会话 ID/执行域含 "/" 也不碰撞。
@@ -77,8 +78,8 @@ func sessionKey(ctx context.Context) string {
 }
 
 // loadState 读取一个执行域的计划状态,缺失/损坏返回空状态。
-func loadState(ctx context.Context, key string) todoState {
-	b, ok, err := todoKV.Get(ctx, key)
+func (t *Todo) loadState(ctx context.Context, key string) todoState {
+	b, ok, err := t.kv.Get(ctx, key)
 	if err != nil || !ok {
 		return todoState{}
 	}
@@ -142,8 +143,8 @@ const todoWriteDesc = `写入/更新任务计划清单(整体替换)。使用规
 - 没有完成的事不许标 completed:测试失败、部分完成、被阻塞都保持 in_progress 并新增说明项。
 - 一轮只调用一次;整体替换语义:每次提交完整清单。`
 
-// TodoCapabilities 返回 todo_write / todo_read 两个能力。
-func TodoCapabilities() []capability.Capability {
+// Capabilities 返回 todo_write / todo_read 两个能力(闭包捕获 t.kv)。
+func (t *Todo) Capabilities() []capability.Capability {
 	writeMeta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_write"},
 		Description: todoWriteDesc,
@@ -173,15 +174,15 @@ func TodoCapabilities() []capability.Capability {
 		}
 		key := sessionKey(ctx)
 		if len(args.Todos) == 0 {
-			if err := todoKV.Delete(ctx, key); err != nil {
+			if err := t.kv.Delete(ctx, key); err != nil {
 				return "", err
 			}
 			return "计划已清空。", nil
 		}
 		// 整体替换:list 覆盖,stale 归零(更新计划即重置卡住计数)。
-		err := todoKV.Update(ctx, key, func(_ []byte, _ bool) ([]byte, error) {
+		err := t.kv.Update(ctx, key, func(_ []byte, _ bool) ([]byte, error) {
 			return encodeState(todoState{List: args.Todos, Stale: 0}), nil
-		}, todoTTL)
+		}, t.ttl)
 		if err != nil {
 			return "", err
 		}
@@ -194,7 +195,7 @@ func TodoCapabilities() []capability.Capability {
 		Params:      schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}
 	read := capability.New(readMeta, func(ctx context.Context, _ string) (string, error) {
-		list := loadState(ctx, sessionKey(ctx)).List
+		list := t.loadState(ctx, sessionKey(ctx)).List
 		if len(list) == 0 {
 			return "计划为空。", nil
 		}
@@ -206,25 +207,25 @@ func TodoCapabilities() []capability.Capability {
 
 // PlanSection 渲染当前执行域的计划,供 L 层每轮注入消息尾部
 // (loop.PromptLayers.Plan)。计划为空时返回空串(不注入)。
-func PlanSection(ctx context.Context) string {
-	list := loadState(ctx, sessionKey(ctx)).List
+func (t *Todo) PlanSection(ctx context.Context) string {
+	list := t.loadState(ctx, sessionKey(ctx)).List
 	if len(list) == 0 {
 		return ""
 	}
 	return "# 当前任务计划(完成一项立刻用 todo_write 更新;全部完成前不要停)\n" + render(list)
 }
 
-// NudgeTools 给能力集套上计划卡住提醒(Ring 0):存在进行中任务时,
-// 连续 nudgeAfterCalls 次非 todo 工具调用都没有更新计划,就在下一个
-// 工具结果后附加提醒——纪律靠 harness 兜底,不靠模型自觉。
-func NudgeTools(caps []capability.Capability) []capability.Capability {
+// Nudge 给能力集套上计划卡住提醒(Ring 0):存在进行中任务时,连续
+// nudgeAfterCalls 次非 todo 工具调用都没有更新计划,就在下一个工具结果后
+// 附加提醒——纪律靠 harness 兜底,不靠模型自觉。
+func (t *Todo) Nudge(caps []capability.Capability) []capability.Capability {
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
 		if isTodoTool(c.Meta().Ref) {
 			out = append(out, c)
 			continue
 		}
-		out = append(out, &nudged{inner: c})
+		out = append(out, &nudged{inner: c, todo: t})
 	}
 	return out
 }
@@ -235,6 +236,7 @@ func isTodoTool(ref capability.Ref) bool {
 
 type nudged struct {
 	inner capability.Capability
+	todo  *Todo
 }
 
 func (n *nudged) Meta() capability.Meta { return n.inner.Meta() }
@@ -248,7 +250,7 @@ func (n *nudged) AsTool(ctx context.Context) (tool.BaseTool, error) {
 	if !ok {
 		return nil, fmt.Errorf("capability %s is not invokable", n.inner.Meta().Ref)
 	}
-	return &nudgedTool{inner: inv}, nil
+	return &nudgedTool{inner: inv, todo: n.todo}, nil
 }
 
 func (n *nudged) AsLambda(ctx context.Context) (*compose.Lambda, error) {
@@ -257,12 +259,13 @@ func (n *nudged) AsLambda(ctx context.Context) (*compose.Lambda, error) {
 		if err != nil {
 			return out, err
 		}
-		return withNudge(ctx, out), nil
+		return n.todo.withNudge(ctx, out), nil
 	}), nil
 }
 
 type nudgedTool struct {
 	inner tool.InvokableTool
+	todo  *Todo
 }
 
 func (t *nudgedTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
@@ -274,23 +277,23 @@ func (t *nudgedTool) InvokableRun(ctx context.Context, argsJSON string, opts ...
 	if err != nil {
 		return out, err
 	}
-	return withNudge(ctx, out), nil
+	return t.todo.withNudge(ctx, out), nil
 }
 
 // withNudge 推进卡住计数,到阈值时在结果后附加提醒并重置。计数自增是
 // 原子读改写(与 todo_write 竞争同键也不丢),阈值判定的输出经闭包捕获。
-func withNudge(ctx context.Context, result string) string {
+func (t *Todo) withNudge(ctx context.Context, result string) string {
 	key := sessionKey(ctx)
 	var current string
 	fire := false
-	err := todoKV.Update(ctx, key, func(old []byte, ok bool) ([]byte, error) {
+	err := t.kv.Update(ctx, key, func(old []byte, ok bool) ([]byte, error) {
 		var st todoState
 		if ok {
 			_ = json.Unmarshal(old, &st)
 		}
 		current = firstInProgress(st.List)
 		if current == "" {
-			return old, nil // 没有进行中的任务,不催、原样写回(缺失则为无操作删除)
+			return old, nil // 没有进行中的任务,不催、原样写回
 		}
 		st.Stale++
 		if st.Stale >= nudgeAfterCalls {
@@ -298,7 +301,7 @@ func withNudge(ctx context.Context, result string) string {
 			fire = true
 		}
 		return encodeState(st), nil
-	}, todoTTL)
+	}, t.ttl)
 	if err != nil || !fire {
 		return result
 	}
@@ -308,8 +311,8 @@ func withNudge(ctx context.Context, result string) string {
 }
 
 // Snapshot 返回某会话主执行域的计划渲染文本,供通道(飞书卡片等)展示进度。
-func Snapshot(agentName, sessionID string) string {
-	list := loadState(context.Background(), keyFor(agentName, sessionID, "")).List
+func (t *Todo) Snapshot(agentName, sessionID string) string {
+	list := t.loadState(context.Background(), keyFor(agentName, sessionID, "")).List
 	if len(list) == 0 {
 		return ""
 	}
@@ -317,14 +320,14 @@ func Snapshot(agentName, sessionID string) string {
 }
 
 // Clear 清空某会话主执行域的计划,供通道/运维主动终结。
-func Clear(agentName, sessionID string) {
-	_ = todoKV.Delete(context.Background(), keyFor(agentName, sessionID, ""))
+func (t *Todo) Clear(agentName, sessionID string) {
+	_ = t.kv.Delete(context.Background(), keyFor(agentName, sessionID, ""))
 }
 
 // ClearCurrent 清空 ctx 当前执行域的计划。组件级临时清单在调用结束时
 // 用它即弃——草稿纸和窗口同生命周期,不留跨调用状态。
-func ClearCurrent(ctx context.Context) {
-	_ = todoKV.Delete(ctx, sessionKey(ctx))
+func (t *Todo) ClearCurrent(ctx context.Context) {
+	_ = t.kv.Delete(ctx, sessionKey(ctx))
 }
 
 func render(list []todoItem) string {

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joewm9911/agent-kit/builtin"
 	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
 	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
 	"github.com/joewm9911/agent-kit/loop"
@@ -217,8 +216,6 @@ func TestLiveStress(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 	t.Logf("测试报告已写入 %s;压缩触发 %d 次", path, compactions)
-
-	builtin.SetStore(store.NewInMemory(), 0) // 复位全局,不污染其它测试
 }
 
 type storeInspection struct {

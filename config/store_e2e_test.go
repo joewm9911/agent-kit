@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joewm9911/agent-kit/builtin"
+	"github.com/joewm9911/agent-kit/builtin/todo"
 	"github.com/joewm9911/agent-kit/capability"
 	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
 	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
@@ -33,28 +33,24 @@ func redisConf(t *testing.T) map[string]any {
 // 这正是包级 map 时代跨副本丢计划的场景。
 func TestTodoStoreCrossReplica(t *testing.T) {
 	conf := redisConf(t)
-	t.Cleanup(func() { builtin.SetStore(store.NewInMemory(), 0) }) // 复位全局,不污染其它测试
-
-	caps := builtin.TodoCapabilities()
-	write, read := caps[0], caps[1]
 	ctx := runctx.With(context.Background(), "ops", "s-42")
 
-	// 副本 A:接入 redis 后端,写计划
+	// 副本 A:自己的 redis 客户端 + 自己的 Todo 实例,写计划
 	kvA, err := store.NewBackend("redis", conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	builtin.SetStore(kvA, 0)
+	write := todo.New(kvA, 0).Capabilities()[0]
 	if _, err := capability.Invoke(ctx, write, `{"todos":[{"content":"查支付超时","status":"in_progress"},{"content":"出报告","status":"pending"}]}`); err != nil {
 		t.Fatal(err)
 	}
 
-	// 副本 B:另起一个 redis 后端客户端(模拟另一进程/副本),读同一计划
+	// 副本 B:另起后端客户端与 Todo 实例(模拟另一进程/副本),读同一计划
 	kvB, err := store.NewBackend("redis", conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	builtin.SetStore(kvB, 0)
+	read := todo.New(kvB, 0).Capabilities()[1]
 	out, err := capability.Invoke(ctx, read, `{}`)
 	if err != nil {
 		t.Fatal(err)

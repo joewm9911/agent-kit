@@ -13,7 +13,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 
 	"github.com/joewm9911/agent-kit/agent"
-	"github.com/joewm9911/agent-kit/builtin"
+	"github.com/joewm9911/agent-kit/builtin/askuser"
+	"github.com/joewm9911/agent-kit/builtin/todo"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
@@ -101,22 +102,30 @@ func resolveRetrieverRef(ref string, retrievers []RetrieverInstance, wantKind st
 	return "", nil, fmt.Errorf("%s: 未声明名为 %q 的 retriever 实例", ref, r.Name)
 }
 
-// wireGlobalStore 解析并构建一个 KV 后端,注入进程级全局槽(todo/result)。
-// ref 为空则不动(保持默认 inmemory)。
-func wireGlobalStore(ref string, stores []StoreInstance, wantKind string, set func(store.KV, time.Duration)) error {
-	if ref == "" {
-		return nil
-	}
+// resolveKV 解析 store 引用并构建一个 KV 后端(ref 为空 → inmemory 默认;
+// 裸 type 时沿用就地 bareConf)。由装配层调用,后端注入进各自的消费方
+// (todo 对象 / agent 结果暂存),不再推进任何进程级全局。
+func resolveKV(ref string, bareConf map[string]any, stores []StoreInstance, wantKind string) (store.KV, time.Duration, error) {
 	typ, conf, ttl, err := resolveStoreRef(ref, stores, wantKind)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
-	kv, err := store.NewBackend(typ, conf)
+	if conf == nil {
+		conf = bareConf
+	}
+	kv, err := store.NewBackend(typ, conf) // typ 空 → inmemory
 	if err != nil {
-		return fmt.Errorf("%s store backend: %w", wantKind, err)
+		return nil, 0, fmt.Errorf("%s store backend: %w", wantKind, err)
 	}
-	set(kv, ttl)
-	return nil
+	return kv, ttl, nil
+}
+
+// componentTodo 为组件级调用清单构造一个进程内后端并包成 Todo:组件清单
+// 是调用级临时草稿(结束即弃),不需外置/分布式,inmemory 即可。装配层
+// 构造并注入,组件本身不感知后端。
+func componentTodo() *todo.Todo {
+	kv, _ := store.NewBackend("inmemory", nil) // inmemory 恒可用(store 包 init 常驻)
+	return todo.New(kv, 0)
 }
 
 // buildAgent 用已选品的能力面、已解析的模型与已解析的执行画像 eff
@@ -135,23 +144,30 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		return nil, fmt.Errorf("no model (declare agent model or app-level model)")
 	}
 
-	// 进程级存储后端注入(todo 计划、result 大结果暂存):分布式多副本
-	// 下须指向外置后端。键按 agent/会话隔离,同进程多 agent 共享同一后端
-	// 无碰撞;未配置则保持默认 inmemory。digest.store 走执行画像(可降级)。
-	if err := wireGlobalStore(ac.Todo.Store, ac.Stores, "todo", builtin.SetStore); err != nil {
-		return nil, err
+	// 存储后端:各自解析后注入消费方(不再有进程级全局),同进程多 agent
+	// 各持各的后端,互不覆盖。todo 仅启用时构造;result 仅消化启用时构造。
+	todoOn := ac.Todo.Enabled == nil || *ac.Todo.Enabled
+	var td *todo.Todo
+	if todoOn {
+		kv, ttl, err := resolveKV(ac.Todo.Store, ac.Todo.StoreConfig, ac.Stores, "todo")
+		if err != nil {
+			return nil, err
+		}
+		td = todo.New(kv, ttl)
+		caps = append(caps, td.Capabilities()...)
 	}
-	if err := wireGlobalStore(eff.Digest.Store, ac.Stores, "result", loop.SetResultBackend); err != nil {
-		return nil, err
+	var resultKV store.KV
+	var resultTTL time.Duration
+	if eff.digestOver() > 0 {
+		kv, ttl, err := resolveKV(eff.Digest.Store, eff.Digest.StoreConfig, ac.Stores, "result")
+		if err != nil {
+			return nil, err
+		}
+		resultKV, resultTTL = kv, ttl
 	}
 
-	// 内置能力 + 审批闸门
-	todoOn := ac.Todo.Enabled == nil || *ac.Todo.Enabled
-	if todoOn {
-		caps = append(caps, builtin.TodoCapabilities()...)
-	}
 	if ac.Capabilities.AskUser == nil || *ac.Capabilities.AskUser {
-		caps = append(caps, builtin.AskUser())
+		caps = append(caps, askuser.New())
 	}
 	// 召回配置:两路各自独立(session.recall / memory.recall),负值=关闭。
 	sessK := ac.Session.Recall.TopK
@@ -209,7 +225,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	caps = loop.GateApprovalCtx(caps)
 	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)
 	if todoOn {
-		caps = builtin.NudgeTools(caps) // 计划卡住提醒(harness 强制纪律)
+		caps = td.Nudge(caps) // 计划卡住提醒(harness 强制纪律)
 	}
 	caps = loop.RecordTools(caps) // 轨迹记录(最外层:记模型实际看到的)
 
@@ -262,7 +278,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	}
 	layers := loop.PromptLayers{Loop: loopTpl.Text, Persona: personaTpl.Text}
 	if todoOn {
-		layers.Plan = builtin.PlanSection // 计划每轮注入消息尾部(harness 强制可见)
+		layers.Plan = td.PlanSection // 计划每轮注入消息尾部(harness 强制可见)
 	} else if layers.Loop == "" {
 		layers.Loop = loop.DefaultLoopPromptNoTodo // 关闭 todo:提示词不承诺不存在的工具
 	}
@@ -309,6 +325,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		Structured: enforcer, Interactor: interactor,
 		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget),
 		RecordTools: record,
+		ResultKV:    resultKV, ResultTTL: resultTTL,
 	}), nil
 }
 

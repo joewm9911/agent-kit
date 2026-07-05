@@ -189,6 +189,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			decl.Model = &skill.ModelDecl{Provider: eff.Model.Provider, Config: eff.Model.Config}
 		}
 		c, err := skill.Build(ctx, decl, skill.Deps{
+			Todo:         componentTodo(),
 			Prompts:      deps.prompts,
 			DefaultModel: deps.defaultModel,
 			LoopPrompt:   deps.loopPrompt,

@@ -31,7 +31,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 
 	"github.com/joewm9911/agent-kit/agent"
@@ -208,11 +207,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 		observe.Install(logger)
 	}
 	if p := ac.Observability.TrajectoryPath; p != "" {
-		h, err := observe.Trajectory(p)
-		if err != nil {
+		if err := observe.InstallTrajectory(p); err != nil {
 			return nil, err
 		}
-		callbacks.AppendGlobalHandlers(h)
 	}
 
 	// 2. 提示词

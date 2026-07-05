@@ -24,19 +24,10 @@ const TagRawResult = "result:raw"
 
 const rsep = "\x1f"
 
-// resultKV 是结果暂存的后端,默认进程内;装配期可由 cap://store/result/...
-// 注入替换(见 SetResultBackend)。外置到 redis 后,被消化的原文可跨
-// 挂起/恢复、跨副本取回。resultTTL 是暂存保留时长,0=不过期。
-var (
-	resultKV  store.KV = store.NewInMemory()
-	resultTTL time.Duration
-)
-
-// SetResultBackend 由配置装配注入结果暂存的后端与保留时长。
-func SetResultBackend(kv store.KV, ttl time.Duration) {
-	resultKV = kv
-	resultTTL = ttl
-}
+// 结果暂存的后端由装配层构造并注入(见 NewResultStore):agent 每次运行
+// 持有自己的后端、经 ctx 下发,不读任何全局单例——同进程多 agent 各持
+// 各的 result 后端,互不覆盖。外置到 redis 后,被消化的原文可跨挂起/恢复、
+// 跨副本取回。
 
 // ResultStore 是一轮运行的工具结果暂存句柄:被消化的原始全文存进后端 KV,
 // 模型觉得摘要不够时用 read_result 分页取回。键按 (agent, session) 作用域,
@@ -53,9 +44,13 @@ type ResultStore struct {
 // id,消化附言退化为纯截断提示)。
 const storeMaxBytes = 4 << 20 // 4MB
 
-// NewResultStore 创建一轮运行的结果暂存句柄(绑定当前注入的后端)。
-func NewResultStore() *ResultStore {
-	return &ResultStore{kv: resultKV, ttl: resultTTL}
+// NewResultStore 创建一轮运行的结果暂存句柄,绑定注入的后端与保留时长。
+// kv 为 nil 时返回 nil(该 agent 未配置结果暂存,digest 退化为纯截断)。
+func NewResultStore(kv store.KV, ttl time.Duration) *ResultStore {
+	if kv == nil {
+		return nil
+	}
+	return &ResultStore{kv: kv, ttl: ttl}
 }
 
 // rscope 取 (agent, session) 作为键命名空间,隔离并发会话与多副本。

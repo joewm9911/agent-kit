@@ -30,6 +30,29 @@ type Event struct {
 	Error     string    `json:"error,omitempty"`
 }
 
+var (
+	trajMu        sync.Mutex
+	trajInstalled = map[string]bool{}
+)
+
+// InstallTrajectory 把轨迹切面装入全局回调,按 path 幂等:同一进程多次
+// 装配(多 app、副本重启)不再累积重复 handler、重复打开文件。eino 全局
+// 回调是进程级切面,不同 path 各装一份、各记全量。
+func InstallTrajectory(path string) error {
+	trajMu.Lock()
+	defer trajMu.Unlock()
+	if trajInstalled[path] {
+		return nil
+	}
+	h, err := Trajectory(path)
+	if err != nil {
+		return err
+	}
+	callbacks.AppendGlobalHandlers(h)
+	trajInstalled[path] = true
+	return nil
+}
+
 // Trajectory 返回把执行轨迹写入 JSONL 文件的 callbacks.Handler。
 // 每个组件(模型、工具、图节点)的开始/结束/耗时/用量一条记录。
 func Trajectory(path string) (callbacks.Handler, error) {

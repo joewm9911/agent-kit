@@ -7,19 +7,24 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/builtin"
+	"github.com/joewm9911/agent-kit/builtin/todo"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 )
+
+// newTestTodo 模拟装配层注入:进程内后端、无 TTL。
+func newTestTodo() *todo.Todo { return todo.New(store.NewInMemory(), 0) }
 
 // TestComponentTodoOptIn 验证调用级临时清单:内部循环可用 todo、
 // 宿主计划不受影响、调用结束即弃。
 func TestComponentTodoOptIn(t *testing.T) {
 	// 宿主(agent 主循环)已有自己的计划
+	hostTodo := newTestTodo()
 	hostCtx := runctx.With(context.Background(), "host", "s-todo")
-	hostWrite := builtin.TodoCapabilities()[0]
+	hostWrite := hostTodo.Capabilities()[0]
 	if out, err := capability.Invoke(hostCtx, hostWrite,
 		`{"todos":[{"content":"宿主计划","status":"in_progress"}]}`); err != nil || !strings.Contains(out, "宿主计划") {
 		t.Fatalf("host plan: %q %v", out, err)
@@ -34,7 +39,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 		Name:   "t/researcher",
 		Prompt: prompt.Value{Literal: "研究 {input}"},
 		Todo:   true,
-	}, Deps{DefaultModel: m})
+	}, Deps{DefaultModel: m, Todo: newTestTodo()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +50,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 	}
 
 	// 宿主计划原封不动(执行域分键,未被组件覆盖)
-	if snap := builtin.Snapshot("host", "s-todo"); !strings.Contains(snap, "宿主计划") || strings.Contains(snap, "组件内步骤") {
+	if snap := hostTodo.Snapshot("host", "s-todo"); !strings.Contains(snap, "宿主计划") || strings.Contains(snap, "组件内步骤") {
 		t.Fatalf("host plan polluted: %q", snap)
 	}
 
@@ -58,7 +63,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 		Name:   "t/researcher2",
 		Prompt: prompt.Value{Literal: "研究 {input}"},
 		Todo:   true,
-	}, Deps{DefaultModel: m2read})
+	}, Deps{DefaultModel: m2read, Todo: newTestTodo()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +98,7 @@ func TestComponentL1MatchesToolFace(t *testing.T) {
 			Name:   name,
 			Prompt: prompt.Value{Literal: "做 {input}"},
 			Todo:   todo,
-		}, Deps{DefaultModel: em})
+		}, Deps{DefaultModel: em, Todo: newTestTodo()})
 		if err != nil {
 			t.Fatal(err)
 		}

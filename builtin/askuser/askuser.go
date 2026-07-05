@@ -1,4 +1,5 @@
-package builtin
+// Package askuser 提供内置的 ask_user 能力:大脑主动向用户求澄清。
+package askuser
 
 import (
 	"context"
@@ -9,10 +10,9 @@ import (
 	"github.com/joewm9911/agent-kit/suspend"
 )
 
-// AskUser 返回 ask_user 能力:大脑主动向用户求澄清。
-// 实际的提问通道来自 runctx(CLI 阻塞读、飞书发消息等回复),
-// 无通道时以工具结果告知模型,让它自行决定如何继续。
-func AskUser() capability.Capability {
+// New 返回 ask_user 能力。实际的提问通道来自 runctx(CLI 阻塞读、
+// 飞书发消息等回复),无通道时以工具结果告知模型,让它自行决定如何继续。
+func New() capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "ask_user"},
 		Description: "向用户提一个问题并等待回答。仅在缺少必要信息、且无法通过其他工具获取时使用;一次只问一个问题。",

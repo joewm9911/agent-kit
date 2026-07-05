@@ -30,6 +30,7 @@ import (
 	"github.com/joewm9911/agent-kit/registry"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/session"
+	"github.com/joewm9911/agent-kit/store"
 
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
 	_ "github.com/joewm9911/agent-kit/impl/model/openai"
@@ -333,7 +334,7 @@ func buildSmokeApp(t *testing.T, opts BuildOptions) *App {
 func skillCtx(input string) context.Context {
 	ctx := runctx.With(context.Background(), "smoke", "direct")
 	ctx = runctx.WithInput(ctx, input)
-	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
+	ctx = loop.WithResultStore(ctx, loop.NewResultStore(store.NewInMemory(), 0))
 	ctx = loop.WithApprovalMode(ctx, loop.ApprovalAuto)
 	return ctx
 }

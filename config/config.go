@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"gopkg.in/yaml.v3"
 
@@ -119,11 +118,9 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		observe.Install(logger)
 	}
 	if p := cfg.Observability.TrajectoryPath; p != "" {
-		h, err := observe.Trajectory(p)
-		if err != nil {
+		if err := observe.InstallTrajectory(p); err != nil {
 			return nil, err
 		}
-		callbacks.AppendGlobalHandlers(h)
 	}
 
 	// 2. 提示词
@@ -178,6 +175,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	// 4. skills:装配后入目录,供 agent 选品
 	for _, decl := range cfg.Skills {
 		c, err := skill.Build(ctx, decl, skill.Deps{
+			Todo:    componentTodo(),
 			Catalog: catalog, Prompts: prompts, DefaultModel: defaultModel,
 			ToolTimeout: cfg.Profile.toolTimeout().Std(), Retry: cfg.Profile.retry(),
 		})

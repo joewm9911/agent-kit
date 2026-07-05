@@ -1,4 +1,4 @@
-package builtin
+package askuser
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func (s stubInteractor) Approve(context.Context, runctx.ApprovalRequest) (bool, 
 
 func TestAskUserWithChannel(t *testing.T) {
 	ctx := runctx.WithInteractor(context.Background(), stubInteractor{answer: "北京"})
-	out, err := capability.Invoke(ctx, AskUser(), `{"question":"哪个城市?"}`)
+	out, err := capability.Invoke(ctx, New(), `{"question":"哪个城市?"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestAskUserWithChannel(t *testing.T) {
 
 func TestAskUserWithoutChannel(t *testing.T) {
 	// 无交互通道:以工具结果告知模型,不报错、不中断循环
-	out, err := capability.Invoke(context.Background(), AskUser(), `{"question":"?"}`)
+	out, err := capability.Invoke(context.Background(), New(), `{"question":"?"}`)
 	if err != nil {
 		t.Fatal(err)
 	}

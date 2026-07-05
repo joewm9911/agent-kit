@@ -10,7 +10,10 @@ import (
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/runctx"
+	kvstore "github.com/joewm9911/agent-kit/store"
 )
+
+func memResultStore() *ResultStore { return NewResultStore(kvstore.NewInMemory(), 0) }
 
 func bigTool(name string, out string) capability.Capability {
 	return capability.New(capability.Meta{
@@ -23,7 +26,7 @@ func TestDigestOverThreshold(t *testing.T) {
 	m := testmodel.New(schema.AssistantMessage("要点:三次超时,错误码 504", nil))
 	caps := DigestResults([]capability.Capability{bigTool("search", raw)}, m, 4000)
 
-	store := NewResultStore()
+	store := memResultStore()
 	ctx := WithResultStore(runctx.WithInput(context.Background(), "查支付超时原因"), store)
 	out, err := capability.Invoke(ctx, caps[0], `{}`)
 	if err != nil {
@@ -48,7 +51,7 @@ func TestDigestOverThreshold(t *testing.T) {
 func TestDigestUnderThresholdPassthrough(t *testing.T) {
 	m := testmodel.New()
 	caps := DigestResults([]capability.Capability{bigTool("small", "短结果")}, m, 4000)
-	ctx := WithResultStore(context.Background(), NewResultStore())
+	ctx := WithResultStore(context.Background(), memResultStore())
 	out, _ := capability.Invoke(ctx, caps[0], `{}`)
 	if out != "短结果" || m.Calls != 0 {
 		t.Fatalf("small result should pass through untouched: %q calls=%d", out, m.Calls)
@@ -74,7 +77,7 @@ func TestDigestRawTagExempt(t *testing.T) {
 	}, func(ctx context.Context, _ string) (string, error) { return raw, nil })
 	m := testmodel.New()
 	caps := DigestResults([]capability.Capability{exempt}, m, 4000)
-	ctx := WithResultStore(context.Background(), NewResultStore())
+	ctx := WithResultStore(context.Background(), memResultStore())
 	out, _ := capability.Invoke(ctx, caps[0], `{}`)
 	if len(out) != 9000 || m.Calls != 0 {
 		t.Fatalf("TagRawResult should bypass digest: len=%d calls=%d", len(out), m.Calls)
@@ -82,7 +85,7 @@ func TestDigestRawTagExempt(t *testing.T) {
 }
 
 func TestReadResultPaging(t *testing.T) {
-	store := NewResultStore()
+	store := memResultStore()
 	full := strings.Repeat("甲", 5000)
 	ctx := WithResultStore(context.Background(), store)
 	id := store.Put(ctx, "search", full)

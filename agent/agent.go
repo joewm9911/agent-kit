@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -24,6 +25,7 @@ import (
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/session"
+	"github.com/joewm9911/agent-kit/store"
 )
 
 // Agent 是可对外服务的最终产物。
@@ -40,6 +42,8 @@ type Agent struct {
 	approval    *loop.ApprovalState
 	budget      *loop.BudgetGate
 	record      loop.RecordMode
+	resultKV    store.KV // 大结果暂存后端(digest),nil = 未配置
+	resultTTL   time.Duration
 
 	ctlMu    sync.Mutex
 	controls map[string]*loop.ControlState // 会话 → 运行控制
@@ -78,6 +82,10 @@ type Options struct {
 	// RecordTools 控制本轮工具轨迹随会话持久化的详略(默认 off,
 	// config 层默认 summary)。
 	RecordTools loop.RecordMode
+	// ResultKV 是大结果暂存(digest)的后端与保留时长,由装配层注入;
+	// nil = 该 agent 未配置结果暂存(digest 退化为纯截断)。
+	ResultKV  store.KV
+	ResultTTL time.Duration
 }
 
 // New 组装一个 Agent。model 用于结构化输出修复与滚动摘要等门面级调用。
@@ -87,6 +95,7 @@ func New(name, description string, runner engine.Runner, m model.ToolCallingChat
 		store: opts.Store, window: opts.Window, compaction: opts.Compaction,
 		structured: opts.Structured, interactor: opts.Interactor,
 		approval: opts.Approval, budget: opts.Budget, record: opts.RecordTools,
+		resultKV: opts.ResultKV, resultTTL: opts.ResultTTL,
 		controls:   map[string]*loop.ControlState{},
 		compacting: map[string]bool{},
 	}
@@ -150,7 +159,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	ctx = loop.WithTurnHistory(ctx, all)
 	// 本轮上下文卫生:结果暂存(digest 的取回来源)与对话快照(fork 的
 	// 背景来源)随 ctx 下发,skill/component 内部同样可见。
-	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
+	ctx = loop.WithResultStore(ctx, loop.NewResultStore(a.resultKV, a.resultTTL))
 	ctx = loop.WithConversationSnapshot(ctx, msgs)
 	out, err := a.runner.Generate(ctx, msgs)
 	if err != nil {
@@ -238,7 +247,7 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 		return nil, err
 	}
 	ctx = loop.WithTurnHistory(ctx, all)
-	ctx = loop.WithResultStore(ctx, loop.NewResultStore())
+	ctx = loop.WithResultStore(ctx, loop.NewResultStore(a.resultKV, a.resultTTL))
 	ctx = loop.WithConversationSnapshot(ctx, msgs)
 	sr, err := a.runner.Stream(ctx, msgs)
 	if err != nil {

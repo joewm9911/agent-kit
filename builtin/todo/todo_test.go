@@ -1,4 +1,4 @@
-package builtin
+package todo
 
 import (
 	"context"
@@ -9,16 +9,20 @@ import (
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/loop"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 )
+
+// td 是共享的 todo 持有对象(进程内后端);各测试用不同 (agent,session) 键,互不干扰。
+var td = New(store.NewInMemory(), 0)
 
 func todoWriteCap(t *testing.T) capability.Capability {
 	t.Helper()
-	return TodoCapabilities()[0]
+	return td.Capabilities()[0]
 }
 
 func todoReadCap(t *testing.T) capability.Capability {
 	t.Helper()
-	return TodoCapabilities()[1]
+	return td.Capabilities()[1]
 }
 
 func testCtx(agent, session string) context.Context {
@@ -42,7 +46,7 @@ func TestTodoValidation(t *testing.T) {
 	if !strings.Contains(out, "只能是") {
 		t.Fatalf("got %q", out)
 	}
-	if Snapshot("a", "val") != "" {
+	if td.Snapshot("a", "val") != "" {
 		t.Fatal("rejected write must not persist")
 	}
 
@@ -96,7 +100,7 @@ func TestTodoWriteReadAndClear(t *testing.T) {
 	if !strings.Contains(read, "查日志") {
 		t.Fatalf("read: %q", read)
 	}
-	if Snapshot("a", "wr") == "" {
+	if td.Snapshot("a", "wr") == "" {
 		t.Fatal("snapshot should show plan")
 	}
 
@@ -105,14 +109,14 @@ func TestTodoWriteReadAndClear(t *testing.T) {
 	if out != "计划已清空。" {
 		t.Fatalf("got %q", out)
 	}
-	if Snapshot("a", "wr") != "" {
+	if td.Snapshot("a", "wr") != "" {
 		t.Fatal("cleared plan should be gone")
 	}
 
 	// Clear API
 	writeTodos(t, ctx, `{"todos":[{"content":"x","status":"pending"}]}`)
-	Clear("a", "wr")
-	if Snapshot("a", "wr") != "" {
+	td.Clear("a", "wr")
+	if td.Snapshot("a", "wr") != "" {
 		t.Fatal("Clear should remove the plan")
 	}
 }
@@ -139,18 +143,18 @@ func TestTodoKeyCollisionResistant(t *testing.T) {
 	// agent "a/b" + session "c" 与 agent "a" + session "b/c" 必须是不同的键
 	writeTodos(t, testCtx("a/b", "c"), `{"todos":[{"content":"甲","status":"pending"}]}`)
 	writeTodos(t, testCtx("a", "b/c"), `{"todos":[{"content":"乙","status":"pending"}]}`)
-	if got := Snapshot("a/b", "c"); !strings.Contains(got, "甲") || strings.Contains(got, "乙") {
+	if got := td.Snapshot("a/b", "c"); !strings.Contains(got, "甲") || strings.Contains(got, "乙") {
 		t.Fatalf("key collision: %q", got)
 	}
 }
 
 func TestTodoPlanSection(t *testing.T) {
 	ctx := testCtx("a", "plan")
-	if PlanSection(ctx) != "" {
+	if td.PlanSection(ctx) != "" {
 		t.Fatal("empty plan should not inject")
 	}
 	writeTodos(t, ctx, `{"todos":[{"content":"做事","status":"in_progress"}]}`)
-	sec := PlanSection(ctx)
+	sec := td.PlanSection(ctx)
 	if !strings.Contains(sec, "当前任务计划") || !strings.Contains(sec, "做事") {
 		t.Fatalf("got %q", sec)
 	}
@@ -161,7 +165,7 @@ func TestTodoNudge(t *testing.T) {
 	work := capability.New(capability.Meta{
 		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "work"},
 	}, func(_ context.Context, _ string) (string, error) { return "done", nil })
-	wrapped := NudgeTools([]capability.Capability{work})[0]
+	wrapped := td.Nudge([]capability.Capability{work})[0]
 
 	// 没有进行中任务:永不提醒
 	for i := 0; i < 6; i++ {

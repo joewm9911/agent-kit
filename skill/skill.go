@@ -21,7 +21,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/builtin"
+	"github.com/joewm9911/agent-kit/builtin/todo"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
@@ -87,6 +87,9 @@ type Deps struct {
 	// DigestOver 启用内部工具面的大结果消化:超过该 rune 数的工具
 	// 结果先落 run 级暂存,由模型带任务提取要点后入上下文(0 关闭)。
 	DigestOver int
+	// Todo 是组件级调用清单的持有对象(仅 decl.Todo 时用),由装配层注入
+	// 后端。component 的清单是调用级临时草稿(结束即弃),用进程内后端即可。
+	Todo *todo.Todo
 }
 
 // Build 把声明装配为能力:解析全部引用并锁版本 → 检查依赖 →
@@ -153,8 +156,11 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if decl.Todo && engineName != "react" {
 		return nil, fmt.Errorf("skill %s: todo 只对 react 有意义(plan-execute 的计划由引擎管理,其余形态无长循环)", decl.Name)
 	}
+	if decl.Todo && deps.Todo == nil {
+		return nil, fmt.Errorf("skill %s: todo 已启用但未注入 Todo 后端(装配层需提供 Deps.Todo)", decl.Name)
+	}
 	if decl.Todo {
-		caps = append(caps, builtin.TodoCapabilities()...)
+		caps = append(caps, deps.Todo.Capabilities()...)
 	}
 
 	// 内部工具面下沉全部 Ring 0 闸门(治理不再止步于 agent 主循环):
@@ -170,7 +176,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
 	if decl.Todo {
-		caps = builtin.NudgeTools(caps) // 卡住提醒对内部循环同样生效
+		caps = deps.Todo.Nudge(caps) // 卡住提醒对内部循环同样生效
 	}
 
 	// L1 变体与工具面保持一致:挂了 todo 用完整规约(含纪律指引 + 计划
@@ -185,7 +191,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	}
 	layers := loop.PromptLayers{Loop: loopPrompt}
 	if decl.Todo {
-		layers.Plan = builtin.PlanSection
+		layers.Plan = deps.Todo.PlanSection
 	}
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
 		Model:        m,
@@ -217,7 +223,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 			// 每次调用一个新执行域:清单与宿主、与历次调用互不可见;
 			// 调用结束即弃,组件保持无状态可重入。
 			ctx = runctx.WithScopePush(ctx, fmt.Sprintf("comp:%s#%d", decl.Name, todoSeq.Add(1)))
-			defer builtin.ClearCurrent(ctx)
+			defer deps.Todo.ClearCurrent(ctx)
 		}
 		vars := map[string]string{}
 		var args map[string]any
