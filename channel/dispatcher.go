@@ -11,6 +11,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/agent"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 	"github.com/joewm9911/agent-kit/suspend"
 )
 
@@ -40,9 +41,10 @@ type Dispatcher struct {
 	seen    map[string]struct{}    // 事件去重
 	seenQ   []string               // 去重集的淘汰队列
 
-	// suspendStore 非 nil 时启用挂起模式:ask_user/审批不再阻塞
+	// suspendKV 非 nil 时启用挂起模式:ask_user/审批不再阻塞
 	// goroutine 等待,而是持久化挂起、答案到达(可跨进程重启)后重放。
-	suspendStore suspend.Store
+	// 后端是注入的 store.KV(file/redis/...),跨进程恢复要求后端持久。
+	suspendKV store.KV
 }
 
 type job struct {
@@ -65,10 +67,10 @@ func NewDispatcher(logger *slog.Logger) *Dispatcher {
 	}
 }
 
-// EnableSuspend 启用挂起模式:交互等待持久化到 store,跨进程重启可恢复。
-// 挂起模式与流式回复不兼容,启用后流式绑定退化为整段回复。
-func (d *Dispatcher) EnableSuspend(store suspend.Store) {
-	d.suspendStore = store
+// EnableSuspend 启用挂起模式:交互等待持久化到注入的 KV 后端,跨进程
+// 重启可恢复。挂起模式与流式回复不兼容,启用后流式绑定退化为整段回复。
+func (d *Dispatcher) EnableSuspend(kv store.KV) {
+	d.suspendKV = kv
 }
 
 // Handler 返回绑定到 b 的 InboundHandler,交给 Channel.Start。
@@ -98,10 +100,10 @@ func (d *Dispatcher) Handler(b Binding) InboundHandler {
 		}
 		// 挂起模式:会话有持久化的挂起轮次 → 这条消息是答案,
 		// 记入交互日志并以原输入重放该轮(进程重启后同样走这里)。
-		if d.suspendStore != nil {
-			if rec, ok, err := suspend.TakePendingTurn(d.suspendStore, key); err == nil && ok {
+		if d.suspendKV != nil {
+			if rec, ok, err := suspend.TakePendingTurn(ctx, d.suspendKV, key); err == nil && ok {
 				d.mu.Unlock()
-				if err := suspend.AnswerPending(d.suspendStore, rec.WaitingID, in.Text); err != nil {
+				if err := suspend.AnswerPending(ctx, d.suspendKV, rec.WaitingID, in.Text); err != nil {
 					d.logger.Error("record answer failed", slog.String("session", key), slog.String("err", err.Error()))
 					return
 				}
@@ -174,12 +176,12 @@ func (d *Dispatcher) run(key string, j job) {
 	// 挂起模式:可挂起的交互通道 + 效果/交互日志随 ctx 下发。
 	// 非挂起模式:进程内阻塞等待的 HITL 桥接(原行为)。
 	var journal *suspend.Journal
-	if d.suspendStore != nil {
+	if d.suspendKV != nil {
 		turnID := j.turnID
 		if turnID == "" {
 			turnID = suspend.NewTurnID()
 		}
-		journal = suspend.NewJournal(d.suspendStore, turnID)
+		journal = suspend.NewJournal(d.suspendKV, turnID)
 		ctx = suspend.WithJournal(ctx, journal)
 		conv := j.in.Conv
 		ctx = runctx.WithInteractor(ctx, suspend.Interactor(journal, func(ctx context.Context, q string) error {
@@ -191,7 +193,7 @@ func (d *Dispatcher) run(key string, j job) {
 	}
 
 	// 挂起模式与流式回复不兼容(挂起需要整轮退栈),退化整段。
-	if j.b.ReplyMode == "stream" && d.suspendStore == nil {
+	if j.b.ReplyMode == "stream" && d.suspendKV == nil {
 		if err := d.streamReply(ctx, j); err == nil {
 			return
 		}
@@ -202,7 +204,7 @@ func (d *Dispatcher) run(key string, j job) {
 		var suspended *suspend.ErrSuspended
 		if journal != nil && errors.As(err, &suspended) {
 			// 问题已送达用户;持久化挂起轮次后整轮退栈,不占任何资源。
-			saveErr := suspend.SavePendingTurn(d.suspendStore, key, suspend.PendingTurn{
+			saveErr := suspend.SavePendingTurn(ctx, d.suspendKV, key, suspend.PendingTurn{
 				TurnID: journal.TurnID(), Input: j.in.Text, WaitingID: suspended.InteractionID,
 			})
 			if saveErr != nil {
@@ -213,7 +215,7 @@ func (d *Dispatcher) run(key string, j job) {
 		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", err.Error()))
 		answer = "处理失败:" + err.Error()
 	} else if journal != nil {
-		journal.CompleteTurn() // 一轮善终,清理该轮日志
+		journal.CompleteTurn(ctx) // 一轮善终,清理该轮日志
 	}
 	if _, err := j.b.Channel.Send(ctx, j.in.Conv, Outbound{Text: answer, Markdown: true}); err != nil {
 		d.logger.Error("send reply failed", slog.String("session", key), slog.String("err", err.Error()))

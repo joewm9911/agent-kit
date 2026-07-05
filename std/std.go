@@ -1,6 +1,6 @@
 // Package std 空导入即拉起 agent-kit 的默认存储后端(session/memory 的
-// inmemory·file·bigram),恢复开箱即用的 zero-config。生产按需再空导入
-// impl/session/redis、impl/memory/redis 等外部后端。
+// inmemory·file·bigram + store.KV 的 file),恢复开箱即用的 zero-config。
+// 生产按需再空导入 impl/session/redis、impl/memory/redis 等外部后端。
 //
 //	import _ "github.com/joewm9911/agent-kit/std"
 //
@@ -13,4 +13,5 @@ import (
 	_ "github.com/joewm9911/agent-kit/impl/session/bigram"
 	_ "github.com/joewm9911/agent-kit/impl/session/file"
 	_ "github.com/joewm9911/agent-kit/impl/session/inmemory"
+	_ "github.com/joewm9911/agent-kit/impl/store/file"
 )

@@ -5,9 +5,13 @@
 > 各配各的 todo/result 后端,断言互不串);P3 以 `observe.InstallTrajectory`
 > (按 path 幂等)落地装配幂等兜底;P4 复查确认全部 `slog.Default()` 都在
 > 构造函数边界、logger 统一从 `BuildOptions.Logger` 注入,符合约定,不改。
-> 后续调整:builtin 按能力拆分为 `builtin/todo`(package todo,`todo.New(kv, ttl)`)
-> 与 `builtin/askuser`(package askuser,`askuser.New()`);文中 `builtin.NewTodo`
-> 即现在的 `todo.New`。cap 引用 `cap://tool/builtin/ask_user` 不变,配置零迁移。
+> 后续调整:builtin 按能力拆分并提为顶层包 `todo/`(`todo.New(kv, ttl)`)与
+> `askuser/`(`askuser.New()`),builtin 目录删除;文中 `builtin.NewTodo` 即现在
+> 的 `todo.New`。cap 引用 `cap://tool/builtin/ask_user` 不变,配置零迁移。
+> suspend 的持久化协议也已收敛到 `store.KV`(kind 并入键前缀):`suspend.Store`
+> 接口删除,Journal/恢复入口持有注入的 KV;file 后端泛化为注册表后端
+> `impl/store/file`(type=file,todo/digest/suspend 皆可用),`suspend.dir` 是
+> `store: file` 的简写,换 redis 即得多副本挂起恢复。
 
 > 原则(本次基准):**消费方依赖抽象,不依赖具体实现,也不依赖全局。**
 > 一个用到 store 的结构体应当**持有** store(收敛得了持有统一 Store 接口,

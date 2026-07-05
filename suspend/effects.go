@@ -77,13 +77,13 @@ func runDurable(ctx context.Context, capKey, argsJSON string, exec func(ctx cont
 	if j == nil {
 		return exec(ctx)
 	}
-	if out, ok := j.Effect(capKey, argsJSON); ok {
+	if out, ok := j.Effect(ctx, capKey, argsJSON); ok {
 		return out, nil // 重放:已执行过,直接返回记录结果
 	}
 	out, err := exec(ctx)
 	if err != nil {
 		return out, err
 	}
-	j.SaveEffect(capKey, argsJSON, out)
+	j.SaveEffect(ctx, capKey, argsJSON, out)
 	return out, nil
 }

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 )
 
 // NewTurnID 生成一轮的唯一标识(时间 + 随机),恢复的轮次沿用首跑的 ID。
@@ -46,21 +47,18 @@ func (e *ErrSuspended) Error() string {
 	return "run suspended, waiting for user reply (interaction " + e.InteractionID + ")"
 }
 
-// Store 是挂起状态的持久化后端。kind 划分记录类型(ask/effect/turn),
-// key 在 kind 内唯一。实现必须可跨进程重启读回。
-type Store interface {
-	Put(kind, key string, value []byte) error
-	Get(kind, key string) ([]byte, bool, error)
-	Delete(kind, key string) error
-	// List 返回某 kind 下全部记录(key → value),用于按前缀清理。
-	List(kind string) (map[string][]byte, error)
-}
-
+// 持久化收敛到 store.KV 原语:kind(记录类型)并入键前缀,任何 KV 后端
+// (file/redis/自定义)都可承载挂起状态——多副本部署时挂起与恢复可以落在
+// 不同副本。跨进程重启可恢复要求后端持久(file/redis);inmemory 仅测试用。
 const (
 	kindAsk    = "ask"    // 交互日志:问题与答案
 	kindEffect = "effect" // 效果日志:mutating 工具的执行结果
 	kindTurn   = "turn"   // 挂起中的轮次:会话 → {轮次ID, 原输入, 待答交互}
+
+	ksep = "\x1f" // kind 与 key 的分隔符(不可见字符,键内容任意)
 )
+
+func kkey(kind, key string) string { return kind + ksep + key }
 
 // PendingTurn 是一条挂起中的轮次记录。
 type PendingTurn struct {
@@ -76,14 +74,15 @@ type askRecord struct {
 }
 
 // Journal 是一轮运行的挂起日志视图,由分发层创建并装入 ctx。
+// 持有注入的 KV 后端,不感知具体实现。
 type Journal struct {
-	store Store
-	turn  string
+	kv   store.KV
+	turn string
 }
 
 // NewJournal 创建某一轮(turnID 恢复时必须与首跑一致)的日志视图。
-func NewJournal(store Store, turnID string) *Journal {
-	return &Journal{store: store, turn: turnID}
+func NewJournal(kv store.KV, turnID string) *Journal {
+	return &Journal{kv: kv, turn: turnID}
 }
 
 // TurnID 返回本轮标识。
@@ -96,8 +95,8 @@ func (j *Journal) interactionID(question string) string {
 }
 
 // answer 查交互日志。
-func (j *Journal) answer(id string) (string, bool, error) {
-	raw, ok, err := j.store.Get(kindAsk, id)
+func (j *Journal) answer(ctx context.Context, id string) (string, bool, error) {
+	raw, ok, err := j.kv.Get(ctx, kkey(kindAsk, id))
 	if err != nil || !ok {
 		return "", false, err
 	}
@@ -109,24 +108,28 @@ func (j *Journal) answer(id string) (string, bool, error) {
 }
 
 // recordPending 持久化一条待答交互。
-func (j *Journal) recordPending(id, question string) error {
+func (j *Journal) recordPending(ctx context.Context, id, question string) error {
 	raw, _ := json.Marshal(askRecord{Question: question})
-	return j.store.Put(kindAsk, id, raw)
+	return put(ctx, j.kv, kkey(kindAsk, id), raw)
+}
+
+// put 是"直接写入"的 KV 便捷封装(挂起日志无并发改写,不需读改写)。
+func put(ctx context.Context, kv store.KV, key string, value []byte) error {
+	return kv.Update(ctx, key, func([]byte, bool) ([]byte, error) {
+		return value, nil
+	}, 0)
 }
 
 // AnswerPending 写入用户答案(恢复入口,进程重启后同样可用)。
-func AnswerPending(store Store, interactionID, answer string) error {
-	raw, ok, err := store.Get(kindAsk, interactionID)
-	if err != nil {
-		return err
-	}
-	var rec askRecord
-	if ok {
-		_ = json.Unmarshal(raw, &rec)
-	}
-	rec.Answer, rec.Done = answer, true
-	out, _ := json.Marshal(rec)
-	return store.Put(kindAsk, interactionID, out)
+func AnswerPending(ctx context.Context, kv store.KV, interactionID, answer string) error {
+	return kv.Update(ctx, kkey(kindAsk, interactionID), func(old []byte, ok bool) ([]byte, error) {
+		var rec askRecord
+		if ok {
+			_ = json.Unmarshal(old, &rec)
+		}
+		rec.Answer, rec.Done = answer, true
+		return json.Marshal(rec)
+	}, 0)
 }
 
 // effectKey 生成效果键:轮次 + 能力 + 参数哈希。并行分支下不依赖
@@ -138,8 +141,8 @@ func (j *Journal) effectKey(capKey, argsJSON string) string {
 }
 
 // Effect 查效果日志。
-func (j *Journal) Effect(capKey, argsJSON string) (string, bool) {
-	raw, ok, err := j.store.Get(kindEffect, j.effectKey(capKey, argsJSON))
+func (j *Journal) Effect(ctx context.Context, capKey, argsJSON string) (string, bool) {
+	raw, ok, err := j.kv.Get(ctx, kkey(kindEffect, j.effectKey(capKey, argsJSON)))
 	if err != nil || !ok {
 		return "", false
 	}
@@ -147,32 +150,30 @@ func (j *Journal) Effect(capKey, argsJSON string) (string, bool) {
 }
 
 // SaveEffect 记录一次 mutating 执行的结果。
-func (j *Journal) SaveEffect(capKey, argsJSON, result string) {
-	_ = j.store.Put(kindEffect, j.effectKey(capKey, argsJSON), []byte(result))
+func (j *Journal) SaveEffect(ctx context.Context, capKey, argsJSON, result string) {
+	_ = put(ctx, j.kv, kkey(kindEffect, j.effectKey(capKey, argsJSON)), []byte(result))
 }
 
 // CompleteTurn 在一轮成功结束后清理该轮的全部日志。
-func (j *Journal) CompleteTurn() {
+func (j *Journal) CompleteTurn(ctx context.Context) {
 	for _, kind := range []string{kindAsk, kindEffect} {
-		if all, err := j.store.List(kind); err == nil {
-			for k := range all {
-				if strings.HasPrefix(k, j.turn+"-") {
-					_ = j.store.Delete(kind, k)
-				}
+		if keys, err := j.kv.Scan(ctx, kkey(kind, j.turn+"-")); err == nil {
+			for _, k := range keys {
+				_ = j.kv.Delete(ctx, k)
 			}
 		}
 	}
 }
 
 // SavePendingTurn 持久化挂起中的轮次(同会话同时只有一条)。
-func SavePendingTurn(store Store, sessionKey string, rec PendingTurn) error {
+func SavePendingTurn(ctx context.Context, kv store.KV, sessionKey string, rec PendingTurn) error {
 	raw, _ := json.Marshal(rec)
-	return store.Put(kindTurn, sessionKey, raw)
+	return put(ctx, kv, kkey(kindTurn, sessionKey), raw)
 }
 
 // TakePendingTurn 取出并删除会话的挂起轮次(答案到达时的恢复入口)。
-func TakePendingTurn(store Store, sessionKey string) (PendingTurn, bool, error) {
-	raw, ok, err := store.Get(kindTurn, sessionKey)
+func TakePendingTurn(ctx context.Context, kv store.KV, sessionKey string) (PendingTurn, bool, error) {
+	raw, ok, err := kv.Get(ctx, kkey(kindTurn, sessionKey))
 	if err != nil || !ok {
 		return PendingTurn{}, false, err
 	}
@@ -180,7 +181,7 @@ func TakePendingTurn(store Store, sessionKey string) (PendingTurn, bool, error) 
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		return PendingTurn{}, false, err
 	}
-	return rec, true, store.Delete(kindTurn, sessionKey)
+	return rec, true, kv.Delete(ctx, kkey(kindTurn, sessionKey))
 }
 
 type keyJournal struct{}
@@ -232,10 +233,10 @@ func (s *suspendingInteractor) resolve(ctx context.Context, question string) (st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := s.j.interactionID(question)
-	if ans, ok, err := s.j.answer(id); err == nil && ok {
+	if ans, ok, err := s.j.answer(ctx, id); err == nil && ok {
 		return ans, nil // 重放:越过挂起点
 	}
-	if err := s.j.recordPending(id, question); err != nil {
+	if err := s.j.recordPending(ctx, id, question); err != nil {
 		return "", err
 	}
 	if err := s.notify(ctx, question); err != nil {

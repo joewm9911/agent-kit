@@ -25,7 +25,6 @@ import (
 	"github.com/joewm9911/agent-kit/serving"
 	"github.com/joewm9911/agent-kit/skill"
 	"github.com/joewm9911/agent-kit/source"
-	"github.com/joewm9911/agent-kit/suspend"
 )
 
 // 四大上下文/记忆模块各自独立配置,各自的 store 槽用 cap://store/<kind>/
@@ -230,12 +229,11 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 		app.Server = serving.New(cfg.Serving.Addr, agents, logger)
 		dispatcher := channel.NewDispatcher(logger)
-		if cfg.Suspend.Dir != "" {
-			store, err := suspend.NewFileStore(cfg.Suspend.Dir)
-			if err != nil {
-				return nil, fmt.Errorf("suspend: %w", err)
-			}
-			dispatcher.EnableSuspend(store)
+		// 单文件形态没有顶层具名 stores,suspend.store 只支持裸 type。
+		if kv, err := suspendKV(cfg.Suspend, nil); err != nil {
+			return nil, err
+		} else if kv != nil {
+			dispatcher.EnableSuspend(kv)
 		}
 		for _, cc := range cfg.Channels {
 			ch, err := channel.New(cc.Type, cc.Name, cc.Config)

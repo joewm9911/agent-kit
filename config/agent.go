@@ -13,8 +13,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 
 	"github.com/joewm9911/agent-kit/agent"
-	"github.com/joewm9911/agent-kit/builtin/askuser"
-	"github.com/joewm9911/agent-kit/builtin/todo"
+	"github.com/joewm9911/agent-kit/askuser"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
@@ -25,6 +24,7 @@ import (
 	"github.com/joewm9911/agent-kit/session"
 	"github.com/joewm9911/agent-kit/store"
 	"github.com/joewm9911/agent-kit/suspend"
+	"github.com/joewm9911/agent-kit/todo"
 )
 
 // agentModel 解析 agent 主循环的模型:own(agent 自己 model:,可为 nil)
@@ -118,6 +118,23 @@ func resolveKV(ref string, bareConf map[string]any, stores []StoreInstance, want
 		return nil, 0, fmt.Errorf("%s store backend: %w", wantKind, err)
 	}
 	return kv, ttl, nil
+}
+
+// suspendKV 解析挂起持久化后端:store 槽(裸 type 或 cap://store/suspend/
+// <name>)优先,dir 是 file 后端简写;两者都空 → 不启用(返回 nil)。
+func suspendKV(sc SuspendConfig, stores []StoreInstance) (store.KV, error) {
+	ref, bare := sc.Store, sc.StoreConfig
+	if ref == "" {
+		if sc.Dir == "" {
+			return nil, nil
+		}
+		ref, bare = "file", map[string]any{"dir": sc.Dir}
+	}
+	kv, _, err := resolveKV(ref, bare, stores, "suspend")
+	if err != nil {
+		return nil, fmt.Errorf("suspend: %w", err)
+	}
+	return kv, nil
 }
 
 // componentTodo 为组件级调用清单构造一个进程内后端并包成 Todo:组件清单

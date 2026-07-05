@@ -61,9 +61,12 @@ agents:
 #       verification_token: "${secret:FEISHU_VERIFY_TOKEN}"
 #       encrypt_key: "${secret:FEISHU_ENCRYPT_KEY}"
 
-# ---- 挂起/恢复:IM 通道的 ask_user/审批等待落盘,跨进程重启可恢复 ----
+# ---- 挂起/恢复:IM 通道的 ask_user/审批等待持久化,跨进程重启可恢复 ----
+# 后端是 store.KV:dir 是 file 后端简写;多副本部署可换 redis。
 # suspend:
-#   dir: ./data/pending
+#   dir: ./data/pending            # 等价 store: file + store_config: {dir: ...}
+#   # store: redis
+#   # store_config: {addr: "127.0.0.1:6379", prefix: "susp:"}
 
 observability:
   log: false

@@ -21,7 +21,6 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/builtin/todo"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/loop"
@@ -30,6 +29,7 @@ import (
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/source"
 	"github.com/joewm9911/agent-kit/suspend"
+	"github.com/joewm9911/agent-kit/todo"
 )
 
 // ModelDecl 是 skill 专属模型声明,nil 则跟随宿主。

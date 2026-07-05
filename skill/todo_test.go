@@ -7,12 +7,12 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/builtin/todo"
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/todo"
 )
 
 // newTestTodo 模拟装配层注入:进程内后端、无 TTL。

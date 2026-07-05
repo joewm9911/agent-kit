@@ -42,7 +42,6 @@ import (
 	"github.com/joewm9911/agent-kit/registry"
 	"github.com/joewm9911/agent-kit/serving"
 	"github.com/joewm9911/agent-kit/source"
-	"github.com/joewm9911/agent-kit/suspend"
 )
 
 // inheritAppDefaults 把 app 层的会话状态 / 治理边界默认下沉到 agent:
@@ -282,12 +281,11 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 		}
 		app.Server = serving.New(ac.Serving.Addr, agents, logger)
 		dispatcher := channel.NewDispatcher(logger)
-		if ac.Suspend.Dir != "" {
-			store, err := suspend.NewFileStore(ac.Suspend.Dir)
-			if err != nil {
-				return nil, fmt.Errorf("suspend: %w", err)
-			}
-			dispatcher.EnableSuspend(store)
+		// app 层具名 stores 可被 suspend.store 以 cap://store/suspend/<name> 引用。
+		if kv, err := suspendKV(ac.Suspend, ac.Stores); err != nil {
+			return nil, err
+		} else if kv != nil {
+			dispatcher.EnableSuspend(kv)
 		}
 		for _, cc := range ac.Channels {
 			ch, err := channel.New(cc.Type, cc.Name, cc.Config)

@@ -11,33 +11,11 @@ import (
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/engine"
+	filekv "github.com/joewm9911/agent-kit/impl/store/file"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/store"
 )
-
-func TestFileStoreRoundtrip(t *testing.T) {
-	store, err := NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Put("ask", "轮次-键/带斜杠", []byte("值")); err != nil {
-		t.Fatal(err)
-	}
-	v, ok, err := store.Get("ask", "轮次-键/带斜杠")
-	if err != nil || !ok || string(v) != "值" {
-		t.Fatalf("get: %q %v %v", v, ok, err)
-	}
-	all, err := store.List("ask")
-	if err != nil || len(all) != 1 {
-		t.Fatalf("list: %v %v", all, err)
-	}
-	if err := store.Delete("ask", "轮次-键/带斜杠"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, _ := store.Get("ask", "轮次-键/带斜杠"); ok {
-		t.Fatal("should be deleted")
-	}
-}
 
 // TestSuspendResumeAcrossRestart 是核心验收:挂起 → "进程重启"
 // (换一个 Journal 实例,仅共享落盘状态)→ 答案到达 → 重放完成,
@@ -61,11 +39,11 @@ func TestSuspendResumeAcrossRestart(t *testing.T) {
 
 	// 每次"进程启动"重建整套运行时(同一轮次 ID,同一落盘目录)
 	runTurn := func(turnID string) (string, error) {
-		store, err := NewFileStore(dir)
+		kv, err := filekv.New(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		j := NewJournal(store, turnID)
+		j := NewJournal(kv, turnID)
 		m := testmodel.New( // 模型脚本每次进程启动后从头重放
 			testmodel.ToolCallMsg("write", `{"file":"a"}`),
 			testmodel.ToolCallMsg("ask_user", `{}`),
@@ -103,8 +81,8 @@ func TestSuspendResumeAcrossRestart(t *testing.T) {
 	}
 
 	// "进程重启"后用户回复:答案写入交互日志(只依赖落盘状态)
-	store2, _ := NewFileStore(dir)
-	if err := AnswerPending(store2, suspended.InteractionID, "确认"); err != nil {
+	kv2, _ := filekv.New(dir)
+	if err := AnswerPending(context.Background(), kv2, suspended.InteractionID, "确认"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,24 +103,25 @@ func TestSuspendResumeAcrossRestart(t *testing.T) {
 }
 
 func TestPendingTurnRoundtrip(t *testing.T) {
-	store := NewInMemory()
+	ctx := context.Background()
+	kv := store.NewInMemory()
 	rec := PendingTurn{TurnID: "t1", Input: "发布", WaitingID: "t1-abc"}
-	if err := SavePendingTurn(store, "sess-1", rec); err != nil {
+	if err := SavePendingTurn(ctx, kv, "sess-1", rec); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := TakePendingTurn(store, "sess-1")
+	got, ok, err := TakePendingTurn(ctx, kv, "sess-1")
 	if err != nil || !ok || got != rec {
 		t.Fatalf("got %+v %v %v", got, ok, err)
 	}
 	// Take 即删除
-	if _, ok, _ := TakePendingTurn(store, "sess-1"); ok {
+	if _, ok, _ := TakePendingTurn(ctx, kv, "sess-1"); ok {
 		t.Fatal("pending turn should be consumed")
 	}
 }
 
 func TestApproveSuspendAndReplay(t *testing.T) {
-	store := NewInMemory()
-	j := NewJournal(store, "t1")
+	kv := store.NewInMemory()
+	j := NewJournal(kv, "t1")
 	it := Interactor(j, func(context.Context, string) error { return nil })
 
 	req := runctx.ApprovalRequest{CapRef: "cap://tool/x/y", Description: "写文件", Arguments: `{"f":"a"}`}
@@ -154,7 +133,7 @@ func TestApproveSuspendAndReplay(t *testing.T) {
 	if !strings.Contains(suspended.Question, "批准") {
 		t.Fatalf("question = %q", suspended.Question)
 	}
-	if err := AnswerPending(store, suspended.InteractionID, "同意"); err != nil {
+	if err := AnswerPending(context.Background(), kv, suspended.InteractionID, "同意"); err != nil {
 		t.Fatal(err)
 	}
 	ok, err := it.Approve(context.Background(), req)
@@ -164,14 +143,15 @@ func TestApproveSuspendAndReplay(t *testing.T) {
 }
 
 func TestEffectsCleanupOnComplete(t *testing.T) {
-	store := NewInMemory()
-	j := NewJournal(store, "t1")
-	j.SaveEffect("tool.t/x/y", `{"a":1}`, "done")
-	if _, ok := j.Effect("tool.t/x/y", `{"a":1}`); !ok {
+	ctx := context.Background()
+	kv := store.NewInMemory()
+	j := NewJournal(kv, "t1")
+	j.SaveEffect(ctx, "tool.t/x/y", `{"a":1}`, "done")
+	if _, ok := j.Effect(ctx, "tool.t/x/y", `{"a":1}`); !ok {
 		t.Fatal("effect should be recorded")
 	}
-	j.CompleteTurn()
-	if _, ok := j.Effect("tool.t/x/y", `{"a":1}`); ok {
+	j.CompleteTurn(ctx)
+	if _, ok := j.Effect(ctx, "tool.t/x/y", `{"a":1}`); ok {
 		t.Fatal("effects should be cleaned after turn completes")
 	}
 }
