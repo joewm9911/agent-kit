@@ -15,11 +15,12 @@
 secrets:
   provider: env
 
+# 执行画像基线(app 层):model + reliability 全体执行单元的降级源。
 reliability:
-  model_retry: {max_attempts: 2, base_delay: 200ms}
+  retry: {max_attempts: 2, base_delay: 200ms}
   tool_timeout: 60s
 
-default_model:
+model:
   provider: "${SMOKE_MODEL_PROVIDER}"
   config:
     api_key: "${MINIMAX_API_KEY}"

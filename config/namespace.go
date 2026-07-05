@@ -34,11 +34,16 @@ type nsDeps struct {
 	defaultModel model.ToolCallingChatModel
 	maxRisk      capability.Risk
 	loopPrompt   string
-	toolTimeout  loop.Duration
-	retry        loop.RetryConfig
-	// defaults 是本 ns 之上各层合并好的执行参数默认值(agent 级已并入;
-	// buildNamespace 内再叠加 ns 自己的 defaults,就近优先)。
-	defaults Defaults
+	// base 是本 ns 之上各层合并好的执行画像(app.merge(agent自己));
+	// buildNamespace 内再叠加 ns 自己的 Profile,component 再叠加自己的,
+	// 最后叠加 mount 覆盖——五级就近合并。
+	base Profile
+	// mount 是 agent 给本 namespace 的 per-mount 覆盖画像(最高优;
+	// 单文件路径为空 Profile)。
+	mount Profile
+	// appModel 是 app 层 model(判断 component 解析出的 model 是否为
+	// app 默认:相同则复用共享 DefaultModel,不同则为其构建专属模型)。
+	appModel *ModelConfig
 	// nsPath 是 namespace 文件绝对路径,作源连接缓存键;srcCache 非 nil
 	// 时同一 namespace 文件被多个 agent 实例化只建一次源连接。
 	nsPath   string
@@ -83,6 +88,10 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	if ns.Name == "" {
 		return fmt.Errorf("namespace: name is required")
 	}
+	// 能力不可自指 model:namespace 的执行画像不得声明 model。
+	if err := ns.Profile.validateNoModel("namespace " + ns.Name); err != nil {
+		return err
+	}
 
 	// 1. 工具:进 ns 本地目录,对外不可见。Sync 结果按 (ns 文件, 源名)
 	// 缓存——同一 namespace 被多个 agent 实例化时源连接只建一次。
@@ -116,18 +125,11 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 	}
 
-	// 执行参数 override 链:component 显式声明 → ns/agent 合并默认
-	// (deps.defaults 已含 agent 层,ns 层由 BuildApp 并入)→ app 全局。
-	eff := deps.defaults
-
-	toolTimeout := deps.toolTimeout
-	if eff.ToolTimeout != nil {
-		toolTimeout = *eff.ToolTimeout
-	}
-	retry := deps.retry
-	if eff.Retry != nil {
-		retry = *eff.Retry
-	}
+	// 执行画像五级链:base = app.merge(agent),叠加 ns 自己 → nsBase;
+	// nsEff = nsBase.merge(mount) 供 ns 级(skill 步骤)使用;每个 component
+	// 再叠加自己的 Profile 后叠加 mount(mount 最高优),见下。
+	nsBase := deps.base.merge(ns.Profile)
+	nsEff := nsBase.merge(deps.mount)
 
 	// 2. 执行单元:按声明顺序装配,产物只存在于本 ns 的构建上下文
 	comps := map[string]capability.Capability{}
@@ -139,6 +141,13 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		if _, dup := comps[cc.Name]; dup {
 			return fmt.Errorf("namespace %s: duplicate component %q", ns.Name, cc.Name)
 		}
+		// 能力不可自指 model:component 的执行画像不得声明 model。
+		if err := cc.Profile.validateNoModel(fmt.Sprintf("namespace %s: component %s", ns.Name, cc.Name)); err != nil {
+			return err
+		}
+		// component 生效画像:nsBase.merge(自己) 再叠加 mount(最高优)。
+		// 五级就近合并:mount > component > namespace > agent > app。
+		eff := nsBase.merge(cc.Profile).merge(deps.mount)
 
 		// 编排族:steps 声明 → 私有的无脑图(graph/workflow)
 		if len(cc.Steps) > 0 {
@@ -168,36 +177,24 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			Prompt:       cc.Prompt,
 			Engine:       cc.Engine,
 			EngineConfig: cc.EngineConfig,
-			MaxSteps:     cc.MaxSteps,
-			Compaction:   cc.Compaction,
+			MaxSteps:     eff.maxSteps(),
+			Compaction:   eff.compaction(),
 			Todo:         cc.Todo,
 		}
-		// component 未显式声明的执行参数,从 defaults 链取
-		if decl.MaxSteps == 0 && eff.MaxSteps != nil {
-			decl.MaxSteps = *eff.MaxSteps
-		}
-		if !decl.Compaction.Enabled() && eff.Compaction != nil {
-			decl.Compaction = *eff.Compaction
-		}
-		mc := cc.Model
-		if mc == nil {
-			mc = eff.Model
-		}
-		if mc != nil {
-			decl.Model = &skill.ModelDecl{Provider: mc.Provider, Config: mc.Config}
-		}
-		digestOver := cc.DigestOver
-		if digestOver == 0 && eff.DigestOver != nil {
-			digestOver = *eff.DigestOver
+		// model 走执行画像三级链(mount > agent > app;ns/component 不可自指)。
+		// 解析出的 model 与 app 默认相同 → 复用共享 DefaultModel(不重建);
+		// 不同(agent/mount 指定)→ 为其构建专属模型。
+		if eff.Model != nil && eff.Model != deps.appModel {
+			decl.Model = &skill.ModelDecl{Provider: eff.Model.Provider, Config: eff.Model.Config}
 		}
 		c, err := skill.Build(ctx, decl, skill.Deps{
 			Prompts:      deps.prompts,
 			DefaultModel: deps.defaultModel,
 			LoopPrompt:   deps.loopPrompt,
 			Capabilities: caps,
-			ToolTimeout:  toolTimeout.Std(),
-			Retry:        retry,
-			DigestOver:   digestOver,
+			ToolTimeout:  eff.toolTimeout().Std(),
+			Retry:        eff.retry(),
+			DigestOver:   eff.digestOver(),
 		})
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -219,7 +216,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		c, err := skill.BuildGraph(ctx, &skill.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
 			Params: sc.Params, Output: sc.Output,
-			Steps: applyStepDefaults(steps, sc.StepDefaults.Timeout, sc.StepDefaults.Retry, eff),
+			Steps: applyStepDefaults(steps, sc.StepDefaults.Timeout, sc.StepDefaults.Retry, nsEff.stepTimeout(), nsEff.stepRetry()),
 		}, ns.Name, resolver)
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -232,14 +229,15 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 }
 
 // applyStepDefaults 应用步骤参数的 override 链:步骤显式声明 →
-// skill 的 step_defaults(sdTimeout/sdRetry)→ ns/agent 合并默认。
+// skill 的 step_defaults(sdTimeout/sdRetry)→ 执行画像 steps 默认
+// (defTimeout/defRetry,已含 mount/ns/agent/app 就近合并)。
 // 0 视为未声明,负值表示显式关闭(retry: -1 = 不重试,即便上层有默认)。
-func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int, eff Defaults) []skill.Step {
-	if sdTimeout == 0 && eff.StepTimeout != nil {
-		sdTimeout = *eff.StepTimeout
+func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int, defTimeout loop.Duration, defRetry int) []skill.Step {
+	if sdTimeout == 0 {
+		sdTimeout = defTimeout
 	}
-	if sdRetry == 0 && eff.StepRetry != nil {
-		sdRetry = *eff.StepRetry
+	if sdRetry == 0 {
+		sdRetry = defRetry
 	}
 	if sdTimeout == 0 && sdRetry == 0 {
 		return steps
@@ -261,9 +259,9 @@ func applyStepDefaults(steps []skill.Step, sdTimeout loop.Duration, sdRetry int,
 // 执行器,产物只进本 ns 的 comps 表(私有,不进目录)。skill 与它的
 // 区别只剩可见性——skill 是导出的图,这里是私有的图。
 func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig,
-	local *source.Catalog, comps map[string]capability.Capability, deps nsDeps, eff Defaults) (capability.Capability, error) {
+	local *source.Catalog, comps map[string]capability.Capability, deps nsDeps, eff Profile) (capability.Capability, error) {
 
-	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.MaxSteps > 0 || cc.Todo {
+	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.Loop.MaxSteps != nil || cc.Todo {
 		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps/todo 互斥(编排族没有大脑,计划就是 steps 本身)")
 	}
 	switch cc.Engine {
@@ -283,7 +281,7 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 	return skill.BuildGraph(ctx, &skill.GraphDeclaration{
 		Kind: "component",
 		Name: cc.Name, Params: cc.Params,
-		Steps:  applyStepDefaults(cc.Steps, 0, 0, eff),
+		Steps:  applyStepDefaults(cc.Steps, 0, 0, eff.stepTimeout(), eff.stepRetry()),
 		Output: cc.Output,
 	}, nsName, resolver)
 }

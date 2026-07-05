@@ -9,7 +9,7 @@ import (
 	"github.com/joewm9911/agent-kit/runctx"
 )
 
-func saveSearch(t *testing.T, kv KV, scope ScopeConfig) (save, search capability.Capability) {
+func saveSearch(t *testing.T, kv Store, scope ScopeConfig) (save, search capability.Capability) {
 	t.Helper()
 	caps := AsCapabilities(kv, scope)
 	return caps[0], caps[1]
@@ -21,7 +21,7 @@ func userCtx(id string) context.Context {
 
 // TestUserScopeIsolation 验证用户级隔离:A 写入的记忆 B 检索不到。
 func TestUserScopeIsolation(t *testing.T) {
-	kv := NewInMemoryKV()
+	kv := NewInMemory()
 	save, search := saveSearch(t, kv, ScopeConfig{}) // 缺省:写 user、读 user+shared
 
 	// 用户 A 记下偏好
@@ -42,7 +42,7 @@ func TestUserScopeIsolation(t *testing.T) {
 // TestSharedReadableNotWritable 验证读放开写收窄:用户面 agent 读得到
 // 共享池,但对话写入落用户桶、进不了共享池。
 func TestSharedReadableNotWritable(t *testing.T) {
-	kv := NewInMemoryKV()
+	kv := NewInMemory()
 	// 运维侧(非对话)灌入共享知识
 	_ = kv.Put(context.Background(), SharedScope, "发布流程", "灰度→观察→全量")
 
@@ -66,7 +66,7 @@ func TestSharedReadableNotWritable(t *testing.T) {
 // TestWriteScopeSharedForPrivilegedAgent 验证特权 agent:显式配
 // write_scope: shared 时,对话写入落共享池,对所有用户可见。
 func TestWriteScopeSharedForPrivilegedAgent(t *testing.T) {
-	kv := NewInMemoryKV()
+	kv := NewInMemory()
 	save, _ := saveSearch(t, kv, ScopeConfig{Write: SharedScope})
 	if _, err := capability.Invoke(userCtx("admin"), save,
 		`{"key":"新流程","value":"已更新"}`); err != nil {
@@ -82,7 +82,7 @@ func TestWriteScopeSharedForPrivilegedAgent(t *testing.T) {
 // TestNoUserIdentityFailsFast 验证无用户身份时用户记忆写入 fail fast,
 // 以工具结果告知而非静默落进共享池。
 func TestNoUserIdentityFailsFast(t *testing.T) {
-	kv := NewInMemoryKV()
+	kv := NewInMemory()
 	save, _ := saveSearch(t, kv, ScopeConfig{}) // write=user
 
 	noUser := runctx.With(context.Background(), "a", "s") // 无 WithUser
@@ -102,7 +102,7 @@ func TestNoUserIdentityFailsFast(t *testing.T) {
 
 // TestReadScopesConfigured 验证 read_scopes 可裁剪(如只读共享、不读用户桶)。
 func TestReadScopesConfigured(t *testing.T) {
-	kv := NewInMemoryKV()
+	kv := NewInMemory()
 	_ = kv.Put(context.Background(), UserScope("A"), "私密", "用户私有")
 	_ = kv.Put(context.Background(), SharedScope, "公开", "共享内容")
 

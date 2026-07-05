@@ -30,13 +30,14 @@ sources:
 catalog:
   max_risk: mutating
 
-# ---- 可靠性(Ring 0,零值即启用默认):模型瞬时错误重试 + 工具超时 ----
+# ---- 执行画像基线(app 层):所有 agent/component 的降级源(就近者胜)----
+# reliability(Ring 0,零值即默认):模型瞬时错误重试 + 工具超时。
 reliability:
-  model_retry: {max_attempts: 3, base_delay: 500ms}
+  retry: {max_attempts: 3, base_delay: 500ms}
   tool_timeout: 5m
 
-# ---- 默认模型:override 链的最终回落(component→ns→agent→这里)----
-default_model:
+# model:五级降级链的最终回落(mount→component→ns→agent→app)。
+model:
   provider: minimax          # 或 openai(兼容所有 OpenAI 协议网关)
   config:
     api_key: "${MINIMAX_API_KEY}"

@@ -1,6 +1,10 @@
 // schema.go 收口全部配置模型定义(YAML 结构):app / agent / namespace /
 // component 的声明式 schema 都在这里;各层的“组装”逻辑分见 config.go(单
 // 文件)、app.go(多文件)、agent.go(agent 装配)、namespace.go(ns 装配)。
+//
+// 执行画像(model/loop/reliability/digest/steps)是四层共用的一套 Profile
+// (见 profile.go),各层内嵌;治理边界(approval/budget/structured_output)
+// 与会话状态(session/memory/todo)是 agent 专属、可由 app 设默认。
 package config
 
 import (
@@ -37,9 +41,9 @@ type PromptsConfig struct {
 	DefaultLabel string               `yaml:"default_label"`
 }
 
-// StoreInstance 是一个具名存储实例声明(agent 层,私有作用域)。
-// 模块块的 store 槽用 cap://store/<kind>/<name> 引用它;换后端=改 type、
-// 或声明另一实例把 store 指过去;跨 agent 共享=各自声明指向同一后端。
+// StoreInstance 是一个具名存储实例声明(app 或 agent 层)。模块块的 store
+// 槽用 cap://store/<kind>/<name> 引用它;换后端=改 type、或声明另一实例把
+// store 指过去;跨 agent 共享=在 app 层声明一次,各 agent 引用同名实例。
 type StoreInstance struct {
 	Name   string         `yaml:"name"`
 	Kind   string         `yaml:"kind"` // session | memory | todo | result
@@ -57,8 +61,9 @@ type RetrieverInstance struct {
 	Config map[string]any `yaml:"config"`
 }
 
-// SessionConfig 是会话短期记忆模块:窗口、后端、轨迹详略、窗外召回、
-// 上下文压缩。
+// SessionConfig 是会话短期记忆模块:窗口、后端、轨迹详略、窗外召回。
+// (上下文压缩 compaction 归执行画像 loop.compaction,主 loop 与 component
+// 共用同一机制,见 LoopProfile。)
 type SessionConfig struct {
 	Window      int            `yaml:"window"`       // 0 = 不启用会话记忆
 	Store       string         `yaml:"store"`        // cap://store/session/<name> 或裸 type(inmemory/file/...)
@@ -69,8 +74,13 @@ type SessionConfig struct {
 	// Recall 是窗口外会话历史的自动召回(L4):top_k>0 启用,retriever 指定
 	// 检索策略(cap://retriever/session/<name> 或裸 type,缺省 bigram 词法)。
 	Recall SessionRecall `yaml:"recall"`
-	// Compaction 是上下文压缩(会话上下文管理):越过阈值滚动摘要。
-	Compaction loop.CompactionConfig `yaml:"compaction"`
+}
+
+// isZero 报告 SessionConfig 是否未声明(用于 app→agent 整块降级)。
+func (s SessionConfig) isZero() bool {
+	return s.Window == 0 && s.Store == "" && s.StoreConfig == nil &&
+		s.RecordTools == "" && s.Recall.TopK == 0 && s.Recall.Retriever == "" &&
+		s.Recall.RetrieverConfig == nil
 }
 
 // SessionRecall 是窗外会话召回配置。
@@ -97,6 +107,12 @@ type MemoryConfig struct {
 	Seed []MemorySeed `yaml:"seed"`
 }
 
+// isZero 报告 MemoryConfig 是否未声明(用于 app→agent 整块降级)。
+func (m MemoryConfig) isZero() bool {
+	return m.Store == "" && m.StoreConfig == nil && !m.Tools &&
+		m.Scope.Write == "" && m.Scope.Read == nil && m.Recall.TopK == 0 && m.Seed == nil
+}
+
 // MemoryScope 是长期记忆作用域。
 type MemoryScope struct {
 	Write string   `yaml:"write"`
@@ -116,22 +132,9 @@ type TodoConfig struct {
 	StoreConfig map[string]any `yaml:"store_config"`
 }
 
-// DigestConfig 是「大工具结果进上下文前的处理」模块:同一环节两道闸——
-// over 触发消化、truncate 硬截断兜底。
-type DigestConfig struct {
-	// Over>0 时,超过该 rune 数的工具结果先落暂存,由模型带当前任务提取
-	// 要点后入上下文(附 read_result 取回指针),截断闸在其后兜底。
-	Over int `yaml:"over"`
-	// Truncate 是所有工具结果进上下文的硬截断长度(rune):0=默认 8000,
-	// -1=关闭。作用于每个工具结果(不只被消化的),是消化之后的最终兜底。
-	Truncate    int            `yaml:"truncate"`
-	Store       string         `yaml:"store"` // cap://store/result/<name> 或裸 type
-	StoreConfig map[string]any `yaml:"store_config"`
-}
-
-// LoopConfig 是主循环(ReAct)控制。
-type LoopConfig struct {
-	MaxSteps int `yaml:"max_steps"` // 主循环迭代上限(外层兜底,是否完成由模型自然表达)
+// isZero 报告 TodoConfig 是否未声明(用于 app→agent 整块降级)。
+func (t TodoConfig) isZero() bool {
+	return t.Enabled == nil && t.Store == "" && t.StoreConfig == nil
 }
 
 // PromptConfig 是提示词分层模块:L1 框架规约 + L2 业务 persona,均支持
@@ -155,44 +158,41 @@ type ApprovalConfig struct {
 	loop.ApprovalPolicy `yaml:",inline"` // remember, rules
 }
 
-// AgentConfig 声明一个 agent(唯一主循环是 ReAct)。配置全部按执行环节
-// 模块化,YAML 顶层各块各司其职:身份(name/description/model)· prompt
-// 提示词分层 · capabilities 能力选品 · loop 主循环 · stores/retrievers 存储
-// 定义 · session/memory/todo/digest 四大上下文模块 · approval/budget/
-// structured_output 治理边界。
+// isZero 报告 ApprovalConfig 是否未声明(用于 app→agent 整块降级)。
+func (a ApprovalConfig) isZero() bool {
+	return a.Mode == "" && !a.Remember && len(a.Rules) == 0
+}
+
+// AgentConfig 声明一个 agent(唯一主循环是 ReAct)。执行画像(model/loop/
+// reliability/digest/steps)内嵌自 Profile,是主循环设置、兼作其 component 的
+// 通用默认;会话状态(session/memory/todo)是主循环专属;治理边界(approval/
+// budget/structured_output)是 agent 独占的 Ring 0 安全边界。
 type AgentConfig struct {
-	Name        string       `yaml:"name"`
-	Description string       `yaml:"description"`
-	Model       *ModelConfig `yaml:"model"` // nil 用顶层 default_model
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+
+	// 执行画像 A 类(model/loop/reliability/digest/steps),agent 自己这一层:
+	// 既配主循环,也作为其 component 的降级源。
+	Profile `yaml:",inline"`
 
 	Prompt       PromptConfig       `yaml:"prompt"`       // 提示词分层(L1 loop / L2 system)
 	Capabilities CapabilitiesConfig `yaml:"capabilities"` // 能力选品 + 内置开关
-	Loop         LoopConfig         `yaml:"loop"`         // 主循环控制(max_steps)
 
-	// Stores/Retrievers 是具名实例声明(仅定义);四大模块的 store/retriever
+	// Stores/Retrievers 是具名实例声明(仅定义);模块块的 store/retriever
 	// 槽用 cap://store/... · cap://retriever/... 引用它们(见 StoreInstance)。
 	Stores     []StoreInstance     `yaml:"stores"`
 	Retrievers []RetrieverInstance `yaml:"retrievers"`
 
-	// 四大上下文/记忆模块,各自独立(digest 含工具结果截断 truncate)。
+	// 会话状态(主循环专属,component 无状态调用没有):
 	Session SessionConfig `yaml:"session"`
 	Memory  MemoryConfig  `yaml:"memory"`
 	Todo    TodoConfig    `yaml:"todo"`
-	Digest  DigestConfig  `yaml:"digest"`
 
 	// 治理边界(Ring 0,agent 独占、不被 namespace 覆盖):审批 + 预算 +
-	// 结构化输出,三块各自顶层,与四大上下文模块并列。
+	// 结构化输出,三块各自顶层。
 	Approval         ApprovalConfig        `yaml:"approval"`
 	Budget           loop.BudgetConfig     `yaml:"budget"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
-}
-
-// ReliabilityConfig 是全局可靠性策略。
-type ReliabilityConfig struct {
-	// ModelRetry 是模型调用的瞬时错误重试,零值 = 默认 3 次尝试。
-	ModelRetry loop.RetryConfig `yaml:"model_retry"`
-	// ToolTimeout 是工具单次调用超时,0 = 默认 5m,负 = 关闭。
-	ToolTimeout loop.Duration `yaml:"tool_timeout"`
 }
 
 // ChannelConfig 声明一个 IM 通道绑定。
@@ -233,8 +233,9 @@ type ObservabilityConfig struct {
 	TrajectoryPath string `yaml:"trajectory_path"`
 }
 
-// Config 是应用的完整声明(单文件形态,兼容路径;
-// 多文件形态见 LoadApp:app.yaml + 每 agent/namespace 一个文件)。
+// Config 是应用的完整声明(单文件形态,兼容路径;多文件形态见 LoadApp:
+// app.yaml + 每 agent/namespace 一个文件)。顶层执行画像(model/loop/
+// reliability/digest/steps)内嵌自 Profile,是所有 agent/component 的基线。
 type Config struct {
 	Secrets SecretsConfig `yaml:"secrets"`
 
@@ -243,17 +244,15 @@ type Config struct {
 	Sources []SourceConfig `yaml:"sources"`
 	Catalog CatalogConfig  `yaml:"catalog"`
 
-	DefaultModel *ModelConfig `yaml:"default_model"`
-	// Reliability 是全局可靠性策略(Ring 0):模型瞬时错误重试、
-	// 工具单次调用超时。零值即启用默认策略。
-	Reliability ReliabilityConfig `yaml:"reliability"`
+	// 执行画像基线(app 层):model 取代原 default_model,reliability/loop/
+	// digest/steps 为全体执行单元的降级源。
+	Profile `yaml:",inline"`
 
 	// Namespaces 是三层结构的主路径:tools(ns 内共享)→ components
 	// (执行单元声明)→ skills(对外产品,唯一进目录的编排单元)。
 	Namespaces []NamespaceConfig `yaml:"namespaces"`
 
 	// Skills 是平铺声明的兼容路径,新配置建议用 namespaces。
-	// (workflow 不再单列:顺序编排用 namespace 的 engine: workflow component/skill。)
 	Skills []*skill.Declaration `yaml:"skills"`
 	Agents []AgentConfig        `yaml:"agents"`
 
@@ -265,26 +264,9 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 }
 
-// Defaults 是可被下层重定义的执行参数默认值(治理策略不在此列)。
-// 全部为指针/可判空字段:只有显式写了的键参与覆盖,零值不污染链条。
-type Defaults struct {
-	// Model 是 component 未声明专属模型时的默认(component → ns → agent → app)。
-	Model *ModelConfig `yaml:"model"`
-	// MaxSteps 是 component 内部循环的默认步数上限。
-	MaxSteps *int `yaml:"max_steps"`
-	// Compaction 是 component 内部循环的默认压缩策略。
-	Compaction *loop.CompactionConfig `yaml:"compaction"`
-	// ToolTimeout/Retry 是 component 内部工具面与专属模型的可靠性默认。
-	ToolTimeout *loop.Duration    `yaml:"tool_timeout"`
-	Retry       *loop.RetryConfig `yaml:"retry"`
-	// StepTimeout/StepRetry 是编排步骤未声明 timeout/retry 时的默认。
-	StepTimeout *loop.Duration `yaml:"step_timeout"`
-	StepRetry   *int           `yaml:"step_retry"`
-	// DigestOver 是 component 内部工具面的大结果消化阈值默认。
-	DigestOver *int `yaml:"digest_over"`
-}
-
-// AppConfig 是应用级入口(app.yaml):进程级资源与接线板。
+// AppConfig 是应用级入口(app.yaml):进程级资源与接线板 + 全局默认。
+// 执行画像(Profile)是所有 agent/component 的基线;会话状态与治理边界的
+// app 层块为可选默认(agent 未声明整块时回落至此)。
 type AppConfig struct {
 	Secrets SecretsConfig `yaml:"secrets"`
 
@@ -294,8 +276,21 @@ type AppConfig struct {
 	Sources []SourceConfig `yaml:"sources"`
 	Catalog CatalogConfig  `yaml:"catalog"`
 
-	DefaultModel *ModelConfig      `yaml:"default_model"`
-	Reliability  ReliabilityConfig `yaml:"reliability"`
+	// 执行画像基线(app 层)。model 取代原 default_model。
+	Profile `yaml:",inline"`
+
+	// Stores 是 app 层具名存储实例(全局共享后端,如所有 agent 共用一个
+	// redis session 实例);agent 层可再声明私有实例。
+	Stores     []StoreInstance     `yaml:"stores"`
+	Retrievers []RetrieverInstance `yaml:"retrievers"`
+
+	// 会话状态 / 治理边界的 app 层默认(可选,agent 未声明整块时回落至此)。
+	Session          SessionConfig         `yaml:"session"`
+	Memory           MemoryConfig          `yaml:"memory"`
+	Todo             TodoConfig            `yaml:"todo"`
+	Approval         ApprovalConfig        `yaml:"approval"`
+	Budget           loop.BudgetConfig     `yaml:"budget"`
+	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
 
 	// Agents 是 agent 文件路径列表,相对 app.yaml 所在目录。
 	Agents []string `yaml:"agents"`
@@ -310,42 +305,40 @@ type AppConfig struct {
 // AgentFile 是 agent 维度的配置文件(agents/<name>.yaml)。
 type AgentFile struct {
 	AgentConfig `yaml:",inline"`
-	// Namespaces 是关联的 namespace 文件路径(相对本文件),自动挂载
-	// 其全部导出 skill;capabilities.exclude 可屏蔽个别。
-	Namespaces []string `yaml:"namespaces"`
-	// Defaults 是 agent 级执行参数默认值,namespace/component 未声明时回落至此。
-	Defaults Defaults `yaml:"defaults"`
+	// Namespaces 是关联的 namespace 挂载(相对本文件),自动挂载其全部
+	// 导出 skill;capabilities.exclude 可屏蔽个别。每个挂载可携带 per-mount
+	// 覆盖画像(最高优),兼容裸字符串写法(仅路径),见 NamespaceMount。
+	Namespaces []NamespaceMount `yaml:"namespaces"`
 }
 
 // NamespaceFile 是 namespace 维度的配置文件(namespaces/<name>.yaml)。
+// namespace 层可声明执行画像(内嵌自 NamespaceConfig 的 Profile,但不含
+// model——能力不可自指模型)。
 type NamespaceFile struct {
 	NamespaceConfig `yaml:",inline"`
-	// Defaults 是 namespace 级执行参数默认值,覆盖 agent 级。
-	Defaults Defaults `yaml:"defaults"`
 }
 
 // ComponentConfig 声明一个执行单元:能力声明与能力使用分离的"声明"侧。
-// 不进全局目录、对外不可见。engine **必填**——执行形态决定成本模型与
-// 行为保证,是读配置的人最需要一眼看到的事实,不做隐式默认:
+// 不进全局目录、对外不可见。执行画像(loop/reliability/digest/steps)内嵌自
+// Profile(不含 model)。engine **必填**——执行形态决定成本模型与行为保证:
 //
 //	循环族(prompt + tools):engine = direct(单发:一次调用+一轮工具+
 //	  收尾,无循环)| react(自主循环)| plan-execute(规划循环)| 已注册模板;
 //	编排族(steps):engine = graph(DAG,可并行)| workflow(纯顺序,
-//	  禁 needs)。无脑钉死序列,复用 skill 的图执行器,params 显式化
-//	  入参契约。两族字段互斥。
+//	  禁 needs)。两族字段互斥。
 type ComponentConfig struct {
 	Name   string       `yaml:"name"`
 	Engine string       `yaml:"engine"`
 	Prompt prompt.Value `yaml:"prompt"`
 	// Tools 是循环族的工具面引用:tools/<source>/<name|*>(本 ns 工具)、
 	// components/<name>(本 ns 执行单元)、cap://skill 引用(跨 ns)。
-	Tools        []string              `yaml:"tools"`
-	Model        *ModelConfig          `yaml:"model"`
-	MaxSteps     int                   `yaml:"max_steps"`
-	EngineConfig map[string]any        `yaml:"engine_config"`
-	Compaction   loop.CompactionConfig `yaml:"compaction"`
-	// DigestOver 启用内部工具面的大结果消化(0 = 未声明,走 defaults 链)。
-	DigestOver int `yaml:"digest_over"`
+	Tools        []string       `yaml:"tools"`
+	EngineConfig map[string]any `yaml:"engine_config"`
+
+	// 执行画像 A 类(loop/reliability/digest/steps;不含 model)——component
+	// 自己这一层,最近,压过 namespace/agent/app。
+	Profile `yaml:",inline"`
+
 	// Todo 给内部循环挂调用级临时清单(仅 react;调用结束即弃)。
 	// 默认关——component 长到需要计划通常是"该拆成结构"的信号,
 	// 这是给确实拆不动的研究型长循环的例外通道。
@@ -378,9 +371,12 @@ type NamespaceSkill struct {
 	} `yaml:"step_defaults"`
 }
 
-// NamespaceConfig 是一个配置命名空间的完整声明。
+// NamespaceConfig 是一个配置命名空间的完整声明。执行画像(loop/reliability/
+// digest/steps;不含 model)内嵌自 Profile——该 ns 下 component 的画像默认,
+// 覆盖 agent、被 component 覆盖。
 type NamespaceConfig struct {
-	Name       string            `yaml:"name"`
+	Name       string `yaml:"name"`
+	Profile    `yaml:",inline"`
 	Tools      []SourceConfig    `yaml:"tools"`
 	Components []ComponentConfig `yaml:"components"`
 	Skills     []NamespaceSkill  `yaml:"skills"`

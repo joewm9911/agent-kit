@@ -5,13 +5,25 @@
 description: 会查天气、能写竞品报告、可以记住用户偏好的助手
 prompt:
   system: {ref: "cap://prompt/pp/assistant-persona"}   # L2 persona;L1 loop 用内置规约
+# ---- 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源)----
+# loop:迭代上限 + 上下文压缩(compaction 归 loop,主 loop 与 component 共用)。
+# 压缩阈值触发(token 维度优先用供应商真实用量校准);摘要内容策略可配
+# (prompt 支持字面量或 {ref:});要求 session.window >= keep_recent+2(装配期校验)。
 loop:
   max_steps: 30
+  compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
+  #   compaction: {prompt: {ref: "cap://prompt/pp/ops-summarize"}}   # 领域保留清单
+
+# model:能力不可自指,agent 可给自己或给某 namespace(per-mount)指定;缺省回落 app。
+# model: {provider: openai, config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}}
 
 # ---- 能力域关联:挂载 namespace 即获得其全部导出 skill(路径相对本文件)----
+# per-mount 可给某个 namespace 显式指定执行画像(最高优),写法见 namespaces 数组项。
 namespaces:
   - ../namespaces/briefing.yaml
   - ../namespaces/research.yaml
+  #  - path: ../namespaces/research.yaml         # 给 research 域单独指定强模型
+  #    model: {provider: openai, config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}}
 
 # ---- 兼容路径:全局源的通用工具直挂;exclude 对自动挂载同样生效 ----
 capabilities:
@@ -20,22 +32,13 @@ capabilities:
   exclude:
     - "cap://tool/fs/write_file"
 
-# ---- 执行参数默认值(override 链的 agent 层,可被 ns/component 就近覆盖)----
-# defaults:
-#   model: {provider: openai, config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}}
-#   step_retry: 1
-
-# ---- 四大上下文/记忆模块,各自独立;store 槽引用 stores: 具名实例或裸 type ----
+# ---- 会话状态(主循环专属);store 槽引用 stores: 具名实例或裸 type ----
 session:                  # ① 会话短期记忆
   window: 100             # 会话记忆(运行时织入,模型无感知);store 层硬裁剪
   store: file             # 裸 type 缺省简写:inmemory | file | 或 cap://store/session/<name>
   store_config: {dir: ./data/sessions}   # 运行时路径,相对进程工作目录
   record_tools: summary   # 工具轨迹随会话持久化:summary | full | off
   recall: {top_k: 3}      # 窗外会话召回(retriever 缺省 bigram,可注册替换)
-  # 压缩:阈值触发(token 维度优先用供应商真实用量校准);摘要内容策略可配
-  # (prompt 支持字面量或 {ref:});要求 window >= keep_recent+2(装配期校验)
-  compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
-  #   prompt: {ref: "cap://prompt/pp/ops-summarize"}   # 领域保留清单
 
 memory:                   # ② 长期记忆(独立模块;向量后端换 store: cap://store/memory/<name>)
   tools: true             # 挂 memory_save / memory_search(大脑自主)

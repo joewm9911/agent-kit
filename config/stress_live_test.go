@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/builtin"
+	"github.com/joewm9911/agent-kit/loop"
 	_ "github.com/joewm9911/agent-kit/provider/redisstore" // 注册 redis 后端
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/store"
@@ -86,19 +87,21 @@ func loadStressApp(t *testing.T, rconf map[string]any, ix *stressInteractor) *Ap
 		if as.Name != "ops-manager" {
 			continue
 		}
+		// 四类存储全落 redis(session/todo/result/memory),验证 redis provider
+		// 对四种 store 类型的分布式一致性。
 		as.Stores = []StoreInstance{
 			{Name: "sessions", Kind: "session", Type: "redis", Config: rconf},
 			{Name: "plans", Kind: "todo", Type: "redis", Config: rconf},
 			{Name: "cache", Kind: "result", Type: "redis", Config: rconf},
-			{Name: "ltm", Kind: "memory", Type: "inmemory"}, // 长期记忆走向量家族,保持 inmemory
+			{Name: "ltm", Kind: "memory", Type: "redis", Config: rconf},
 		}
 		as.Session.Store = "cap://store/session/sessions"
 		as.Session.StoreConfig = nil
 		as.Todo.Store = "cap://store/todo/plans"
 		as.Digest.Store = "cap://store/result/cache"
 		// 压低阈值:多轮对话必然越过,强制走上下文压缩(window 40 容得下)。
-		as.Session.Compaction.MaxMessages = 6
-		as.Session.Compaction.KeepRecent = 2
+		// compaction 现属执行画像 loop.compaction。
+		as.Loop.Compaction = &loop.CompactionConfig{MaxMessages: 6, KeepRecent: 2}
 	}
 	app, err := BuildApp(context.Background(), spec, BuildOptions{Interactor: ix})
 	if err != nil {
@@ -221,6 +224,7 @@ type storeInspection struct {
 	sessionKeys   int
 	todoTasks     int
 	resultEntries int
+	memoryKeys    int
 	totalKeys     int
 }
 
@@ -256,6 +260,10 @@ func inspectStores(t *testing.T, rkv store.KV, ctx context.Context, agentName, s
 			in.resultEntries++
 		}
 	}
+
+	// memory:每个 scope 一个 redis hash,键前缀 mem:(user:<id> / shared)。
+	mk, _ := rkv.Scan(ctx, "mem:")
+	in.memoryKeys = len(mk)
 	return in
 }
 
@@ -283,7 +291,7 @@ func buildStressReport(results []turnResult, b *smokeBackend, ix *stressInteract
 
 	fmt.Fprintf(&sb, "## 结论\n\n")
 	fmt.Fprintf(&sb, "- **轮次 %d,失败 %d**,总耗时 %.0fs。\n", len(results), fail, total.Seconds())
-	fmt.Fprintf(&sb, "- 分布式存储落 redis:会话键 %d、todo 计划任务 %d 条、digest 暂存 %d 条(redis 总键 %d)。\n", in.sessionKeys, in.todoTasks, in.resultEntries, in.totalKeys)
+	fmt.Fprintf(&sb, "- 分布式存储落 redis(四类全外置):会话键 %d、todo 计划任务 %d 条、digest 暂存 %d 条、memory 记忆桶 %d 个(redis 总键 %d)。\n", in.sessionKeys, in.todoTasks, in.resultEntries, in.memoryKeys, in.totalKeys)
 	fmt.Fprintf(&sb, "- 上下文压缩触发 **%d 次**;human 交互:ask_user %d 次、审批 %d 次。\n", compactions, ix.asks, ix.approves)
 	fmt.Fprintf(&sb, "- 业务后端命中:商品搜索 %d、库存 %d、调价 %d。\n\n", b.searches.Load(), b.inventory.Load(), b.priceHits.Load())
 
@@ -302,6 +310,7 @@ func buildStressReport(results []turnResult, b *smokeBackend, ix *stressInteract
 	row("workflow + mutating 审批", "apply-price", ix.approves > 0, "本轮未走到")
 	row("todo 计划外化(harness 强制)", "多步任务自动列计划", in.todoTasks > 0, "本轮模型未产出;TestTodoStoreCrossReplica 确定性覆盖")
 	row("**分布式 store 跨副本**", "副本重启续同一会话", in.sessionKeys > 0, "")
+	row("memory 长期记忆(redis 后端)", "memory_save/search → redis hash", in.memoryKeys > 0, "本轮模型未写记忆;TestRedisMemory 确定性覆盖")
 	row("上下文压缩", "多轮越过 max_messages", compactions > 0, "未触发")
 	row("会话记忆多轮连续", "全程同 session", in.sessionKeys > 0, "")
 	row("human 交互 ask_user", "轮 3 显式邀请提问", ix.asks > 0, "本轮模型自行推进;离线测试覆盖")

@@ -26,27 +26,24 @@ import (
 	"github.com/joewm9911/agent-kit/suspend"
 )
 
-// agentModel 解析 agent 的模型:own(agent 自己声明)→ def(agent 级
-// 默认,来自 defaults 链)→ fallback(app 默认,已包装)。前两者在此
-// 套 Ring 0 中间件(重试+预算)。
-func agentModel(ctx context.Context, own, def *ModelConfig,
-	fallback model.ToolCallingChatModel, rel ReliabilityConfig) (model.ToolCallingChatModel, error) {
+// agentModel 解析 agent 主循环的模型:own(agent 自己 model:,可为 nil)
+// → fallback(app 层 model,已包装)。agent 显式声明时在此套 Ring 0 中间件
+// (retry 用其解析出的 reliability.retry + 预算);未声明则复用共享的 app
+// 默认(已包装,零重建)。namespace/component 不参与——它们不可自指 model。
+func agentModel(ctx context.Context, own *ModelConfig,
+	fallback model.ToolCallingChatModel, retry loop.RetryConfig) (model.ToolCallingChatModel, error) {
 
-	mc := own
-	if mc == nil {
-		mc = def
-	}
-	if mc == nil {
+	if own == nil {
 		if fallback == nil {
-			return nil, fmt.Errorf("no model (declare model or default_model)")
+			return nil, fmt.Errorf("no model (declare agent model or app-level model)")
 		}
 		return fallback, nil
 	}
-	m, err := registry.BuildModel(ctx, mc.Provider, mc.Config)
+	m, err := registry.BuildModel(ctx, own.Provider, own.Config)
 	if err != nil {
 		return nil, err
 	}
-	return loop.BudgetModel(loop.RetryModel(m, rel.ModelRetry)), nil
+	return loop.BudgetModel(loop.RetryModel(m, retry)), nil
 }
 
 // buildAgent 用已选品的能力面与已解析的模型装配 agent。
@@ -122,25 +119,29 @@ func wireGlobalStore(ref string, stores []StoreInstance, wantKind string, set fu
 	return nil
 }
 
-func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capability,
+// buildAgent 用已选品的能力面、已解析的模型与已解析的执行画像 eff
+// (= app.merge(agent自己))装配 agent。eff 提供全部执行画像 A 类参数
+// (max_steps/compaction/tool_timeout/retry/digest);会话状态与治理边界
+// 直接读 ac(调用方已把 app 层默认并入)。
+func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capability.Capability,
 	prompts *prompt.Resolver, m model.ToolCallingChatModel,
-	rel ReliabilityConfig, interactor runctx.Interactor, logger *slog.Logger) (*agent.Agent, error) {
+	interactor runctx.Interactor, logger *slog.Logger) (*agent.Agent, error) {
 
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	if m == nil {
-		return nil, fmt.Errorf("no model (declare model or default_model)")
+		return nil, fmt.Errorf("no model (declare agent model or app-level model)")
 	}
 
 	// 进程级存储后端注入(todo 计划、result 大结果暂存):分布式多副本
 	// 下须指向外置后端。键按 agent/会话隔离,同进程多 agent 共享同一后端
-	// 无碰撞;未配置则保持默认 inmemory。
+	// 无碰撞;未配置则保持默认 inmemory。digest.store 走执行画像(可降级)。
 	if err := wireGlobalStore(ac.Todo.Store, ac.Stores, "todo", builtin.SetStore); err != nil {
 		return nil, err
 	}
-	if err := wireGlobalStore(ac.Digest.Store, ac.Stores, "result", loop.SetResultBackend); err != nil {
+	if err := wireGlobalStore(eff.Digest.Store, ac.Stores, "result", loop.SetResultBackend); err != nil {
 		return nil, err
 	}
 
@@ -165,7 +166,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	// 长期记忆后端:挂工具或启用长期召回任一都需要构建;
 	// 工具面挂载仍只由 memory.tools 决定。
 	scope := memory.ScopeConfig{Write: ac.Memory.Scope.Write, Read: ac.Memory.Scope.Read}
-	var kv memory.KV
+	var kv memory.Store
 	if ac.Memory.Tools || kvK > 0 {
 		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "memory")
 		if err != nil {
@@ -198,19 +199,23 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	if err != nil {
 		return nil, err
 	}
-	if ac.Digest.Over > 0 {
+	if eff.digestOver() > 0 {
 		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
 	}
-	caps = loop.TimeoutTools(caps, rel.ToolTimeout.Std())
-	caps = loop.DigestResults(caps, m, ac.Digest.Over)    // 大结果消化
-	caps = loop.TruncateResults(caps, ac.Digest.Truncate) // 工具结果硬截断(Ring 0)
-	caps = suspend.DurableEffects(caps)                   // 效果日志(挂起恢复的重放不二次执行)
+	caps = loop.TimeoutTools(caps, eff.toolTimeout().Std())
+	caps = loop.DigestResults(caps, m, eff.digestOver())    // 大结果消化
+	caps = loop.TruncateResults(caps, eff.digestTruncate()) // 工具结果硬截断(Ring 0)
+	caps = suspend.DurableEffects(caps)                     // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)
 	caps = loop.ControlTools(caps) // 中断/插话检查点(审批之外:中断时不再询问)
 	if todoOn {
 		caps = builtin.NudgeTools(caps) // 计划卡住提醒(harness 强制纪律)
 	}
 	caps = loop.RecordTools(caps) // 轨迹记录(最外层:记模型实际看到的)
+
+	// 上下文压缩归执行画像(loop.compaction),主 loop 从解析出的 eff 取;
+	// comp 是本地副本,ResolvePrompt 在其上锁版本,供 Compactor 与 agent 复用。
+	comp := eff.compaction()
 
 	// 会话记忆
 	var sessStore session.Store
@@ -228,21 +233,21 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		// FullLoader 是滚动摘要与窗外召回的前提:自定义后端没实现时
 		// 这两项能力静默消失——装配期把降级喊出来,不让它悄悄发生。
 		if _, ok := sessStore.(session.FullLoader); !ok {
-			if ac.Session.Compaction.Enabled() || sessK > 0 {
+			if comp.Enabled() || sessK > 0 {
 				logger.Warn("session store lacks FullLoader: rolling summary and beyond-window recall are DISABLED",
 					slog.String("agent", ac.Name), slog.String("store", ac.Session.Store))
 			}
 		}
 		// 窗口必须容得下摘要视图:否则滚动摘要(+锚定)会被窗口裁剪
 		// 静默切掉,跨轮记忆凭空消失。+2 = 摘要 + 锚定两条合成消息。
-		if ac.Session.Compaction.Enabled() && ac.Session.Window < ac.Session.Compaction.Keep()+2 {
-			return nil, fmt.Errorf("memory.window (%d) must be >= compaction keep_recent+2 (%d), or the rolling summary gets trimmed away",
-				ac.Session.Window, ac.Session.Compaction.Keep()+2)
+		if comp.Enabled() && ac.Session.Window < comp.Keep()+2 {
+			return nil, fmt.Errorf("session.window (%d) must be >= loop.compaction keep_recent+2 (%d), or the rolling summary gets trimmed away",
+				ac.Session.Window, comp.Keep()+2)
 		}
 	}
 
 	// 摘要提示词(内容策略可配置,归并指令框架追加):装配期解析锁版本
-	if err := ac.Session.Compaction.ResolvePrompt(ctx, prompts); err != nil {
+	if err := comp.ResolvePrompt(ctx, prompts); err != nil {
 		return nil, err
 	}
 
@@ -282,9 +287,9 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
 		Model:        m,
 		Capabilities: caps,
-		MaxSteps:     ac.Loop.MaxSteps,
+		MaxSteps:     eff.maxSteps(),
 		Modifier:     layers.Modifier(),
-		Rewriter:     loop.Compactor(m, ac.Session.Compaction),
+		Rewriter:     loop.Compactor(m, comp),
 	})
 	if err != nil {
 		return nil, err
@@ -300,7 +305,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 		record = loop.RecordSummary
 	}
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
-		Store: sessStore, Window: ac.Session.Window, Compaction: ac.Session.Compaction,
+		Store: sessStore, Window: ac.Session.Window, Compaction: comp,
 		Structured: enforcer, Interactor: interactor,
 		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget),
 		RecordTools: record,
@@ -312,7 +317,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, caps []capability.Capabili
 // Retriever),两路独立配置,命中片段注入消息尾部第四层。
 // 会话历史来自 agent 本轮已加载的全量记录(ctx 共享,一轮只读一次
 // store);同轮多次模型调用的查询不变,结果按轮 memo,不重复检索。
-func autoRecall(kv memory.KV, scope memory.ScopeConfig, retr session.Retriever, window, sessK, kvK int) func(ctx context.Context) []string {
+func autoRecall(kv memory.Store, scope memory.ScopeConfig, retr session.Retriever, window, sessK, kvK int) func(ctx context.Context) []string {
 	var mu sync.Mutex
 	memo := map[string]struct {
 		input  string

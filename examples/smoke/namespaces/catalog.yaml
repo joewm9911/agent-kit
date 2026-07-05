@@ -37,11 +37,11 @@ tools:
 
 components:
   # react:价格分析师——工具子集 + 大结果消化 + 内部压缩,fork 的接收方
+  # 执行画像内嵌:loop(步数+压缩)、digest(大结果消化)。
   - name: price_analyst
     engine: react
-    max_steps: 6
-    digest_over: 3000
-    compaction: {max_messages: 20, keep_recent: 8}
+    loop: {max_steps: 6, compaction: {max_messages: 20, keep_recent: 8}}
+    digest: {over: 3000}
     prompt: "你是价格分析师。分析商品 {sku} 的定价(用户关注:{question})。先调用 get_product 查询商品详情,必要时调用 get_inventory 看库存,然后给出定价结论。"
     tools:
       - "tools/shop/get_product"

@@ -83,7 +83,7 @@ func TestLoadAppConventions(t *testing.T) {
 	setupAppTestFakes()
 	appPath := writeTree(t, map[string]string{
 		"app.yaml": `
-default_model: {provider: marker, config: {resp: app-model}}
+model: {provider: marker, config: {resp: app-model}}
 agents: [agents/helper.yaml]
 `,
 		"agents/helper.yaml": `
@@ -136,37 +136,39 @@ func TestLoadAppNameMismatch(t *testing.T) {
 	}
 }
 
+// TestOverrideChainModel 验证 model 的三级降级(能力不可自指 model):
+// agent 给 namespace 的 per-mount 指定 > agent 自己 > app;namespace/component
+// 内不可写 model。agent a 有自己的 model,并给 over 这个 mount 显式指定
+// mount-model(压过其全部 component);plain mount 不指定(component 回落
+// agent 自己)。agent b 无自己的 model(回落 app)。
 func TestOverrideChainModel(t *testing.T) {
 	setupAppTestFakes()
 	appPath := writeTree(t, map[string]string{
 		"app.yaml": `
-default_model: {provider: marker, config: {resp: app-model}}
-agents: [agents/a.yaml]
+model: {provider: marker, config: {resp: app-model}}
+agents: [agents/a.yaml, agents/b.yaml]
 `,
 		"agents/a.yaml": `
-defaults:
-  model: {provider: marker, config: {resp: agent-model}}
-namespaces: [../namespaces/mixed.yaml, ../namespaces/plain.yaml]
+model: {provider: marker, config: {resp: agent-model}}
+namespaces:
+  - path: ../namespaces/over.yaml
+    model: {provider: marker, config: {resp: mount-model}}
+  - ../namespaces/plain.yaml
 `,
-		// ns 级 defaults 覆盖 agent 级;component 显式声明覆盖一切
-		"namespaces/mixed.yaml": `
-defaults:
-  model: {provider: marker, config: {resp: ns-model}}
+		// agent b 不声明自己的 model → component 回落 app-model
+		"agents/b.yaml": `
+namespaces: [../namespaces/plain.yaml]
+`,
+		// per-mount 覆盖压过全部 component(component 内不可写 model)
+		"namespaces/over.yaml": `
 components:
-  - name: own
-    engine: react
-    prompt: "回答 {q}"
-    model: {provider: marker, config: {resp: comp-model}}
-  - name: inherit
+  - name: c
     engine: react
     prompt: "回答 {q}"
 skills:
-  - name: via-own
-    steps: [{name: s, use: "components/own", args: '{"q":"x"}'}]
-  - name: via-inherit
-    steps: [{name: s, use: "components/inherit", args: '{"q":"x"}'}]
+  - name: via-mount
+    steps: [{name: s, use: "components/c", args: '{"q":"x"}'}]
 `,
-		// 无 ns defaults → 回落 agent 级
 		"namespaces/plain.yaml": `
 components:
   - name: inherit
@@ -186,23 +188,48 @@ skills:
 		t.Fatal(err)
 	}
 
-	mounted := app.AgentMounts["a"]
-	for skillRef, want := range map[string]string{
-		"cap://skill/mixed/via-own":     "comp-model",  // component 显式声明最优先
-		"cap://skill/mixed/via-inherit": "ns-model",    // ns defaults 覆盖 agent defaults
-		"cap://skill/plain/via-agent":   "agent-model", // 回落 agent defaults
-	} {
-		sk, err := mounted.Get(skillRef)
+	check := func(agentName, skillRef, want string) {
+		t.Helper()
+		sk, err := app.AgentMounts[agentName].Get(skillRef)
 		if err != nil {
-			t.Fatalf("%s: %v", skillRef, err)
+			t.Fatalf("%s/%s: %v", agentName, skillRef, err)
 		}
 		out, err := capability.Invoke(context.Background(), sk, `{}`)
 		if err != nil {
-			t.Fatalf("%s: %v", skillRef, err)
+			t.Fatalf("%s/%s: %v", agentName, skillRef, err)
 		}
 		if out != want {
-			t.Fatalf("%s: got %q, want %q", skillRef, out, want)
+			t.Fatalf("%s/%s: got %q, want %q", agentName, skillRef, out, want)
 		}
+	}
+	check("a", "cap://skill/over/via-mount", "mount-model")  // per-mount 指定最高优
+	check("a", "cap://skill/plain/via-agent", "agent-model") // 无 mount 指定 → agent 自己
+	check("b", "cap://skill/plain/via-agent", "app-model")   // 无 agent model → app
+}
+
+// TestNamespaceModelRejected 验证 namespace 不能自指 model(能力不可自指)。
+func TestNamespaceModelRejected(t *testing.T) {
+	setupAppTestFakes()
+	appPath := writeTree(t, map[string]string{
+		"app.yaml": `
+model: {provider: marker, config: {resp: m}}
+agents: [agents/a.yaml]
+`,
+		"agents/a.yaml": "namespaces: [../namespaces/bad.yaml]\n",
+		"namespaces/bad.yaml": `
+model: {provider: marker, config: {resp: ns-model}}
+skills:
+  - name: x
+    steps: [{name: s, use: "model", args: "hi"}]
+`,
+	})
+	spec, err := LoadApp(appPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = BuildApp(context.Background(), spec, BuildOptions{})
+	if err == nil || !strings.Contains(err.Error(), "model 不能在此声明") {
+		t.Fatalf("expect namespace model rejection, got %v", err)
 	}
 }
 
@@ -211,7 +238,7 @@ func TestNamespaceSourceShared(t *testing.T) {
 	syncCount.Store(0)
 	appPath := writeTree(t, map[string]string{
 		"app.yaml": `
-default_model: {provider: marker, config: {resp: m}}
+model: {provider: marker, config: {resp: m}}
 agents: [agents/x.yaml, agents/y.yaml]
 `,
 		"agents/x.yaml": "namespaces: [../namespaces/shared.yaml]\n",
@@ -241,11 +268,11 @@ func TestStepDefaultsChain(t *testing.T) {
 	setupAppTestFakes()
 	appPath := writeTree(t, map[string]string{
 		"app.yaml": `
-default_model: {provider: marker, config: {resp: m}}
+model: {provider: marker, config: {resp: m}}
 agents: [agents/a.yaml]
 `,
 		"agents/a.yaml": `
-defaults: {step_retry: 2}
+step_defaults: {retry: 2}
 namespaces: [../namespaces/flaky.yaml]
 `,
 		"namespaces/flaky.yaml": `

@@ -291,11 +291,10 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 func TestWindowMustFitSummaryView(t *testing.T) {
 	setupTestSource()
 	cfg := &Config{
-		DefaultModel: nil,
-		Agents:       []AgentConfig{{Name: "bad"}},
+		Agents: []AgentConfig{{Name: "bad"}},
 	}
 	cfg.Agents[0].Session.Window = 8
-	cfg.Agents[0].Session.Compaction = loop.CompactionConfig{MaxMessages: 30, KeepRecent: 10}
+	cfg.Agents[0].Loop.Compaction = &loop.CompactionConfig{MaxMessages: 30, KeepRecent: 10}
 	cfg.Agents[0].Model = &ModelConfig{Provider: "marker", Config: map[string]any{"resp": "x"}}
 	setupAppTestFakes() // 注册 marker 模型
 	_, err := Build(context.Background(), cfg, BuildOptions{})

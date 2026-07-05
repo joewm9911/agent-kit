@@ -13,7 +13,7 @@
 // 配置施加,模型无感知;往共享池写必须是配置显式授予,不是模型
 // 运行时自选(治理归部署方,库不给自己放权)。
 //
-// KV 后端可替换为 Redis / 向量库;scope 在向量后端对应 metadata 过滤。
+// Store 后端可替换为 Redis / 向量库;scope 在向量后端对应 metadata 过滤。
 package memory
 
 import (
@@ -33,16 +33,16 @@ import (
 // SharedScope 是域共享知识的作用域名。
 const SharedScope = "shared"
 
-// KV 是长期记忆的最小契约。scope 是归属维度(user:<id> / shared /
+// Store 是长期记忆的最小契约。scope 是归属维度(user:<id> / shared /
 // session:<id>);Search 在给定的一组 scope 内检索。实现可以是关键词
 // 匹配,也可以是向量检索(scope → metadata filter)。
-type KV interface {
+type Store interface {
 	Put(ctx context.Context, scope, key, value string) error
 	Search(ctx context.Context, scopes []string, query string, limit int) (map[string]string, error)
 }
 
 // Factory 按配置构造长期记忆后端。
-type Factory func(conf map[string]any) (KV, error)
+type Factory func(conf map[string]any) (Store, error)
 
 var (
 	facMu     sync.RWMutex
@@ -61,13 +61,13 @@ func Register(typ string, f Factory) {
 }
 
 func init() {
-	Register("inmemory", func(_ map[string]any) (KV, error) {
-		return NewInMemoryKV(), nil
+	Register("inmemory", func(_ map[string]any) (Store, error) {
+		return NewInMemory(), nil
 	})
 }
 
 // New 按类型构造长期记忆后端,空类型默认 inmemory。
-func New(typ string, conf map[string]any) (KV, error) {
+func New(typ string, conf map[string]any) (Store, error) {
 	if typ == "" {
 		typ = "inmemory"
 	}
@@ -85,17 +85,17 @@ func New(typ string, conf map[string]any) (KV, error) {
 	return f(conf)
 }
 
-// NewInMemoryKV 返回进程内关键词匹配的长期记忆,按 scope 分桶。
-func NewInMemoryKV() KV {
-	return &memKV{buckets: map[string]map[string]string{}}
+// NewInMemory 返回进程内关键词匹配的长期记忆,按 scope 分桶。
+func NewInMemory() Store {
+	return &memStore{buckets: map[string]map[string]string{}}
 }
 
-type memKV struct {
+type memStore struct {
 	mu      sync.RWMutex
 	buckets map[string]map[string]string // scope → (key → value)
 }
 
-func (m *memKV) Put(_ context.Context, scope, key, value string) error {
+func (m *memStore) Put(_ context.Context, scope, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b := m.buckets[scope]
@@ -107,7 +107,7 @@ func (m *memKV) Put(_ context.Context, scope, key, value string) error {
 	return nil
 }
 
-func (m *memKV) Search(_ context.Context, scopes []string, query string, limit int) (map[string]string, error) {
+func (m *memStore) Search(_ context.Context, scopes []string, query string, limit int) (map[string]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := map[string]string{}
@@ -185,7 +185,7 @@ func (c ScopeConfig) ReadScopes(ctx context.Context) []string {
 // search 覆盖 read scopes。scope 由框架注入,模型无感知。
 // save 是改动性操作但风险可控,标记 readonly 以免每次记录都触发审批;
 // 接入敏感存储时可自行用 loop.GateApproval 收紧。
-func AsCapabilities(kv KV, scope ScopeConfig) []capability.Capability {
+func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 	save := capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_save"},
 		Description: "保存一条长期记忆。当用户告知偏好、事实或值得跨会话记住的信息时调用。",

@@ -51,7 +51,7 @@ func TestExampleAppLayout(t *testing.T) {
 			global: mounted, prompts: prompts, defaultModel: testmodel.New(),
 			maxRisk: capability.RiskMutating,
 			nsPath:  ns.Path, srcCache: cache,
-			defaults: as.Defaults.merge(ns.Defaults),
+			base: as.Profile, mount: ns.Override,
 		})
 		if err != nil {
 			t.Fatal(err)

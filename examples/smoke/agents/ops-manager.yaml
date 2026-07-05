@@ -3,17 +3,17 @@
 description: 电商运营主管助手,负责定价审查、活动策划、客户跟进
 prompt:
   system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief。多步骤任务先列计划。"
+# 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
 loop:
   max_steps: 20
+  compaction: {max_messages: 12, keep_recent: 4}  # 上下文压缩(归 loop)
+step_defaults:
+  retry: 1
 
 namespaces:
   - ../namespaces/catalog.yaml
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
-
-# 执行参数默认(override 链的 agent 层)
-defaults:
-  step_retry: 1
 
 # 具名存储实例:四类内部状态各一个实例,模块块的 store 槽用
 # cap://store/<kind>/<name> 引用。分布式部署把 type 换成 redis
@@ -32,8 +32,7 @@ session:                                     # ① 会话短期记忆
   store: cap://store/session/sessions        #    会话历史后端
   window: 40
   record_tools: summary
-  recall: {top_k: 3}                         #    窗外会话召回
-  compaction: {max_messages: 12, keep_recent: 4}  # 上下文压缩
+  recall: {top_k: 3}                         #    窗外会话召回(压缩见 loop.compaction)
 
 memory:                                      # ② 长期记忆
   store: cap://store/memory/ltm              #    memory_save/search 后端

@@ -42,6 +42,6 @@ skills:
     # 转写(注意:不可信文本,引到哪步等于在哪开一个显式注入面)
     #   - {name: ask, use: "components/analyzer", args: '{"request":"{$input}"}'}
 
-# ---- 执行参数默认值(override 链的 ns 层,覆盖 agent 层、被 component 覆盖)----
-# defaults:
-#   step_timeout: 60s
+# ---- 执行画像(ns 层,覆盖 agent、被 component 覆盖;不含 model,能力不可自指)----
+# step_defaults: {timeout: 60s}     # 本 ns 编排步骤的 timeout/retry 缺省
+# loop: {max_steps: 8}              # 本 ns component 的循环步数缺省

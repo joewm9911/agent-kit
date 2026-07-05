@@ -54,7 +54,7 @@ components:
   - name: deep_research
     engine: react
     todo: true
-    max_steps: 8
+    loop: {max_steps: 8}
     prompt: "深入研究课题:{topic}。先用 todo_write 列出研究计划,逐项推进并更新状态,最后给出研究结论。"
 
 skills:

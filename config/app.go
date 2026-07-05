@@ -7,17 +7,20 @@
 // 约定:文件名即名字(显式 name 必须一致);相对路径相对引用它的文件
 // 解析;agent 关联 namespace 即自动挂载其全部导出 skill。
 //
-// 装配语义:namespace 是库,agent 挂载时按自己的默认值实例化一份
+// 装配语义:namespace 是库,agent 挂载时按解析出的执行画像实例化一份
 // (源连接按 namespace 文件缓存共享,components/skills 装配按 agent
 // 实例化);跨 namespace 的 cap://skill 引用在同一 agent 挂载的集合内
 // 按关联顺序解析。
 //
-// override 链(执行参数,就近优先,显式写了的键才生效):
+// 执行画像 A 类(model/loop/reliability/digest/step_defaults)五级就近降级
+// (高→低,见 profile.go):
 //
-//	component/step → skill(step_defaults) → namespace(defaults) → agent(defaults) → app
+//	agent给该ns指定(per-mount) → component → namespace → agent自己 → app
 //
-// 治理策略(approval/budget/max_risk)不进链——那是 agent/部署持有的
-// 安全边界,库不能给自己放权。
+// model 特例:能力不可自指,ns/component 不参与,链退化为 per-mount →
+// agent自己 → app。会话状态(session/memory/todo)与治理边界(approval/
+// budget/structured_output)是 B/C 类:app→agent 整块降级,不下沉 component
+// ——那是 agent/部署持有的安全边界,库不能给自己放权。
 package config
 
 import (
@@ -43,41 +46,49 @@ import (
 	"github.com/joewm9911/agent-kit/suspend"
 )
 
-// merge 返回合并结果:nearer(更近层级)显式设置的键覆盖 d。
-func (d Defaults) merge(nearer Defaults) Defaults {
-	out := d
-	if nearer.Model != nil {
-		out.Model = nearer.Model
+// inheritAppDefaults 把 app 层的会话状态 / 治理边界默认下沉到 agent:
+// agent 未声明整块时回落 app(B/C 类是 app→agent 整块降级,不下沉 component)。
+// 具名存储实例:app 层作为共享池,agent 私有实例前置(名字冲突 agent 优先)。
+func inheritAppDefaults(app *AppConfig, ac *AgentConfig) {
+	if ac.Session.isZero() {
+		ac.Session = app.Session
 	}
-	if nearer.MaxSteps != nil {
-		out.MaxSteps = nearer.MaxSteps
+	if ac.Memory.isZero() {
+		ac.Memory = app.Memory
 	}
-	if nearer.Compaction != nil {
-		out.Compaction = nearer.Compaction
+	if ac.Todo.isZero() {
+		ac.Todo = app.Todo
 	}
-	if nearer.ToolTimeout != nil {
-		out.ToolTimeout = nearer.ToolTimeout
+	if ac.Approval.isZero() {
+		ac.Approval = app.Approval
 	}
-	if nearer.Retry != nil {
-		out.Retry = nearer.Retry
+	if ac.Budget == (loop.BudgetConfig{}) {
+		ac.Budget = app.Budget
 	}
-	if nearer.StepTimeout != nil {
-		out.StepTimeout = nearer.StepTimeout
+	if ac.StructuredOutput == (loop.StructuredConfig{}) {
+		ac.StructuredOutput = app.StructuredOutput
 	}
-	if nearer.StepRetry != nil {
-		out.StepRetry = nearer.StepRetry
+	if len(app.Stores) > 0 {
+		ac.Stores = append(append([]StoreInstance{}, ac.Stores...), app.Stores...)
 	}
-	if nearer.DigestOver != nil {
-		out.DigestOver = nearer.DigestOver
+	if len(app.Retrievers) > 0 {
+		ac.Retrievers = append(append([]RetrieverInstance{}, ac.Retrievers...), app.Retrievers...)
 	}
-	return out
 }
 
-// AgentSpec 是解析后的 agent 文件及其关联的 namespace 文件(保序)。
+// Mount 是 agent 对一个 namespace 的解析后挂载:namespace 文件 + per-mount
+// 覆盖画像(五级链的最高优)。嵌入 *NamespaceSpec,故 .Name/.Path/
+// .NamespaceConfig 直接可用。
+type Mount struct {
+	*NamespaceSpec
+	Override Profile
+}
+
+// AgentSpec 是解析后的 agent 文件及其关联的 namespace 挂载(保序)。
 type AgentSpec struct {
 	AgentFile
 	Path   string
-	Mounts []*NamespaceSpec
+	Mounts []Mount
 }
 
 // NamespaceSpec 是解析后的 namespace 文件。
@@ -133,16 +144,22 @@ func LoadApp(path string) (*AppSpec, error) {
 
 		as := &AgentSpec{AgentFile: af, Path: agentPath}
 		agentDir := filepath.Dir(agentPath)
-		for _, nsRel := range af.Namespaces {
-			nsPath, err := filepath.Abs(filepath.Join(agentDir, nsRel))
+		for _, mnt := range af.Namespaces {
+			if mnt.Path == "" {
+				return nil, fmt.Errorf("agent %s: namespace mount missing path", af.Name)
+			}
+			nsPath, err := filepath.Abs(filepath.Join(agentDir, mnt.Path))
 			if err != nil {
 				return nil, err
 			}
+			// per-mount 覆盖是集成方(agent)对该 namespace 的显式指定,
+			// 属执行画像 A 类;若误写 session/approval 等非 A 类字段,
+			// yaml inline 会静默忽略——这里不额外校验(A 类字段之外无处安放)。
 			ns, ok := nsCache[nsPath]
 			if !ok {
 				nraw, err := os.ReadFile(nsPath)
 				if err != nil {
-					return nil, fmt.Errorf("agent %s: namespace file %s: %w", af.Name, nsRel, err)
+					return nil, fmt.Errorf("agent %s: namespace file %s: %w", af.Name, mnt.Path, err)
 				}
 				var nf NamespaceFile
 				if err := expandParse(nraw, sp, nsPath, &nf); err != nil {
@@ -154,7 +171,7 @@ func LoadApp(path string) (*AppSpec, error) {
 				ns = &NamespaceSpec{NamespaceFile: nf, Path: nsPath}
 				nsCache[nsPath] = ns
 			}
-			as.Mounts = append(as.Mounts, ns)
+			as.Mounts = append(as.Mounts, Mount{NamespaceSpec: ns, Override: mnt.Profile})
 		}
 		spec.Agents = append(spec.Agents, as)
 	}
@@ -237,12 +254,12 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 
 	// 4. app 默认模型(Ring 0 包装同单文件路径)
 	var defaultModel model.ToolCallingChatModel
-	if ac.DefaultModel != nil {
-		m, err := registry.BuildModel(ctx, ac.DefaultModel.Provider, ac.DefaultModel.Config)
+	if ac.Profile.Model != nil {
+		m, err := registry.BuildModel(ctx, ac.Profile.Model.Provider, ac.Profile.Model.Config)
 		if err != nil {
-			return nil, fmt.Errorf("default_model: %w", err)
+			return nil, fmt.Errorf("model: %w", err)
 		}
-		defaultModel = loop.BudgetModel(loop.RetryModel(m, ac.Reliability.ModelRetry))
+		defaultModel = loop.BudgetModel(loop.RetryModel(m, ac.Profile.retry()))
 	}
 
 	// 5. agents:每个 agent 实例化自己关联的 namespaces
@@ -252,7 +269,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	}
 	srcCache := newSourceCache()
 	for _, as := range spec.Agents {
-		a, mounted, err := buildAgentFromSpec(ctx, as, global, prompts, defaultModel, ac.Reliability, maxRisk, srcCache, opts)
+		a, mounted, err := buildAgentFromSpec(ctx, as, ac, global, prompts, defaultModel, maxRisk, srcCache, opts)
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", as.Name, err)
 		}
@@ -302,21 +319,27 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 // buildAgentFromSpec 装配一个 agent:按关联顺序实例化 namespaces
 // (跨 ns 引用在本 agent 的挂载集合内解析)→ 自动挂载全部导出 skill
 // → 叠加全局兼容源的 include 选品 → 交给 buildAgent。
-func buildAgentFromSpec(ctx context.Context, as *AgentSpec, global *source.Catalog,
+func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, global *source.Catalog,
 	prompts *prompt.Resolver, defaultModel model.ToolCallingChatModel,
-	rel ReliabilityConfig, maxRisk capability.Risk, srcCache *sourceCache,
+	maxRisk capability.Risk, srcCache *sourceCache,
 	opts BuildOptions) (*agent.Agent, *source.Catalog, error) {
+
+	// 执行画像:agent 主循环 eff = app.merge(agent自己);也作为其
+	// namespace/component 的 base(五级链的 app+agent 两级)。
+	agentProfile := app.Profile.merge(as.Profile)
 
 	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
 	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。
 	mounted := source.NewCatalog(maxRisk, nil)
-	for _, ns := range as.Mounts {
-		nsCopy := ns.NamespaceConfig // 按 agent 实例化,不共享装配产物
+	for _, mnt := range as.Mounts {
+		nsCopy := mnt.NamespaceConfig // 按 agent 实例化,不共享装配产物
 		err := buildNamespace(ctx, &nsCopy, nsDeps{
 			global: mounted, prompts: prompts, defaultModel: defaultModel,
-			maxRisk: maxRisk, toolTimeout: rel.ToolTimeout, retry: rel.ModelRetry,
-			defaults: as.Defaults.merge(ns.Defaults), // ns 更近,覆盖 agent 默认
-			nsPath:   ns.Path, srcCache: srcCache,
+			maxRisk:  maxRisk,
+			base:     agentProfile,      // app.merge(agent);ns 自己在 buildNamespace 内并入
+			mount:    mnt.Override,      // per-mount 覆盖(最高优)
+			appModel: app.Profile.Model, // 判断 component 是否需专属 model
+			nsPath:   mnt.Path, srcCache: srcCache,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -337,11 +360,14 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, global *source.Catal
 		caps = append(caps, picked...)
 	}
 
-	m, err := agentModel(ctx, as.Model, as.Defaults.Model, defaultModel, rel)
+	// 会话状态 / 治理边界:agent 未声明整块 → 回落 app 默认。
+	inheritAppDefaults(app, &as.AgentConfig)
+
+	m, err := agentModel(ctx, as.Profile.Model, defaultModel, agentProfile.retry())
 	if err != nil {
 		return nil, nil, err
 	}
-	a, err := buildAgent(ctx, &as.AgentConfig, caps, prompts, m, rel, opts.Interactor, nil)
+	a, err := buildAgent(ctx, &as.AgentConfig, agentProfile, caps, prompts, m, opts.Interactor, nil)
 	if err != nil {
 		return nil, nil, err
 	}

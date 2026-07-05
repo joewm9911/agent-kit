@@ -163,23 +163,23 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 	}
 
-	// 默认模型(skill/workflow 与未声明 model 的 agent 使用)。
+	// app 层默认模型(skill/workflow 与未声明 model 的 agent 使用)。
 	// 统一套 Ring 0 中间件:瞬时错误重试 + 预算(门闸经 ctx 生效,
 	// skill/component 内部调用同样计入调用方会话预算)。
 	var defaultModel model.ToolCallingChatModel
-	if cfg.DefaultModel != nil {
+	if cfg.Profile.Model != nil {
 		var err error
-		if defaultModel, err = registry.BuildModel(ctx, cfg.DefaultModel.Provider, cfg.DefaultModel.Config); err != nil {
-			return nil, fmt.Errorf("default_model: %w", err)
+		if defaultModel, err = registry.BuildModel(ctx, cfg.Profile.Model.Provider, cfg.Profile.Model.Config); err != nil {
+			return nil, fmt.Errorf("model: %w", err)
 		}
-		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Reliability.ModelRetry))
+		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry()))
 	}
 
 	// 4. skills:装配后入目录,供 agent 选品
 	for _, decl := range cfg.Skills {
 		c, err := skill.Build(ctx, decl, skill.Deps{
 			Catalog: catalog, Prompts: prompts, DefaultModel: defaultModel,
-			ToolTimeout: cfg.Reliability.ToolTimeout.Std(), Retry: cfg.Reliability.ModelRetry,
+			ToolTimeout: cfg.Profile.toolTimeout().Std(), Retry: cfg.Profile.retry(),
 		})
 		if err != nil {
 			return nil, err
@@ -194,8 +194,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	for i := range cfg.Namespaces {
 		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
 			global: catalog, prompts: prompts, defaultModel: defaultModel,
-			maxRisk: maxRisk, toolTimeout: cfg.Reliability.ToolTimeout,
-			retry: cfg.Reliability.ModelRetry, logger: logger,
+			maxRisk: maxRisk, base: cfg.Profile, appModel: cfg.Profile.Model, logger: logger,
 		})
 		if err != nil {
 			return nil, err
@@ -213,11 +212,12 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 				return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 			}
 		}
-		m, err := agentModel(ctx, ac.Model, nil, defaultModel, cfg.Reliability)
+		eff := cfg.Profile.merge(ac.Profile)
+		m, err := agentModel(ctx, ac.Profile.Model, defaultModel, eff.retry())
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 		}
-		a, err := buildAgent(ctx, ac, caps, prompts, m, cfg.Reliability, opts.Interactor, logger)
+		a, err := buildAgent(ctx, ac, eff, caps, prompts, m, opts.Interactor, logger)
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 		}
