@@ -14,9 +14,9 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/agent"
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 // bigResultTool 返回固定大结果的工具,供 digest 路径测试。

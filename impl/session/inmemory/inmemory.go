@@ -8,7 +8,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/session"
+	"github.com/joewm9911/agent-kit/protocol/session"
 )
 
 func init() {

@@ -5,9 +5,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/suspend"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/runtime/suspend"
 )
 
 // New 返回 ask_user 能力。实际的提问通道来自 runctx(CLI 阻塞读、

@@ -34,13 +34,13 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 
 	"github.com/joewm9911/agent-kit/agent"
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/channel"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/model"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/protocol/source"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/serving"
-	"github.com/joewm9911/agent-kit/source"
 )
 
 // inheritAppDefaults 把 app 层的会话状态 / 治理边界默认下沉到 agent:
@@ -269,12 +269,12 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 
 	// 6. gateway 与 IM 通道(接线板)
 	if ac.Serving.Addr != "" {
-		agents := make([]channel.Runnable, 0, len(app.Agents))
+		agents := make([]serving.Runnable, 0, len(app.Agents))
 		for _, a := range app.Agents {
 			agents = append(agents, a)
 		}
 		app.Server = serving.New(ac.Serving.Addr, agents, logger)
-		dispatcher := channel.NewDispatcher(logger)
+		dispatcher := serving.NewDispatcher(logger)
 		// app 层具名 stores 可被 suspend.store 以 cap://store/suspend/<name> 引用。
 		if kv, err := suspendKV(ac.Suspend, ac.Stores); err != nil {
 			return nil, err
@@ -290,7 +290,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 			if !ok {
 				return nil, fmt.Errorf("channel %s: unknown agent %q", cc.Name, cc.Agent)
 			}
-			err = app.Server.AttachChannel(ctx, ch, dispatcher, channel.Binding{
+			err = app.Server.AttachChannel(ctx, ch, dispatcher, serving.Binding{
 				Channel: ch, Agent: target,
 				SessionMapping: cc.SessionMapping, ReplyMode: cc.ReplyMode,
 			})

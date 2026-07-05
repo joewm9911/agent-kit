@@ -14,25 +14,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joewm9911/agent-kit/channel"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/suspend"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/channel"
+	"github.com/joewm9911/agent-kit/runtime/suspend"
 )
 
 // Server 是 Gateway 实例。
 type Server struct {
 	addr   string
 	mux    *http.ServeMux
-	agents map[string]channel.Runnable
+	agents map[string]Runnable
 	logger *slog.Logger
 }
 
 // New 创建 Gateway 并注册 agent 路由。
-func New(addr string, agents []channel.Runnable, logger *slog.Logger) *Server {
+func New(addr string, agents []Runnable, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{addr: addr, mux: http.NewServeMux(), agents: map[string]channel.Runnable{}, logger: logger}
+	s := &Server{addr: addr, mux: http.NewServeMux(), agents: map[string]Runnable{}, logger: logger}
 	for _, a := range agents {
 		s.agents[a.Name()] = a
 	}
@@ -44,7 +44,7 @@ func New(addr string, agents []channel.Runnable, logger *slog.Logger) *Server {
 func (s *Server) Mux() *http.ServeMux { return s.mux }
 
 // AttachChannel 把一个 channel 绑定到 agent 并挂载其 webhook。
-func (s *Server) AttachChannel(ctx context.Context, ch channel.Channel, d *channel.Dispatcher, b channel.Binding) error {
+func (s *Server) AttachChannel(ctx context.Context, ch channel.Channel, d *Dispatcher, b Binding) error {
 	return ch.Start(ctx, s.mux, d.Handler(b))
 }
 
@@ -142,7 +142,7 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) stream(w http.ResponseWriter, ctx context.Context, a channel.Runnable, session, input string) {
+func (s *Server) stream(w http.ResponseWriter, ctx context.Context, a Runnable, session, input string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)

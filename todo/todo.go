@@ -24,9 +24,9 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 type todoItem struct {

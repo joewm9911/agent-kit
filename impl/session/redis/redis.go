@@ -16,8 +16,8 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
-	"github.com/joewm9911/agent-kit/session"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/session"
+	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 func init() {

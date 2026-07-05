@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joewm9911/agent-kit/core/runctx"
 	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
 	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/store"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 const stressSep = "\x1f"

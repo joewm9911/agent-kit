@@ -12,7 +12,7 @@ import (
 	osexec "os/exec"
 	"time"
 
-	"github.com/joewm9911/agent-kit/exec"
+	"github.com/joewm9911/agent-kit/protocol/exec"
 )
 
 func init() {

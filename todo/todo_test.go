@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/store"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // td 是共享的 todo 持有对象(进程内后端);各测试用不同 (agent,session) 键,互不干扰。

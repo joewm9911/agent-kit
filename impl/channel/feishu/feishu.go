@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joewm9911/agent-kit/channel"
 	"github.com/joewm9911/agent-kit/impl/utils/decode"
+	"github.com/joewm9911/agent-kit/protocol/channel"
 )
 
 func init() {

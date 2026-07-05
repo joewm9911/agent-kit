@@ -8,11 +8,11 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // TestSkillInternalApprovalGate 验证治理下沉:skill 内部的 mutating

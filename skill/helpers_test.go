@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/runtime/engine"
 )
 
 // testCap 构造一个记录输入并返回 fn(输入) 的能力。

@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
-	"github.com/joewm9911/agent-kit/prompt"
-	"github.com/joewm9911/agent-kit/source"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/protocol/source"
 
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 )

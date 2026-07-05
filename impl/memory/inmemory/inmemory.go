@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joewm9911/agent-kit/memory"
+	"github.com/joewm9911/agent-kit/protocol/memory"
 )
 
 func init() {

@@ -28,11 +28,11 @@ import (
 
 	"github.com/cloudwego/eino/callbacks"
 
-	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/config"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
 	"github.com/joewm9911/agent-kit/impl/source/local"
-	"github.com/joewm9911/agent-kit/observe"
+	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
 func main() {

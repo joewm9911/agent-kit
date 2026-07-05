@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
 	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/todo"
 )
 

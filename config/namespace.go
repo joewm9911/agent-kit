@@ -20,12 +20,12 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/engine"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/protocol/source"
+	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/skill"
-	"github.com/joewm9911/agent-kit/source"
 )
 
 // nsDeps 是命名空间装配的环境。

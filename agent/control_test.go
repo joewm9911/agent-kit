@@ -7,10 +7,10 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
-	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // TestAgentInterruptMidRun 验证运行中的循环可被叫停:第一个工具执行

@@ -9,10 +9,10 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/engine"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // echoInputModel 记录收到的消息并返回固定回答,用于验证 fork 起始消息。

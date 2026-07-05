@@ -19,7 +19,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
 )
 
 // Invoker 是 RPC 泛化调用的最小契约。

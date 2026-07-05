@@ -17,7 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // Profile 是执行画像:app/agent/namespace/component 各内嵌一份(YAML inline),

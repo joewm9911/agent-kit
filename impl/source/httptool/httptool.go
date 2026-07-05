@@ -17,9 +17,9 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/impl/utils/decode"
-	"github.com/joewm9911/agent-kit/source"
+	"github.com/joewm9911/agent-kit/protocol/source"
 )
 
 func init() {

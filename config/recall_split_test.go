@@ -9,10 +9,10 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/memory"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/session"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/memory"
+	"github.com/joewm9911/agent-kit/protocol/session"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // countingRetriever 记录调用次数并返回固定片段。

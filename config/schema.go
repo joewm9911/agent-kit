@@ -8,10 +8,10 @@
 package config
 
 import (
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/engine"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/skill"
 )
 

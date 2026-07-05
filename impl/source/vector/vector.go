@@ -32,10 +32,10 @@ import (
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/impl/utils/decode"
-	"github.com/joewm9911/agent-kit/source"
-	"github.com/joewm9911/agent-kit/vectorstore"
+	"github.com/joewm9911/agent-kit/protocol/source"
+	"github.com/joewm9911/agent-kit/protocol/vectorstore"
 )
 
 // 向量库后端协议(BackendFactory/RegisterBackend)已上浮基座 vectorstore 包

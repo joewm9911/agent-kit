@@ -9,8 +9,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
-	"github.com/joewm9911/agent-kit/session"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/session"
+	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 // testConf 用独立 db 与随机前缀,测试互不干扰;redis 不可达则跳过。

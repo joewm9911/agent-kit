@@ -7,11 +7,11 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/engine"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/session"
+	"github.com/joewm9911/agent-kit/protocol/session"
+	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // TestToolTrajectoryPersisted 验证工具轨迹随会话持久化:下一轮织入的

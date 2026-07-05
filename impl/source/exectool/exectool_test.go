@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/exec"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/protocol/exec"
 )
 
 // invoke 取源里名为 name 的能力并调用。

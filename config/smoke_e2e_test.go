@@ -25,12 +25,12 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/loop"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/protocol/model"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/session"
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/session"
+	"github.com/joewm9911/agent-kit/protocol/store"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
 	_ "github.com/joewm9911/agent-kit/impl/model/openai"

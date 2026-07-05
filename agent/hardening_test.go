@@ -11,9 +11,9 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/joewm9911/agent-kit/engine"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/session"
+	"github.com/joewm9911/agent-kit/protocol/session"
+	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // stubRunner 以函数实现 engine.Runner。

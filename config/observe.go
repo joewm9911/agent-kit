@@ -11,7 +11,7 @@ import (
 
 	"github.com/cloudwego/eino/callbacks"
 
-	"github.com/joewm9911/agent-kit/observe"
+	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
 var (

@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joewm9911/agent-kit/store"
+	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 func init() {

@@ -11,7 +11,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
-	"github.com/joewm9911/agent-kit/memory"
+	"github.com/joewm9911/agent-kit/protocol/memory"
 )
 
 func init() {

@@ -14,16 +14,16 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/joewm9911/agent-kit/agent"
-	"github.com/joewm9911/agent-kit/capability"
-	"github.com/joewm9911/agent-kit/channel"
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/prompt"
+	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/model"
-	"github.com/joewm9911/agent-kit/runctx"
-	"github.com/joewm9911/agent-kit/secrets"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/protocol/secrets"
+	"github.com/joewm9911/agent-kit/protocol/source"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/serving"
 	"github.com/joewm9911/agent-kit/skill"
-	"github.com/joewm9911/agent-kit/source"
 )
 
 // 四大上下文/记忆模块各自独立配置,各自的 store 槽用 cap://store/<kind>/
@@ -211,12 +211,12 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 
 	// 7. gateway 与 IM 通道
 	if cfg.Serving.Addr != "" {
-		agents := make([]channel.Runnable, 0, len(app.Agents))
+		agents := make([]serving.Runnable, 0, len(app.Agents))
 		for _, a := range app.Agents {
 			agents = append(agents, a)
 		}
 		app.Server = serving.New(cfg.Serving.Addr, agents, logger)
-		dispatcher := channel.NewDispatcher(logger)
+		dispatcher := serving.NewDispatcher(logger)
 		// 单文件形态没有顶层具名 stores,suspend.store 只支持裸 type。
 		if kv, err := suspendKV(cfg.Suspend, nil); err != nil {
 			return nil, err
@@ -232,7 +232,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 			if !ok {
 				return nil, fmt.Errorf("channel %s: unknown agent %q", cc.Name, cc.Agent)
 			}
-			err = app.Server.AttachChannel(ctx, ch, dispatcher, channel.Binding{
+			err = app.Server.AttachChannel(ctx, ch, dispatcher, serving.Binding{
 				Channel: ch, Agent: target,
 				SessionMapping: cc.SessionMapping, ReplyMode: cc.ReplyMode,
 			})

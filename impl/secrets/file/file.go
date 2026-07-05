@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/joewm9911/agent-kit/secrets"
+	"github.com/joewm9911/agent-kit/protocol/secrets"
 )
 
 func init() {

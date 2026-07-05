@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
-	"github.com/joewm9911/agent-kit/memory"
+	"github.com/joewm9911/agent-kit/protocol/memory"
 )
 
 func testConf(t *testing.T) map[string]any {

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/runctx"
+	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
 // CLI 是终端交互通道:ask_user 阻塞读 stdin,审批以 y/n 确认。

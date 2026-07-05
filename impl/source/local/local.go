@@ -6,7 +6,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool/utils"
 
-	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/core/capability"
 )
 
 // Func 用泛型推断参数 schema,把一个 Go 函数变成能力(默认只读)。
