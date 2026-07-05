@@ -53,7 +53,7 @@ func TestTurnSerialization(t *testing.T) {
 		atomic.AddInt32(&inFlight, -1)
 		return schema.AssistantMessage("ok", nil), nil
 	}}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, nil, Options{Store: store, Window: 50})
 
 	var wg sync.WaitGroup
@@ -92,7 +92,7 @@ func TestFailedTurnLeavesTrace(t *testing.T) {
 	runner := &stubRunner{fn: func(ctx context.Context, msgs []*schema.Message) (*schema.Message, error) {
 		return nil, boom
 	}}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, nil, Options{Store: store, Window: 50})
 
 	if _, err := ag.Run(context.Background(), "s1", "干活"); !errors.Is(err, boom) {
@@ -115,7 +115,7 @@ func TestTurnHistorySharedViaCtx(t *testing.T) {
 		seen = len(loop.TurnHistory(ctx))
 		return schema.AssistantMessage("ok", nil), nil
 	}}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, nil, Options{Store: store, Window: 50})
 	ctx := context.Background()
 	if _, err := ag.Run(ctx, "s1", "第一轮"); err != nil {
@@ -161,7 +161,7 @@ func TestStreamAppendsAndCompacts(t *testing.T) {
 	runner := &stubRunner{fn: func(ctx context.Context, msgs []*schema.Message) (*schema.Message, error) {
 		return schema.AssistantMessage("流式回答", nil), nil
 	}}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, nil, Options{
 		Store: store, Window: 50,
 		Compaction: loop.CompactionConfig{MaxMessages: 100},

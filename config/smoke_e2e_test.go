@@ -35,6 +35,7 @@ import (
 	_ "github.com/joewm9911/agent-kit/impl/model/openai"
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/vector"
+	_ "github.com/joewm9911/agent-kit/std"
 )
 
 // ---- 自适应脚本模型 ----

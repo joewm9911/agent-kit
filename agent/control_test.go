@@ -11,7 +11,6 @@ import (
 	"github.com/joewm9911/agent-kit/engine"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/loop"
-	"github.com/joewm9911/agent-kit/session"
 )
 
 // TestAgentInterruptMidRun 验证运行中的循环可被叫停:第一个工具执行
@@ -47,7 +46,7 @@ func TestAgentInterruptMidRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag = New("a", "", runner, m, Options{Store: store, Window: 50})
 
 	answer, err := ag.Run(ctx, "s1", "做三步任务")

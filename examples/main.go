@@ -24,6 +24,7 @@ import (
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/mcptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/vector"
+	_ "github.com/joewm9911/agent-kit/std"
 
 	"github.com/cloudwego/eino/callbacks"
 

@@ -35,7 +35,7 @@ func TestToolTrajectoryPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, m, Options{
 		Store: store, Window: 50, RecordTools: loop.RecordSummary,
 	})
@@ -89,7 +89,7 @@ func TestRecordOffKeepsOldBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, m, Options{Store: store, Window: 50, RecordTools: loop.RecordOff})
 
 	if _, err := ag.Run(ctx, "s1", "q"); err != nil {

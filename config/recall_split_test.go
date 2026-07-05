@@ -50,7 +50,7 @@ func recallCtx(sessionID, input string) context.Context {
 // TestAutoRecallSplitPaths 验证两路召回独立开关:关掉的那一路
 // 完全不被触碰(不是查了不用,而是根本不查)。
 func TestAutoRecallSplitPaths(t *testing.T) {
-	kv := memory.NewInMemory()
+	kv, _ := memory.New("inmemory", nil)
 	_ = kv.Put(context.Background(), memory.UserScope("u1"), "预算", "100万")
 	retr := &countingRetriever{}
 	scope := memory.ScopeConfig{} // 缺省:写 user、读 user+shared

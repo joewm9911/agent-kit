@@ -20,7 +20,7 @@ func TestRollingSummaryPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := session.NewInMemory(0)
+	store := inmemSession(0)
 	ag := New("a", "", runner, m, Options{
 		Store: store, Window: 50,
 		Compaction: loop.CompactionConfig{MaxMessages: 6, KeepRecent: 2},

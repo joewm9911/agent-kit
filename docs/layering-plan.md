@@ -1,14 +1,20 @@
 # 三层分离:协议 / agent-kit 实现(impl)/ 第三方
 
-> **状态:已落地(务实版)。** Tier 1(exec/vectorstore 协议上浮)、Tier 2
-> (provider/* → impl/<模块>/<实现>,消灭 provider/ 泛名)全做。Tier 3 按务实
-> 边界落地:**外部/opt-in 后端 redis 拆到 impl/{session,memory}/redis +
-> impl/utils/redisconn**(消灭最后一个 provider/);而 **零依赖、自注册、且被
-> 直接构造的默认实现(session/memory/store 的 inmemory·file·bigram、prompt 的
-> inline·file·http)保持内聚在各自协议包**——与 store.KV inmemory 内聚一致:
-> 它们被核心测试直接当构造器用、且是 zero-config 的地基,外移只会逼出
-> std+fail-fast 而对第三方无实益。因此**不建 std/、不改 fail-fast**。全仓
-> `-race` 绿。目标:把"可扩展协议"与"实现"拆干净,让基于
+> **状态:已落地。** Tier 1(exec/vectorstore 协议上浮)、Tier 2(provider/* →
+> impl/<模块>/<实现>,消灭 provider/ 泛名)、Tier 3 全做。Tier 3:
+> - redis 拆到 `impl/{session,memory}/redis` + `impl/utils/redisconn`(消灭最后
+>   一个 provider/)。
+> - **session/memory 的默认后端外移**(`impl/session/{inmemory,file,bigram}`、
+>   `impl/memory/inmemory`)——它们原来经**公开构造器 NewInMemory/NewFileStore
+>   被消费方直接构造**,是封装泄漏(协议模块把底层存储暴露出去了);现删掉公开
+>   构造器,消费方一律经 `New(typ,…)` 工厂拿 Store,后端 init 自注册。新增
+>   `std/` 聚合(空导入恢复 zero-config)+ `New("")` fail-fast。
+> - **store.KV inmemory 保持内聚 L1**:它是低层原语,只被 builtin/loop 经
+>   SetStore 用作进程默认、从不暴露给上层消费方(无泄漏),与 session/memory 的
+>   情形不同。prompt inline/file/http、vector 词法后端同理(构造器私有,无泄漏),
+>   随各自协议包常驻。
+>
+> 全仓 `-race` 绿;分层守卫(协议包禁 import impl/)通过。目标:把"可扩展协议"与"实现"拆干净,让基于
 > agent-kit 的开发者清楚看到——哪些是协议(我可以自己实现)、哪些是 agent-kit
 > 给的实现(我可以替换)、我自己的实现该怎么挂进去。
 

@@ -60,13 +60,7 @@ func Register(typ string, f Factory) {
 	factories[typ] = f
 }
 
-func init() {
-	Register("inmemory", func(_ map[string]any) (Store, error) {
-		return NewInMemory(), nil
-	})
-}
-
-// New 按类型构造长期记忆后端,空类型默认 inmemory。
+// New 按类型构造长期记忆后端,空类型默认 inmemory。后端未注册时 fail-fast。
 func New(typ string, conf map[string]any) (Store, error) {
 	if typ == "" {
 		typ = "inmemory"
@@ -80,49 +74,9 @@ func New(typ string, conf map[string]any) (Store, error) {
 			names = append(names, k)
 		}
 		sort.Strings(names)
-		return nil, fmt.Errorf("memory: unknown kv type %q, registered: %v", typ, names)
+		return nil, fmt.Errorf("memory: unknown store type %q; blank-import a backend (e.g. agent-kit/impl/memory/inmemory) or agent-kit/std. registered: %v", typ, names)
 	}
 	return f(conf)
-}
-
-// NewInMemory 返回进程内关键词匹配的长期记忆,按 scope 分桶。
-func NewInMemory() Store {
-	return &memStore{buckets: map[string]map[string]string{}}
-}
-
-type memStore struct {
-	mu      sync.RWMutex
-	buckets map[string]map[string]string // scope → (key → value)
-}
-
-func (m *memStore) Put(_ context.Context, scope, key, value string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	b := m.buckets[scope]
-	if b == nil {
-		b = map[string]string{}
-		m.buckets[scope] = b
-	}
-	b[key] = value
-	return nil
-}
-
-func (m *memStore) Search(_ context.Context, scopes []string, query string, limit int) (map[string]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	out := map[string]string{}
-	q := strings.ToLower(query)
-	for _, scope := range scopes {
-		for k, v := range m.buckets[scope] {
-			if strings.Contains(strings.ToLower(k), q) || strings.Contains(strings.ToLower(v), q) {
-				out[k] = v
-				if limit > 0 && len(out) >= limit {
-					return out, nil
-				}
-			}
-		}
-	}
-	return out, nil
 }
 
 // UserScope 返回终端用户的作用域名。

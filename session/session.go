@@ -1,18 +1,13 @@
-// Package session 提供会话历史的持久化存储。历史织入由 agent 运行时
-// 自动完成(模型无感知)——该不该带历史不是模型的决策,是流程保证。
-// 后端可替换(进程内/文件/Redis/DB),接口不变。
+// Package session 定义会话历史存储的契约与工厂,不含具体后端实现。
+// 历史织入由 agent 运行时自动完成(模型无感知)——该不该带历史不是模型
+// 的决策,是流程保证。后端(inmemory/file/redis/…)在 impl/session/* 下实现
+// 并 init 自注册,消费方只经 New 工厂拿 Store,不直接构造具体后端。
 package session
 
 import (
-	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/schema"
@@ -40,8 +35,8 @@ var (
 	factories = map[string]Factory{}
 )
 
-// Register 注册存储类型(redis/db/自定义),与 source/prompt/channel
-// 的工厂机制同构:实现方空导入即可在配置里以 store: <type> 引用。
+// Register 注册存储类型(inmemory/file/redis/自定义):实现方 init 自注册,
+// 空导入(或经 agent-kit/std)即可在配置里以 store: <type> 引用。
 func Register(typ string, f Factory) {
 	facMu.Lock()
 	defer facMu.Unlock()
@@ -51,20 +46,8 @@ func Register(typ string, f Factory) {
 	factories[typ] = f
 }
 
-func init() {
-	Register("inmemory", func(_ map[string]any, window int) (Store, error) {
-		return NewInMemory(window), nil
-	})
-	Register("file", func(conf map[string]any, window int) (Store, error) {
-		dir, _ := conf["dir"].(string)
-		if dir == "" {
-			return nil, fmt.Errorf("session: file store requires dir")
-		}
-		return NewFileStore(dir, window)
-	})
-}
-
-// New 按类型构造存储,空类型默认 inmemory。
+// New 按类型构造存储,空类型默认 inmemory。后端未注册时 fail-fast(提示
+// 空导入 impl 后端或 agent-kit/std)。
 func New(typ string, conf map[string]any, window int) (Store, error) {
 	if typ == "" {
 		typ = "inmemory"
@@ -78,183 +61,13 @@ func New(typ string, conf map[string]any, window int) (Store, error) {
 			names = append(names, k)
 		}
 		sort.Strings(names)
-		return nil, fmt.Errorf("session: unknown store type %q, registered: %v", typ, names)
+		return nil, fmt.Errorf("session: unknown store type %q; blank-import a backend (e.g. agent-kit/impl/session/inmemory) or agent-kit/std. registered: %v", typ, names)
 	}
 	return f(conf, window)
 }
 
-// ---- inmemory ----
-
-// maxInMemorySessions 是 inmemory 后端的会话数上限:开发后端不该
-// 无界增长,超限时淘汰最久未活跃的会话(生产请用 file/自定义后端)。
-const maxInMemorySessions = 1024
-
-// NewInMemory 返回进程内滑动窗口存储,适合开发与无状态短会话。
-func NewInMemory(window int) Store {
-	return &inMemory{window: window, sessions: map[string][]*schema.Message{}, touch: map[string]int64{}}
-}
-
-type inMemory struct {
-	mu       sync.RWMutex
-	window   int
-	sessions map[string][]*schema.Message
-	touch    map[string]int64 // 会话 → 活跃序号(LRU 淘汰用)
-	seq      int64
-}
-
-// evictLocked 超限时淘汰最久未活跃的会话(持锁调用)。
-func (b *inMemory) evictLocked() {
-	for len(b.sessions) > maxInMemorySessions {
-		oldest, min := "", int64(1<<62)
-		for id, at := range b.touch {
-			if at < min {
-				oldest, min = id, at
-			}
-		}
-		delete(b.sessions, oldest)
-		delete(b.touch, oldest)
-	}
-}
-
-func (b *inMemory) Load(ctx context.Context, sessionID string) ([]*schema.Message, error) {
-	all, err := b.LoadAll(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return trim(all, b.window), nil
-}
-
-func (b *inMemory) LoadAll(_ context.Context, sessionID string) ([]*schema.Message, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	msgs := b.sessions[sessionID]
-	out := make([]*schema.Message, len(msgs))
-	copy(out, msgs)
-	return out, nil
-}
-
-func (b *inMemory) Append(_ context.Context, sessionID string, msgs ...*schema.Message) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	// 保留全量,窗口裁剪在 Load 时做(与 file 后端语义一致,
-	// 供滚动摘要与相关性召回使用)。
-	b.sessions[sessionID] = append(b.sessions[sessionID], msgs...)
-	b.seq++
-	b.touch[sessionID] = b.seq
-	b.evictLocked()
-	return nil
-}
-
-func (b *inMemory) Clear(_ context.Context, sessionID string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.sessions, sessionID)
-	delete(b.touch, sessionID)
-	return nil
-}
-
-// ---- file:每会话一个 JSONL 文件,进程重启后会话可恢复 ----
-
-// NewFileStore 返回文件存储,dir 下每个会话一个 <id>.jsonl。
-func NewFileStore(dir string, window int) (Store, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("session: create dir: %w", err)
-	}
-	return &fileStore{dir: dir, window: window}, nil
-}
-
-type fileStore struct {
-	mu     sync.Mutex
-	dir    string
-	window int
-}
-
-// path 生成会话文件路径。sanitize 把非法字符映射为 '_' 会产生碰撞
-// ("a/b" 与 "a_b" 同名 → 会话串线),因此凡是被改写过的 ID 追加
-// 原始 ID 的哈希后缀;本来就安全的 ID 保持原名(兼容既有文件)。
-func (f *fileStore) path(sessionID string) string {
-	safe := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			return r
-		default:
-			return '_'
-		}
-	}, sessionID)
-	if safe == sessionID {
-		return filepath.Join(f.dir, safe+".jsonl")
-	}
-	sum := sha256.Sum256([]byte(sessionID))
-	return filepath.Join(f.dir, fmt.Sprintf("%s-%x.jsonl", safe, sum[:4]))
-}
-
-func (f *fileStore) Load(ctx context.Context, sessionID string) ([]*schema.Message, error) {
-	all, err := f.LoadAll(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return trim(all, f.window), nil
-}
-
-func (f *fileStore) LoadAll(_ context.Context, sessionID string) ([]*schema.Message, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, err := os.Open(f.path(sessionID))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var msgs []*schema.Message
-	sc := bufio.NewScanner(file)
-	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
-	for sc.Scan() {
-		var m schema.Message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			continue // 容忍坏行,不让单条脏数据毁掉整个会话
-		}
-		msgs = append(msgs, &m)
-	}
-	return msgs, sc.Err()
-}
-
-func (f *fileStore) Append(_ context.Context, sessionID string, msgs ...*schema.Message) error {
-	// 先整体序列化再单次写入:一轮的多条消息尽量原子落盘,进程中途
-	// 崩溃不易留下半轮记录(孤儿 user 消息)。
-	var buf []byte
-	for _, m := range msgs {
-		b, err := json.Marshal(m)
-		if err != nil {
-			return err
-		}
-		buf = append(buf, b...)
-		buf = append(buf, '\n')
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	file, err := os.OpenFile(f.path(sessionID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = file.Write(buf)
-	return err
-}
-
-func (f *fileStore) Clear(_ context.Context, sessionID string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	err := os.Remove(f.path(sessionID))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-func trim(msgs []*schema.Message, window int) []*schema.Message {
+// Trim 按窗口裁剪消息(window<=0 不裁剪),供各 Store 后端复用。
+func Trim(msgs []*schema.Message, window int) []*schema.Message {
 	if window > 0 && len(msgs) > window {
 		return msgs[len(msgs)-window:]
 	}

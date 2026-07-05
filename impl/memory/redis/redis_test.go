@@ -10,7 +10,9 @@ import (
 
 func testConf(t *testing.T) map[string]any {
 	t.Helper()
-	conf := map[string]any{"addr": "127.0.0.1:6379", "db": 15, "prefix": "aktest:"}
+	// db 14(与 impl/session/redis 的 db 15 分开):go test 并行跑各包,
+	// 同 db 的 FlushDB 会互相清空。
+	conf := map[string]any{"addr": "127.0.0.1:6379", "db": 14, "prefix": "aktest:"}
 	rdb, _, err := redisconn.Dial(conf)
 	if err != nil {
 		t.Skipf("redis 不可达,跳过: %v", err)
