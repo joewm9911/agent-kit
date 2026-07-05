@@ -52,12 +52,12 @@ type ApprovalState struct {
 	rules      []compiledRule
 	remember   bool
 	mu         sync.Mutex
-	remembered map[string]bool // session|refKey → 放行与否
+	remembered *lru[bool] // session|refKey → 放行与否(有界,最久未用淘汰)
 }
 
 // NewApprovalState 编译策略并构造运行态,规则非法时报错(fail fast)。
 func NewApprovalState(mode ApprovalMode, policy ApprovalPolicy) (*ApprovalState, error) {
-	st := &ApprovalState{Mode: mode, remember: policy.Remember, remembered: map[string]bool{}}
+	st := &ApprovalState{Mode: mode, remember: policy.Remember, remembered: newLRU[bool](4096)}
 	for i, r := range policy.Rules {
 		cr := compiledRule{args: r.Args}
 		switch r.Action {
@@ -127,7 +127,7 @@ func (st *ApprovalState) recall(session, refKey string) (allowed, ok bool) {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	allowed, ok = st.remembered[session+"|"+refKey]
+	allowed, ok = st.remembered.get(session + "|" + refKey)
 	return allowed, ok
 }
 
@@ -138,10 +138,7 @@ func (st *ApprovalState) memorize(session, refKey string, allowed bool) {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if len(st.remembered) > 4096 { // 粗粒度防泄漏
-		st.remembered = map[string]bool{}
-	}
-	st.remembered[session+"|"+refKey] = allowed
+	st.remembered.put(session+"|"+refKey, allowed)
 }
 
 type keyApprovalState struct{}

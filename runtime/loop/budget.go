@@ -33,7 +33,7 @@ func (e *ErrBudgetExhausted) Error() string {
 type BudgetGate struct {
 	cfg      BudgetConfig
 	mu       sync.Mutex
-	sessions map[string]*spend
+	sessions *lru[*spend] // 有界:最久未活跃的会话账目被淘汰(该会话预算重计)
 }
 
 type spend struct {
@@ -43,14 +43,14 @@ type spend struct {
 
 // NewBudgetGate 创建预算门闸。零值配置 = 只统计不设限。
 func NewBudgetGate(cfg BudgetConfig) *BudgetGate {
-	return &BudgetGate{cfg: cfg, sessions: map[string]*spend{}}
+	return &BudgetGate{cfg: cfg, sessions: newLRU[*spend](4096)}
 }
 
 // Spend 返回某会话的累计花费(calls, tokens),供打点与计费。
 func (g *BudgetGate) Spend(sessionID string) (int64, int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if s, ok := g.sessions[sessionID]; ok {
+	if s, ok := g.sessions.get(sessionID); ok {
 		return s.calls, s.tokens
 	}
 	return 0, 0
@@ -60,10 +60,10 @@ func (g *BudgetGate) Spend(sessionID string) (int64, int64) {
 func (g *BudgetGate) check(session string) (*spend, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	s, ok := g.sessions[session]
+	s, ok := g.sessions.get(session)
 	if !ok {
 		s = &spend{}
-		g.sessions[session] = s
+		g.sessions.put(session, s)
 	}
 	if g.cfg.MaxModelCalls > 0 && s.calls >= int64(g.cfg.MaxModelCalls) {
 		return nil, &ErrBudgetExhausted{Reason: fmt.Sprintf("model calls reached %d", g.cfg.MaxModelCalls)}
