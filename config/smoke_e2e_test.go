@@ -4,7 +4,8 @@ package config
 // 同一棵配置树两种驱动方式:
 //   - 本文件的矩阵测试:smokescript 自适应脚本模型 + httptest 业务后端,
 //     不出网、确定性,逐项断言编排/记忆/todo/治理机制;
-//   - TestLiveMiniMaxSmoke:MINIMAX_API_KEY 门控,换真实模型跑小规模对话。
+//   - live_smoke_test.go 的 TestLiveSmoke:MINIMAX_API_KEY 门控,换真实模型
+//     跑全特性矩阵。
 //
 // smokescript 的行为完全由配置里的提示词标记驱动(引擎内部提示词在
 // system 层,component 任务书在 user 层),输出带 [MARKER] 供断言。
@@ -15,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -614,46 +614,5 @@ func TestSmokeFailedTurnTrace(t *testing.T) {
 		if strings.Contains(m.Content, "上一轮执行失败") {
 			t.Fatal("healthy turn must not leave failure trace")
 		}
-	}
-}
-
-// ---- 真实模型环节(env 门控)----
-
-// TestLiveMiniMaxSmoke:换真实 MiniMax 模型驱动同一棵配置树。
-// 运行方式(工具后端仍是本地 mock,只有模型是真的):
-//
-//	MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
-//	SMOKE_LIVE=1 go test ./config/ -run TestLiveMiniMaxSmoke -v -count=1
-func TestLiveMiniMaxSmoke(t *testing.T) {
-	if os.Getenv("SMOKE_LIVE") == "" || os.Getenv("MINIMAX_API_KEY") == "" {
-		t.Skip("set SMOKE_LIVE=1 and MINIMAX_API_KEY to run the live smoke")
-	}
-	_, srv := newSmokeBackend(t)
-	t.Setenv("SMOKE_MODEL_PROVIDER", "minimax")
-	if os.Getenv("SMOKE_MODEL_BASE") == "" {
-		t.Setenv("SMOKE_MODEL_BASE", "https://api.minimaxi.com/v1") // 国内平台;海外换 api.minimax.io
-	}
-	t.Setenv("SMOKE_API_BASE", srv.URL)
-	t.Setenv("SMOKE_DATA_DIR", t.TempDir())
-
-	app := buildSmokeApp(t, BuildOptions{})
-	ops := app.Agents["ops-manager"]
-	ctx := context.Background()
-
-	out, err := ops.Run(ctx, "live", "用 quick-product-qa 查一下降噪耳机现在卖什么价")
-	if err != nil {
-		t.Fatalf("live turn1: %v", err)
-	}
-	t.Logf("live turn1 answer: %s", out)
-	if strings.TrimSpace(out) == "" {
-		t.Fatal("empty answer from live model")
-	}
-	out, err = ops.Run(ctx, "live", "把刚才查到的信息用一句话总结")
-	if err != nil {
-		t.Fatalf("live turn2: %v", err)
-	}
-	t.Logf("live turn2 answer: %s", out)
-	if strings.TrimSpace(out) == "" {
-		t.Fatal("empty answer on turn 2")
 	}
 }

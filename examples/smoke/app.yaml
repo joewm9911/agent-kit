@@ -17,7 +17,7 @@ secrets:
 
 # 执行画像基线(app 层):model + reliability 全体执行单元的降级源。
 reliability:
-  retry: {max_attempts: 2, base_delay: 200ms}
+  retry: {max_attempts: 3, base_delay: 500ms}
   tool_timeout: 60s
 
 model:

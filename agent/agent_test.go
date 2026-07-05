@@ -31,7 +31,7 @@ func TestRollingSummaryPersistence(t *testing.T) {
 		if _, err := ag.Run(ctx, "s1", "问题"); err != nil {
 			t.Fatal(err)
 		}
-		ag.waitCompactions() // 摘要已异步化,等在途任务落盘再断言
+		ag.WaitCompactions() // 摘要已异步化,等在途任务落盘再断言
 	}
 
 	all, _ := store.(session.FullLoader).LoadAll(ctx, "s1")

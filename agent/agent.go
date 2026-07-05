@@ -350,8 +350,8 @@ func (a *Agent) scheduleCompact(ctx context.Context, sessionID string) {
 	}()
 }
 
-// waitCompactions 等待在途滚动摘要完成(测试与优雅关停用)。
-func (a *Agent) waitCompactions() { a.compactWG.Wait() }
+// WaitCompactions 等待在途滚动摘要完成(优雅关停与测试用)。
+func (a *Agent) WaitCompactions() { a.compactWG.Wait() }
 
 // compact 做滚动摘要持久化:视图超过压缩阈值时,把早期部分(含旧
 // 摘要)归并为新摘要追加进 store。原始消息不删除,file 后端保留全量

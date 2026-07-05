@@ -179,7 +179,7 @@ func TestStreamAppendsAndCompacts(t *testing.T) {
 	if _, err := ag.Run(context.Background(), "s1", "q2"); err != nil {
 		t.Fatal(err)
 	}
-	ag.waitCompactions()
+	ag.WaitCompactions()
 	all, _ := store.(session.FullLoader).LoadAll(context.Background(), "s1")
 	if len(all) != 4 {
 		t.Fatalf("history = %d, want 4 (two turns)", len(all))
