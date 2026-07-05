@@ -14,7 +14,9 @@ import (
 
 	// 空导入触发 source / channel / model 工厂注册
 	_ "github.com/joewm9911/agent-kit/channel/feishu"
+	_ "github.com/joewm9911/agent-kit/examples/engines" // 自定义 exec 引擎示例(docker)
 	_ "github.com/joewm9911/agent-kit/provider/a2a"
+	_ "github.com/joewm9911/agent-kit/provider/exectool" // 脚本执行工具(cap://tool/<源>/<name>)
 	_ "github.com/joewm9911/agent-kit/provider/httptool"
 	_ "github.com/joewm9911/agent-kit/provider/mcptool"
 	_ "github.com/joewm9911/agent-kit/provider/models"
