@@ -7,10 +7,13 @@ import (
 	"testing"
 
 	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/exec"
 )
 
 // invoke 取源里名为 name 的能力并调用。
-func invoke(t *testing.T, src interface{ Sync(context.Context) ([]capability.Capability, error) }, name, argsJSON string) string {
+func invoke(t *testing.T, src interface {
+	Sync(context.Context) ([]capability.Capability, error)
+}, name, argsJSON string) string {
 	t.Helper()
 	caps, err := src.Sync(context.Background())
 	if err != nil {
@@ -89,7 +92,7 @@ var registerFake sync.Once
 // TestExecCustomEngine 验证 engine 路径:注册的引擎替代进程执行,拿到脚本与参数。
 func TestExecCustomEngine(t *testing.T) {
 	registerFake.Do(func() {
-		RegisterEngine("fake", func(conf map[string]any) (Engine, error) {
+		exec.RegisterEngine("fake", func(conf map[string]any) (exec.Engine, error) {
 			tag, _ := conf["tag"].(string)
 			return fakeEngine{tag: tag}, nil
 		})

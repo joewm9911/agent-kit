@@ -13,23 +13,24 @@ import (
 	"time"
 
 	// 空导入触发 source / channel / model 工厂注册
-	_ "github.com/joewm9911/agent-kit/channel/feishu"
 	_ "github.com/joewm9911/agent-kit/examples/engines" // 自定义 exec 引擎示例(docker)
-	_ "github.com/joewm9911/agent-kit/provider/a2a"
-	_ "github.com/joewm9911/agent-kit/provider/exectool" // 脚本执行工具(cap://tool/<源>/<name>)
-	_ "github.com/joewm9911/agent-kit/provider/httptool"
-	_ "github.com/joewm9911/agent-kit/provider/mcptool"
-	_ "github.com/joewm9911/agent-kit/provider/models"
+	_ "github.com/joewm9911/agent-kit/impl/channel/feishu"
+	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
+	_ "github.com/joewm9911/agent-kit/impl/model/openai"
+	_ "github.com/joewm9911/agent-kit/impl/source/a2a"
+	_ "github.com/joewm9911/agent-kit/impl/source/exectool" // 脚本执行工具(cap://tool/<源>/<name>)
+	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
+	_ "github.com/joewm9911/agent-kit/impl/source/mcptool"
+	_ "github.com/joewm9911/agent-kit/impl/source/vector"
 	_ "github.com/joewm9911/agent-kit/provider/redisstore" // redis 后端(store: redis / cap://store/...)
-	_ "github.com/joewm9911/agent-kit/provider/vector"
 
 	"github.com/cloudwego/eino/callbacks"
 
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/config"
-	"github.com/joewm9911/agent-kit/interact"
+	"github.com/joewm9911/agent-kit/impl/interactor/cli"
+	"github.com/joewm9911/agent-kit/impl/source/local"
 	"github.com/joewm9911/agent-kit/observe"
-	"github.com/joewm9911/agent-kit/provider/local"
 )
 
 func main() {
@@ -48,7 +49,7 @@ func main() {
 	// 多文件形态(app.yaml + agents/ + namespaces/)优先;
 	// 单文件 agent.yaml 是兼容路径。
 	opts := config.BuildOptions{
-		Interactor:        interact.NewCLI(),
+		Interactor:        cli.NewCLI(),
 		ExtraCapabilities: []capability.Capability{now},
 	}
 	var app *config.App

@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
@@ -36,48 +35,15 @@ import (
 	"github.com/joewm9911/agent-kit/capability"
 	"github.com/joewm9911/agent-kit/registry"
 	"github.com/joewm9911/agent-kit/source"
+	"github.com/joewm9911/agent-kit/vectorstore"
 )
 
-// BackendFactory 按配置构造 eino Retriever(向量库客户端)。
-type BackendFactory func(conf map[string]any) (retriever.Retriever, error)
-
-var (
-	beMu     sync.RWMutex
-	backends = map[string]BackendFactory{}
-)
-
-// RegisterBackend 注册检索后端(qdrant/milvus/自定义),实现方空导入即可
-// 在配置里以 backend: <name> 引用。真实向量库由此接入,不在框架内硬依赖。
-func RegisterBackend(name string, f BackendFactory) {
-	beMu.Lock()
-	defer beMu.Unlock()
-	if _, ok := backends[name]; ok {
-		panic(fmt.Sprintf("vector: backend %q already registered", name))
-	}
-	backends[name] = f
-}
-
-func newBackend(name string, conf map[string]any) (retriever.Retriever, error) {
-	if name == "" {
-		name = "inmemory"
-	}
-	beMu.RLock()
-	f, ok := backends[name]
-	beMu.RUnlock()
-	if !ok {
-		names := make([]string, 0, len(backends))
-		for k := range backends {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		return nil, fmt.Errorf("vector: unknown backend %q, registered: %v", name, names)
-	}
-	return f(conf)
-}
+// 向量库后端协议(BackendFactory/RegisterBackend)已上浮基座 vectorstore 包
+// (可扩展接缝);这里只留 source 实现 + 内置词法保底后端的注册。
 
 func init() {
 	// 内置 inmemory 词法保底:开发/测试/无外部向量库时可用。
-	RegisterBackend("inmemory", func(conf map[string]any) (retriever.Retriever, error) {
+	vectorstore.RegisterBackend("inmemory", func(conf map[string]any) (retriever.Retriever, error) {
 		var c struct {
 			Docs []string `json:"docs"`
 		}
@@ -106,7 +72,7 @@ func init() {
 		if (c.Backend == "" || c.Backend == "inmemory") && beConf == nil {
 			beConf = map[string]any{"docs": c.Docs}
 		}
-		r, err := newBackend(c.Backend, beConf)
+		r, err := vectorstore.New(c.Backend, beConf)
 		if err != nil {
 			return nil, fmt.Errorf("vector source %s: %w", name, err)
 		}

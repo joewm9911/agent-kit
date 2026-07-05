@@ -31,9 +31,10 @@ import (
 	"github.com/joewm9911/agent-kit/runctx"
 	"github.com/joewm9911/agent-kit/session"
 
-	_ "github.com/joewm9911/agent-kit/provider/httptool"
-	_ "github.com/joewm9911/agent-kit/provider/models"
-	_ "github.com/joewm9911/agent-kit/provider/vector"
+	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
+	_ "github.com/joewm9911/agent-kit/impl/model/openai"
+	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
+	_ "github.com/joewm9911/agent-kit/impl/source/vector"
 )
 
 // ---- 自适应脚本模型 ----

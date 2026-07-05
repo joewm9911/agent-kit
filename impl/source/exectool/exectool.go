@@ -29,14 +29,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	osexec "os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/capability"
+	"github.com/joewm9911/agent-kit/exec"
 	"github.com/joewm9911/agent-kit/registry"
 	"github.com/joewm9911/agent-kit/source"
 )
@@ -51,39 +51,8 @@ func init() {
 	})
 }
 
-// ---- 引擎注册(自定义执行后端)----
-
-// Engine 是一种脚本类型的执行后端。给定脚本正文与参数,回传输出;
-// 隔离/资源限制由实现负责,框架不做假设。
-type Engine interface {
-	Exec(ctx context.Context, script string, args []string) (string, error)
-}
-
-// EngineFactory 按 engine_config 构造引擎实例。
-type EngineFactory func(conf map[string]any) (Engine, error)
-
-var (
-	engMu   sync.RWMutex
-	engines = map[string]EngineFactory{}
-)
-
-// RegisterEngine 注册自定义执行引擎(docker/远程/WASM/...),config 里以
-// tool.engine 引用。空导入注册即可。
-func RegisterEngine(name string, f EngineFactory) {
-	engMu.Lock()
-	defer engMu.Unlock()
-	if _, ok := engines[name]; ok {
-		panic(fmt.Sprintf("exectool: engine %q already registered", name))
-	}
-	engines[name] = f
-}
-
-func engineFactory(name string) (EngineFactory, bool) {
-	engMu.RLock()
-	defer engMu.RUnlock()
-	f, ok := engines[name]
-	return f, ok
-}
+// 脚本执行引擎协议(Engine/EngineFactory/RegisterEngine)已上浮基座 exec 包
+// (可扩展接缝);这里的 source 只负责把脚本包成能力并选引擎。
 
 // ---- 内置运行时模板(宿主直跑)----
 
@@ -162,11 +131,11 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration) (capabilit
 	}
 
 	// 解析执行器(三级):engine > command > 内置模板。装配期定死。
-	var eng Engine
+	var eng exec.Engine
 	var cmdTmpl []string
 	switch {
 	case tc.Engine != "":
-		f, ok := engineFactory(tc.Engine)
+		f, ok := exec.Lookup(tc.Engine)
 		if !ok {
 			return nil, fmt.Errorf("tool %s: unknown engine %q(需先 RegisterEngine)", tc.Name, tc.Engine)
 		}
@@ -204,8 +173,8 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration) (capabilit
 
 type runner struct {
 	runtime string
-	engine  Engine   // 非 nil = 走引擎
-	command []string // 非空 = 走命令模板(engine 为 nil 时)
+	engine  exec.Engine // 非 nil = 走引擎
+	command []string    // 非空 = 走命令模板(engine 为 nil 时)
 	timeout time.Duration
 }
 
@@ -246,7 +215,7 @@ func (r *runner) run(ctx context.Context, argsJSON string) (string, error) {
 	argv = append(argv, args...)
 
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := osexec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
 		// 非零退出/超时作结果回传,不中断循环。

@@ -1,6 +1,6 @@
 // Package interact 提供 runctx.Interactor 的内置实现。
 // CLI 用于终端运行;IM 通道(飞书等)在 channel 包中提供各自实现。
-package interact
+package cli
 
 import (
 	"bufio"

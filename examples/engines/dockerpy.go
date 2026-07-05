@@ -9,14 +9,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
+	osexec "os/exec"
 	"time"
 
-	"github.com/joewm9911/agent-kit/provider/exectool"
+	"github.com/joewm9911/agent-kit/exec"
 )
 
 func init() {
-	exectool.RegisterEngine("docker", func(conf map[string]any) (exectool.Engine, error) {
+	exec.RegisterEngine("docker", func(conf map[string]any) (exec.Engine, error) {
 		img, _ := conf["image"].(string)
 		if img == "" {
 			return nil, fmt.Errorf("docker engine: image is required")
@@ -70,7 +70,7 @@ func (e *dockerPy) Exec(ctx context.Context, script string, args []string) (stri
 	}, args...)
 
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, "docker", argv...)
+	cmd := osexec.CommandContext(ctx, "docker", argv...)
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
 		// 非零退出/超时作结果回传,不中断循环。

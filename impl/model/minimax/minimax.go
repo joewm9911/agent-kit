@@ -1,4 +1,4 @@
-package models
+package minimax
 
 import (
 	"context"

@@ -9,7 +9,7 @@ import (
 	"github.com/joewm9911/agent-kit/prompt"
 	"github.com/joewm9911/agent-kit/source"
 
-	_ "github.com/joewm9911/agent-kit/provider/httptool"
+	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 )
 
 // 校验示例配置(多文件形态):LoadApp 解析三层文件 + 两个命名空间
