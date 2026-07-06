@@ -196,3 +196,18 @@ func TestFinishGuardHonestyMark(t *testing.T) {
 		t.Fatalf("stubborn pseudo-plan must be annotated, got %q calls=%d", out.Content[:30], m.Calls)
 	}
 }
+
+// TestFinishGuardEnglishPromise:英文空头承诺(L1 英化后的新形态)同样弹回。
+func TestFinishGuardEnglishPromise(t *testing.T) {
+	m := testmodel.New(
+		schema.AssistantMessage("Please wait, I'll continue with the analysis.", nil),
+		schema.AssistantMessage("最终结论:P100 定价合理。", nil),
+	)
+	out, err := FinishGuard(m).Generate(context.Background(), []*schema.Message{schema.UserMessage("分析")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Content, "最终结论") || m.Calls != 2 {
+		t.Fatalf("english empty promise must bounce: %q calls=%d", out.Content, m.Calls)
+	}
+}

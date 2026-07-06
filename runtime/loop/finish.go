@@ -38,9 +38,15 @@ var pseudoCallRe = regexp.MustCompile(`(?s)(functions|tools|multi_tool_use)\.[a-
 var pseudoPlanRe = regexp.MustCompile("(?i)(状态|status)\\s*[::]\\s*[`'\"]?(pending|in_progress)")
 
 // emptyPromises 是"承诺后续执行"的收尾话术(纯文本终局时它们必然落空)。
+// 英文变体按小写匹配(L1 为英文后模型可能以英文承诺)。
 var emptyPromises = []string{
 	"请稍等", "稍等片刻", "我将继续", "我会继续", "接下来我将", "接下来我会",
 	"正在为您处理", "马上为您", "请等待",
+}
+
+var emptyPromisesEN = []string{
+	"i'll continue", "i will continue", "please wait", "one moment",
+	"i'll now proceed", "i will now proceed", "let me continue", "hang on while i",
 }
 
 // badFinal 判定一条无 tool_calls 的最终文本是否该弹回。
@@ -53,6 +59,12 @@ func badFinal(content string) (reason string, bad bool) {
 	}
 	for _, p := range emptyPromises {
 		if strings.Contains(content, p) {
+			return "输出以「" + p + "」收尾——回合结束后不存在任何'稍后',这句承诺必然落空", true
+		}
+	}
+	lower := strings.ToLower(content)
+	for _, p := range emptyPromisesEN {
+		if strings.Contains(lower, p) {
 			return "输出以「" + p + "」收尾——回合结束后不存在任何'稍后',这句承诺必然落空", true
 		}
 	}
