@@ -211,3 +211,33 @@ func TestFinishGuardEnglishPromise(t *testing.T) {
 		t.Fatalf("english empty promise must bounce: %q calls=%d", out.Content, m.Calls)
 	}
 }
+
+// TestFinishGuardNarratedSteps:无状态词的"计划/执行步骤"文档变体(实测
+// 用户连问两次得到逐字相同的零调用计划)被识别弹回;单独的"后续步骤"
+// 建议或单独提及工具名不误伤。
+func TestFinishGuardNarratedSteps(t *testing.T) {
+	narrated := "### 重新分析计划:\n1. **查询订单总量**:\n   - 使用 `order-inquiry` 工具查询。\n\n### 执行步骤:\n1. 调用 `order-inquiry` 工具查询订单总量。\n2. 调用 `check-inventory` 工具检查库存。"
+	m := testmodel.New(
+		schema.AssistantMessage(narrated, nil),
+		schema.AssistantMessage("", []schema.ToolCall{{ID: "c1", Type: "function",
+			Function: schema.FunctionCall{Name: "order-inquiry", Arguments: `{"task":"查询订单总量"}`}}}),
+	)
+	out, err := FinishGuard(m).Generate(context.Background(), []*schema.Message{schema.UserMessage("重新分析一遍")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.ToolCalls) != 1 || m.Calls != 2 {
+		t.Fatalf("narrated steps doc must bounce into real calls: %+v calls=%d", out, m.Calls)
+	}
+
+	// 不误伤:①"后续步骤"标题但没有"调用 X 工具"句式;②有句式但没有计划标题
+	ok1 := schema.AssistantMessage("### 分析结论\n库存充足。\n\n### 后续步骤\n- 定期监控库存水平。", nil)
+	ok2 := schema.AssistantMessage("查不到该口径,建议使用 check-inventory 工具查询单品库存。", nil)
+	for i, msg := range []*schema.Message{ok1, ok2} {
+		mm := testmodel.New(msg)
+		out, err := FinishGuard(mm).Generate(context.Background(), []*schema.Message{schema.UserMessage("q")})
+		if err != nil || out.Content != msg.Content || mm.Calls != 1 {
+			t.Fatalf("case %d must pass untouched: %v %q calls=%d", i, err, out.Content, mm.Calls)
+		}
+	}
+}

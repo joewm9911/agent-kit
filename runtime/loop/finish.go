@@ -37,6 +37,14 @@ var pseudoCallRe = regexp.MustCompile(`(?s)(functions|tools|multi_tool_use)\.[a-
 // (实测变体:零工具调用的轮次输出五步计划,每步配参数 JSON 和 in_progress)。
 var pseudoPlanRe = regexp.MustCompile("(?i)(状态|status)\\s*[::]\\s*[`'\"]?(pending|in_progress)")
 
+// 叙述式执行的无状态词变体(实测连续复发):终答是一份"计划/执行步骤"
+// 文档,逐条写着"调用/使用 `X` 工具",但整段没有任何真实 tool_call——
+// 两个指纹同时命中才判定(单独的"后续步骤"建议或单独提及工具名不拦)。
+var (
+	narratedPlanHeadRe = regexp.MustCompile("(?m)^#+\\s*[^\n]{0,16}(计划|执行步骤)")
+	narratedCallRe     = regexp.MustCompile("(调用|使用)\\s*[`'\"]?[a-zA-Z][\\w-]*[`'\"]?\\s*(工具|技能)")
+)
+
 // emptyPromises 是"承诺后续执行"的收尾话术(纯文本终局时它们必然落空)。
 // 英文变体按小写匹配(L1 为英文后模型可能以英文承诺)。
 var emptyPromises = []string{
@@ -56,6 +64,9 @@ func badFinal(content string) (reason string, bad bool) {
 	}
 	if pseudoPlanRe.MatchString(content) {
 		return "输出把任务状态写成了正文(pending/in_progress)——计划必须用 todo_write 真实登记,每一步执行必须发起真实的工具调用,文字叙述不会执行任何东西", true
+	}
+	if narratedPlanHeadRe.MatchString(content) && narratedCallRe.MatchString(content) {
+		return "输出是一份'计划/执行步骤'文档,写着要调用哪些工具却没有发起任何真实调用——文字不会执行任何东西。现在就发起第一步的真实 tool_call 开始执行", true
 	}
 	for _, p := range emptyPromises {
 		if strings.Contains(content, p) {
