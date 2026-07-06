@@ -20,7 +20,8 @@ prompt:
 # 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
 loop:
   max_steps: 20
-  compaction: {max_messages: 40, keep_recent: 10}  # 交互版放宽(冒烟树为强制触发调 12/4)
+  # tool_clear:保护窗外超长工具结果先替换为占位(零模型调用),压缩兜底
+  compaction: {max_messages: 40, keep_recent: 10, tool_clear_over: 800, tool_clear_keep: 12}
 step_defaults:
   retry: 1
 

@@ -112,3 +112,74 @@ func TestCompactorCacheScoped(t *testing.T) {
 		t.Fatalf("model calls = %d, want 2 (cache hit on revisit)", m.Calls)
 	}
 }
+
+// TestClearOldToolResults 验证旧轮工具结果清理:保护窗外超长 tool 消息
+// 被替换为占位;窗内/短结果/已消化/非 tool 一律不动;幂等;copy-on-write
+// 不改原切片。
+func TestClearOldToolResults(t *testing.T) {
+	long := strings.Repeat("库存流水;", 300) // 1500 rune
+	msgs := []*schema.Message{
+		schema.UserMessage("查库存"),
+		schema.ToolMessage(long, "c1"),  // 窗外+超长 → 清
+		schema.ToolMessage("短结果", "c2"), // 窗外但短 → 留
+		schema.ToolMessage("[结果已消化:原始 5230 字符;全文已存为 r1]"+long, "c3"), // 已消化 → 留(指针不可丢)
+		schema.AssistantMessage(long, nil), // 非 tool → 留
+		schema.UserMessage("继续"),
+		schema.ToolMessage(long, "c4"), // 窗内 → 留
+	}
+	orig1 := msgs[1].Content
+
+	out := clearOldToolResults(msgs, 800, 2)
+	if !strings.HasPrefix(out[1].Content, toolClearedPrefix) || !strings.Contains(out[1].Content, "1500") {
+		t.Fatalf("old long tool result must be cleared, got %.60q", out[1].Content)
+	}
+	if out[2].Content != "短结果" || !strings.Contains(out[3].Content, "已存为 r1") {
+		t.Fatal("short and digested results must be kept")
+	}
+	if out[4].Content != long || out[6].Content != long {
+		t.Fatal("assistant and in-window tool messages must be untouched")
+	}
+	if msgs[1].Content != orig1 {
+		t.Fatal("copy-on-write violated: original slice mutated")
+	}
+	// 幂等:再清一遍无变化
+	again := clearOldToolResults(out, 800, 2)
+	for i := range again {
+		if again[i].Content != out[i].Content {
+			t.Fatalf("not idempotent at %d", i)
+		}
+	}
+	// 关闭/窗覆盖全部:原样返回
+	if got := clearOldToolResults(msgs, 0, 2); &got[1] != &msgs[1] && got[1].Content != orig1 {
+		t.Fatal("over=0 must be no-op")
+	}
+	if got := clearOldToolResults(msgs, 800, len(msgs)); got[1].Content != orig1 {
+		t.Fatal("keep >= len must be no-op")
+	}
+}
+
+// TestCompactorClearOnlyMode 只配 tool_clear(不配压缩阈值)时 Compactor
+// 亦启用,清理生效且不触发摘要。
+func TestCompactorClearOnlyMode(t *testing.T) {
+	long := strings.Repeat("数据;", 500)
+	cfg := CompactionConfig{ToolClearOver: 600, ToolClearKeep: 2}
+	if !cfg.Enabled() {
+		t.Fatal("clear-only config must enable the rewriter")
+	}
+	m := testmodel.New() // 不应被调用
+	rw := Compactor(m, cfg)
+	msgs := []*schema.Message{
+		schema.UserMessage("q"),
+		schema.ToolMessage(long, "c1"),
+		schema.UserMessage("q2"),
+		schema.AssistantMessage("a", nil),
+	}
+	ctx := runctx.With(context.Background(), "a", "s")
+	out := rw(ctx, msgs)
+	if !strings.HasPrefix(out[1].Content, toolClearedPrefix) {
+		t.Fatalf("clear must apply, got %.50q", out[1].Content)
+	}
+	if m.Calls != 0 {
+		t.Fatalf("no summarize call expected, got %d", m.Calls)
+	}
+}

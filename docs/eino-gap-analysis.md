@@ -67,13 +67,13 @@ eino 的三级分发(全局 → 按组件类型 → DesignateNode/Path)我们完
 (每请求覆盖)会需要。**建议**:agent.Run 加 opts 透传
 `compose.WithCallbacks/WithChatModelOption` 一类;不急,接口预留即可。
 
-### 🟡 S4 Workflow 字段级映射
+### ⚪ S4 Workflow 字段级映射(评估后不做)
 
-我们的 workflow 引擎是自研"纯顺序钉死";官方 `NewWorkflow` 有字段级
-FieldMapping、控制/数据流分离、`SetStaticValue`。表达力差距在"上游结构体
-的一个字段喂给下游"这类场景(我们目前靠模板字符串 `{step.field}`?
-实际是整值传递)。**建议**:不替换,登记差距;若 skill steps 出现字段级
-需求再评估换底。
+官方 `NewWorkflow` 的 FieldMapping 是**结构体字段级**映射(反射,要求
+导出字段)。评估结论:我们 skill steps 的数据面是 JSON 字符串整值传递
++ 模板替换,没有结构化字段可映射——FieldMapping 没有受体,换底收益≈0,
+纯迁移成本。登记触发条件:component 间开始传结构化对象(而非 JSON
+字符串)时再评估。
 
 ### 🟡 S5 观测生态直连
 
@@ -98,7 +98,7 @@ Langfuse 接线示例。
 |---|---|---|---|
 | Summarization | **Finalizer.PreserveSkills**:压缩后保留已加载技能内容。复核后**当前架构不适用**:我们的技能正文进子循环 persona,主循环压缩不可及——这是 inline 模式(技能内容作为工具结果进主上下文)才有的病,待 P2 inline 落地时一并做 | loop.Compactor | 随 inline |
 | ModelRetryConfig | **ShouldRetry 语义否决**:不只重试网络错,还能"拒绝不合格输出并改写下次输入、覆盖退避"——比我们 Transient 启发式强一档;我们的守卫弹回(FinishGuard 系)其实是它的特化 | RetryModel + 守卫 | 中 |
-| ToolReduction | 大结果 offload 成文件 + **旧轮工具消息清理**(ClearRetentionSuffixLimit 保留最近 N 轮,ClearAtLeastTokens 保护 KV-cache) | digest(over/truncate/read_result) | 中 |
+| ToolReduction | **已借最小版**:Clear 阶段落地为 compaction 的 tool_clear(保护窗外超长 tool 消息替换占位,零模型调用,先清后摘;digest 指针跳过)。offload 成文件的形态我们用 digest+read_result 等价 | digest + compaction.tool_clear | ✅ 最小版已落地 |
 | PlanTask | 任务**依赖图**(blocks/blockedBy + DFS 环检测) | todo | 低(交互场景暂不需要) |
 | ToolSearch | 大工具库动态选品(元工具检索 / 模型原生 deferred tools) | catalog include(静态) | 工具面 >40 时再做 |
 | PatchToolCalls | 悬空 tool_call 的**开链兜底**(修复历史里 assistant 有调用无结果的消息,HITL 取消/恢复丢失场景) | RepeatBreak 的 tool 消息回填是同技的局部应用 | 中(做挂起恢复时一起) |

@@ -30,11 +30,75 @@ type CompactionConfig struct {
 	// 不随本字段被覆盖(增量归并是压缩算法的机制部分)。
 	Prompt prompt.Value `yaml:"prompt" json:"-"`
 
+	// ToolClearOver 启用旧轮工具结果清理(借 eino ADK ToolReduction 的
+	// Clear 阶段设计):保护窗之外的 tool 消息,内容超过该 rune 数即
+	// 替换为占位。比整段摘要便宜一个量级——纯字符串操作、零模型调用;
+	// 先清理后压缩,摘要输入也更小。0 = 关闭。已消化(digest)的结果
+	// 带取回指针,跳过不清。
+	ToolClearOver int `yaml:"tool_clear_over" json:"tool_clear_over"`
+	// ToolClearKeep 清理保护窗:最近 N 条消息不清,默认取 KeepRecent
+	// (未配压缩时默认 8)。
+	ToolClearKeep int `yaml:"tool_clear_keep" json:"tool_clear_keep"`
+
 	resolvedPrompt string // ResolvePrompt 的产物,装配期填充
 }
 
-// Enabled 报告压缩是否启用。
-func (c CompactionConfig) Enabled() bool { return c.MaxMessages > 0 || c.MaxTokens > 0 }
+// Enabled 报告压缩(或工具结果清理)是否启用。
+func (c CompactionConfig) Enabled() bool {
+	return c.MaxMessages > 0 || c.MaxTokens > 0 || c.ToolClearOver > 0
+}
+
+func (c CompactionConfig) toolClearKeep() int {
+	if c.ToolClearKeep > 0 {
+		return c.ToolClearKeep
+	}
+	if k := c.Keep(); k > 0 {
+		return k
+	}
+	return 8
+}
+
+const toolClearedPrefix = "[工具结果已清理:"
+
+// clearOldToolResults 把保护窗之外的超长 tool 消息内容替换为占位。
+// 只改内容不删消息——tool_call 配对不受影响,协议安全;确定性且幂等
+// (占位短于阈值,已消化结果按指纹跳过),每轮从 store 重建视图后重清
+// 得到相同结果,不抖动摘要缓存的边界指纹。
+func clearOldToolResults(msgs []*schema.Message, over, keep int) []*schema.Message {
+	if over <= 0 || len(msgs) <= keep {
+		return msgs
+	}
+	limit := len(msgs) - keep
+	var out []*schema.Message // copy-on-write:未清理时零分配
+	for i, m := range msgs {
+		if i >= limit || m.Role != schema.Tool {
+			if out != nil {
+				out = append(out, m)
+			}
+			continue
+		}
+		runes := []rune(m.Content)
+		if len(runes) <= over ||
+			strings.HasPrefix(m.Content, toolClearedPrefix) ||
+			strings.Contains(m.Content, "[结果已消化") {
+			if out != nil {
+				out = append(out, m)
+			}
+			continue
+		}
+		if out == nil {
+			out = append([]*schema.Message{}, msgs[:i]...)
+		}
+		clone := *m
+		clone.Content = fmt.Sprintf("%s原始 %d 字符。该结果已由此后的对话消化;如需原始数据,重新调用相应工具]",
+			toolClearedPrefix, len(runes))
+		out = append(out, &clone)
+	}
+	if out == nil {
+		return msgs
+	}
+	return out
+}
 
 func (c CompactionConfig) Keep() int {
 	if c.KeepRecent > 0 {
@@ -116,6 +180,9 @@ func Compactor(m model.ToolCallingChatModel, cfg CompactionConfig) engine.Messag
 	cache := &summaryCache{entries: map[string]summaryEntry{}}
 
 	return func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
+		// 阶段0:旧轮工具结果清理(零成本,先于摘要——摘要输入更小)。
+		msgs = clearOldToolResults(msgs, cfg.ToolClearOver, cfg.toolClearKeep())
+
 		session := runctx.Agent(ctx) + "\x1f" + runctx.Session(ctx)
 		if scope := runctx.Scope(ctx); scope != "" {
 			session += "\x1f" + scope
