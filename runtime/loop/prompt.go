@@ -131,7 +131,7 @@ func (p PromptLayers) Modifier() engine.MessageModifier {
 					in = string(r[:focusMaxLen]) + "……(截断,完整原文见上方用户消息)"
 				}
 				out = append(out, schema.SystemMessage(
-					"# 本轮用户问题(优先目标)\n「"+in+"」\n先完成对它的回答;计划中的事项在回答完成后再对照处理,不要抢在当前问题之前执行。"))
+					"# 本轮用户问题(优先目标)\n「"+in+"」\n优先处理它:需要执行的就发起真实的工具调用,能直接回答的就回答;计划中的事项在它完成后再对照处理,不要抢在当前问题之前执行。"))
 			}
 		}
 		return out

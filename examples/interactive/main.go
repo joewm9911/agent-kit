@@ -146,6 +146,8 @@ func main() {
 			fmt.Printf("  %-50s risk=%s\n", m.Ref, m.Risk)
 		}
 	}
+	// 内建能力不入目录,随 agent 装配自动挂载,横幅明示避免误判"没加载"
+	fmt.Println("内建能力:todo_write/todo_read(计划)、ask_user(追问)、memory_save/memory_search(长期记忆)、read_result(大结果取回)")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	ctx := context.Background()

@@ -144,3 +144,24 @@ func TestCheckedFinishStubborn(t *testing.T) {
 		t.Fatalf("bounded bounce: content=%q calls=%d, want 不改。/3", out.Content, m.Calls)
 	}
 }
+
+// TestFinishGuardBareJSONTodos:把 todo_write 参数写进正文代码块的伪调用
+// (```json {"todos": [...]}```,MiniMax 实测高频变体)被识别并弹回。
+func TestFinishGuardBareJSONTodos(t *testing.T) {
+	m := testmodel.New(
+		schema.AssistantMessage("### 执行步骤\n```json\n{\n  \"todos\": [\n    {\"content\": \"查商品\", \"status\": \"pending\"}\n  ]\n}\n```\n请确认是否执行。", nil),
+		schema.AssistantMessage("", []schema.ToolCall{{ID: "c1", Type: "function",
+			Function: schema.FunctionCall{Name: "todo_write", Arguments: `{"todos":[{"content":"查商品","status":"pending"}]}`}}}),
+	)
+	g := FinishGuard(m)
+	out, err := g.Generate(context.Background(), []*schema.Message{schema.UserMessage("先列计划再动手")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("bare-JSON todos must bounce into a real tool call, got %+v", out)
+	}
+	if m.Calls != 2 {
+		t.Fatalf("calls = %d, want 2", m.Calls)
+	}
+}

@@ -27,7 +27,10 @@ func FinishGuard(m model.ToolCallingChatModel) model.ToolCallingChatModel {
 
 const finishGuardBounces = 2
 
-var pseudoCallRe = regexp.MustCompile(`(?s)(functions|tools|multi_tool_use)\.[a-zA-Z_][\w.-]*\s*\(|<tool_call>|"tool_calls"\s*:`)
+// 伪调用形态:functions.xxx( 代码调用体、<tool_call> 标记、"tool_calls" 键,
+// 以及裸 JSON 工具载荷(把 todo_write 的参数直接写进正文代码块,如
+// ```json {"todos": [...]}```——实测 MiniMax 的高频变体)。
+var pseudoCallRe = regexp.MustCompile(`(?s)(functions|tools|multi_tool_use)\.[a-zA-Z_][\w.-]*\s*\(|<tool_call>|"tool_calls"\s*:|"todos"\s*:\s*\[`)
 
 // emptyPromises 是"承诺后续执行"的收尾话术(纯文本终局时它们必然落空)。
 var emptyPromises = []string{
