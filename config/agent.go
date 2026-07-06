@@ -44,7 +44,9 @@ func agentModel(ctx context.Context, own *ModelConfig,
 	if err != nil {
 		return nil, err
 	}
-	return loop.FinishGuard(loop.BudgetModel(loop.RetryModel(m, retry))), nil
+	// 质量守卫已上移至循环装配(ReviewModel,见 buildAgent/skill.Build);
+	// 模型链只负责预算记账与瞬时错误重试。
+	return loop.BudgetModel(loop.RetryModel(m, retry)), nil
 }
 
 // buildAgent 用已选品的能力面与已解析的模型装配 agent。
@@ -180,8 +182,10 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		caps = append(caps, td.Capabilities()...)
 		finishChecks = append(finishChecks, td.FinishCheck)
 	}
-	// 重复调用终止器套最外:强制收束产生的最终文本不再被内层守卫弹回。
-	loopModel := loop.RepeatBreak(loop.CheckedFinish(m, finishChecks...))
+	// 统一评审循环(ReviewModel):重复终止 → 收口守卫 → 业务收口检查,
+	// 顺序显式、全局重试预算,取代旧的三层包装嵌套(乘法放大无全局闸)。
+	loopModel := loop.ReviewModel(m,
+		loop.RepeatBreakReviewer(), loop.FinishReviewer(), loop.CheckedReviewer(finishChecks...))
 	var resultKV store.KV
 	var resultTTL time.Duration
 	if eff.digestOver() > 0 {

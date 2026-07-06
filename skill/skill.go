@@ -196,7 +196,8 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		layers.Plan = deps.Todo.PlanSection
 	}
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
-		Model:        loop.RepeatBreak(m), // 重复调用终止器(与 applyGates 的断路器配套)
+		Model: loop.ReviewModel(m, loop.RepeatBreakReviewer(), loop.FinishReviewer(),
+			loop.CheckedReviewer(loop.DeniedCallsCheck)), // 统一评审循环(子循环同套纪律)
 		Capabilities: caps,
 		MaxSteps:     decl.MaxSteps,
 		Modifier:     layers.Modifier(),
@@ -324,7 +325,7 @@ func buildDeclModel(ctx context.Context, decl *ModelDecl, retry loop.RetryConfig
 	if err != nil {
 		return nil, fmt.Errorf("build model: %w", err)
 	}
-	return loop.FinishGuard(loop.BudgetModel(loop.RetryModel(m, retry))), nil
+	return loop.BudgetModel(loop.RetryModel(m, retry)), nil // 质量守卫在循环装配层(ReviewModel)
 }
 
 // applyGates 给内部工具面下沉全部 Ring 0 闸门(治理不止步于 agent 主循环):

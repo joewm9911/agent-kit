@@ -160,7 +160,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		if defaultModel, err = model.Build(ctx, cfg.Profile.Model.Provider, cfg.Profile.Model.Config); err != nil {
 			return nil, fmt.Errorf("model: %w", err)
 		}
-		defaultModel = loop.FinishGuard(loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry())))
+		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry())) // 质量守卫在循环装配层(ReviewModel)
 	}
 
 	// 具名解析环境:agent 注册表(agents 建成后回填)+ 具名模型 Hub。

@@ -127,6 +127,6 @@ Langfuse 接线示例。
 | ✅ | M1 已落地:react 装配统一挂 ToolCallMiddlewares(错误转结果,放行 InterruptRerun),覆盖主循环与全部技能/组件子循环;行为测试钉住"坏 JSON 不炸轮" | 小 | 已完成 |
 | ✅ | S5 已落地:interactive 可选接入 Langfuse(LANGFUSE_PUBLIC_KEY/SECRET_KEY 即启用,与进度切面并挂) | 小 | 已完成 |
 | — | PreserveSkills:复核不适用(见上表),随 inline 模式再做 | — | 搁置 |
-| P1 | RetryModel 引入 ShouldRetry 语义否决(与守卫弹回统一) | 中 | 设计后做 |
+| ✅ | ShouldRetry 语义否决与守卫统一:loop.ReviewModel(有界评审循环 + 有序 Reviewer 列表,全局重试预算,Verdict 支持 Append/Rewrite/Force/Backoff);四守卫降为纯函数评审器,旧构造器保留为行为等价外观(既有测试原样通过);FinishGuard 从模型链归位到循环装配。设计:docs/review-model-design.md | 中 | 已完成 |
 | P2 | S1 审批挂起迁 StatefulInterrupt + CheckPointStore(迁移设计先行) | 大 | 评审 |
 | P2 | S3 CallOption 透传、S4 FieldMapping、ToolSearch、PatchToolCalls | 各小-中 | 按需 |

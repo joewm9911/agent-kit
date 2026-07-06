@@ -71,7 +71,7 @@ func newSkillHubs(models []NamedModelConfig, retry loop.RetryConfig, agentNames 
 		if err != nil {
 			return nil, err
 		}
-		wrapped := loop.FinishGuard(loop.BudgetModel(loop.RetryModel(m, retry)))
+		wrapped := loop.BudgetModel(loop.RetryModel(m, retry)) // 质量守卫在循环装配层(ReviewModel)
 		cache[name] = wrapped
 		return wrapped, nil
 	}

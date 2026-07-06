@@ -252,7 +252,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 		if err != nil {
 			return nil, fmt.Errorf("model: %w", err)
 		}
-		defaultModel = loop.FinishGuard(loop.BudgetModel(loop.RetryModel(m, ac.Profile.retry())))
+		defaultModel = loop.BudgetModel(loop.RetryModel(m, ac.Profile.retry())) // 质量守卫在循环装配层(ReviewModel)
 	}
 
 	// 5. agents:每个 agent 实例化自己关联的 namespaces

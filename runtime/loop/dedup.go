@@ -176,53 +176,8 @@ func matchesHot(out *schema.Message, h *dedupHot) bool {
 	return true
 }
 
-// RepeatBreak 是重复调用的模型层终止器(Ring 0):dedup 断路器拦截回放
-// 两次后模型仍发起同一调用(热点),说明它不读结果里的文字提醒——此时
-// 在发起端掐断:先注入纠正弹回一次;仍再犯就强制收束,剥离调用、引用
-// 真实缓存结果直接作答,不再让退化循环烧到 max steps。流式透传。
+// RepeatBreak 是重复调用模型层终止器的兼容外观:= 单评审器的
+// ReviewModel。组合装配请直接用 ReviewModel(见 review.go)。
 func RepeatBreak(m model.ToolCallingChatModel) model.ToolCallingChatModel {
-	return &repeatBreak{inner: m}
-}
-
-type repeatBreak struct {
-	inner model.ToolCallingChatModel
-}
-
-func (g *repeatBreak) Generate(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	out, err := g.inner.Generate(ctx, msgs, opts...)
-	hot := hotEntry(ctx)
-	if err != nil || !matchesHot(out, hot) {
-		return out, err
-	}
-	// 弹回一次:纠正以 tool 消息回填(带 call ID,协议合法——assistant 的
-	// tool_call 后必须跟 tool 结果,厂商会校验),明说执行已被封禁。
-	msgs = append(msgs, out)
-	correction := fmt.Sprintf(
-		"[重复调用终止] %s 已用完全相同的参数调用 %d 次,执行已被系统封禁,结果不会再变:\n%s\n禁止再发起这个调用。现在就基于上述结果给出回答;确需其他信息,改变参数或改用其他能力。",
-		hot.name, hot.count, clip(hot.last, 2000))
-	for _, tc := range out.ToolCalls {
-		msgs = append(msgs, schema.ToolMessage(correction, tc.ID))
-	}
-	out, err = observedGenerate(ctx, "repeat-break/bounce", func(ctx context.Context, ms []*schema.Message) (*schema.Message, error) {
-		return g.inner.Generate(ctx, ms, opts...)
-	}, msgs)
-	if err != nil || !matchesHot(out, hot) {
-		return out, err
-	}
-	// 纠正无效:强制收束,用真实结果替它作答,终止退化循环。
-	return schema.AssistantMessage(fmt.Sprintf(
-		"(系统已终止对 %s 的重复调用:相同参数已执行/拦截 %d 次,结果不变)\n该调用的实际结果:\n%s",
-		hot.name, hot.count, clip(hot.last, 2000)), nil), nil
-}
-
-func (g *repeatBreak) Stream(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	return g.inner.Stream(ctx, msgs, opts...)
-}
-
-func (g *repeatBreak) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	inner, err := g.inner.WithTools(tools)
-	if err != nil {
-		return nil, err
-	}
-	return &repeatBreak{inner: inner}, nil
+	return reviewModelN(m, finishGuardBounces, RepeatBreakReviewer())
 }
