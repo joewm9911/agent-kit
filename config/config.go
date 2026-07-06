@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"gopkg.in/yaml.v3"
@@ -45,6 +46,9 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := expandParse(raw, sp, path, &cfg); err != nil {
 		return nil, err
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		cfg.baseDir = filepath.Dir(abs) // .skills 等相对路径的基准
 	}
 	return &cfg, nil
 }
@@ -159,13 +163,36 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry()))
 	}
 
-	// 4. skills:装配后入目录,供 agent 选品
-	for _, decl := range cfg.Skills {
-		c, err := skill.Build(ctx, decl, skill.Deps{
+	// 4. skills:装配后入目录,供 agent 选品。条目二选一:内部声明走
+	// skill.Build(确定性编排),use: 外部链接走 skillpack 全链路
+	// (物化 → 校验 → 隔离子循环,治理与内部同源)。
+	packOpts, err := cfg.Skillpacks.options()
+	if err != nil {
+		return nil, err
+	}
+	packRoot := cfg.Skillpacks.root(cfg.baseDir)
+	for _, entry := range cfg.Skills {
+		skillDeps := skill.Deps{
 			Todo:    componentTodo(),
 			Catalog: catalog, Prompts: prompts, DefaultModel: defaultModel,
 			ToolTimeout: cfg.Profile.toolTimeout().Std(), Retry: cfg.Profile.retry(),
-		})
+		}
+		var c capability.Capability
+		if entry.Use != "" {
+			if !isExternalRef(entry.Use) {
+				return nil, fmt.Errorf("skill %s: 平铺 skills 的 use 只支持外部链接(github.com/...|https://...|file:...),内部委托请用 namespaces", entry.Use)
+			}
+			if !entry.Prompt.IsZero() || entry.Engine != "" || len(entry.Capabilities.Include) > 0 {
+				return nil, fmt.Errorf("skill %s: use(外部引用)与 prompt/engine/capabilities 互斥", entry.Use)
+			}
+			c, err = buildSkillpack(ctx, packRoot, packOpts,
+				skill.PackSpec{Use: entry.Use, Integrity: entry.Integrity, Name: entry.Name},
+				skill.PackOverrides{Model: entry.Model, MaxSteps: entry.MaxSteps,
+					Tools: entry.Tools, Context: entry.Context},
+				skillDeps)
+		} else {
+			c, err = skill.Build(ctx, &entry.Declaration, skillDeps)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -180,6 +207,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
 			global: catalog, prompts: prompts, defaultModel: defaultModel,
 			maxRisk: maxRisk, base: cfg.Profile, appModel: cfg.Profile.Model, logger: logger,
+			packRoot: packRoot, packOpts: packOpts,
 		})
 		if err != nil {
 			return nil, err

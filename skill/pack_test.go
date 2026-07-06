@@ -6,10 +6,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +19,10 @@ import (
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
+	"github.com/joewm9911/agent-kit/protocol/source"
 	"github.com/joewm9911/agent-kit/runtime/loop"
+
+	_ "github.com/joewm9911/agent-kit/impl/source/exectool"
 )
 
 const fixtureSkillMD = `---
@@ -320,23 +323,53 @@ func TestPackReadJail(t *testing.T) {
 	}
 }
 
-func TestBuildPackScriptDetectionRisk(t *testing.T) {
-	// 带脚本的包:风险必须为 Dangerous(批 4 语义,先钉住断言)
+func TestScriptPackRuntimesAndExecBinding(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
 	src := writeFixturePack(t)
-	_ = os.WriteFile(filepath.Join(src, "scripts", "run.py"), nil, 0o644)
 	_ = os.MkdirAll(filepath.Join(src, "scripts"), 0o755)
-	_ = os.WriteFile(filepath.Join(src, "scripts", "run.py"), []byte("print(1)"), 0o644)
+	_ = os.WriteFile(filepath.Join(src, "scripts", "read.py"), []byte("print(open('data.txt').read())"), 0o644)
+	_ = os.WriteFile(filepath.Join(src, "data.txt"), []byte("包内数据123"), 0o644)
+
 	root := t.TempDir()
 	pd, err := EnsurePack(context.Background(), root, PackSpec{Use: "file:" + src}, PackOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(pd.Dir)
-	m, _ := LoadManifest(pd)
-	m.AllowedTools = nil
-	c, err := BuildPack(context.Background(), m, PackOverrides{}, Deps{DefaultModel: testmodel.New()})
+	m, err := LoadManifest(pd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = c
+	if len(m.Runtimes) != 1 || m.Runtimes[0] != "python" {
+		t.Fatalf("runtimes detection: %v", m.Runtimes)
+	}
+
+	// 装配层形态:经 source 注册表构造 workdir 绑定的 exec 工具
+	execSrc, err := source.New(context.Background(), "exec", "pack", map[string]any{
+		"workdir": m.Dir, "tools": []map[string]any{{"name": "python", "runtime": "python"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra, err := execSrc.Sync(context.Background())
+	if err != nil || len(extra) != 1 {
+		t.Fatalf("exec caps: %v %v", extra, err)
+	}
+	// 工作目录绑定:脚本以相对路径读到包内文件
+	out, err := capability.Invoke(context.Background(), extra[0],
+		`{"script":"print(open('data.txt').read())"}`)
+	if err != nil || !strings.Contains(out, "包内数据123") {
+		t.Fatalf("workdir binding failed: %q %v", out, err)
+	}
+
+	// 风险传播:带 exec 工具的包 = Dangerous
+	m.AllowedTools = nil
+	c, err := BuildPack(context.Background(), m, PackOverrides{}, Deps{DefaultModel: testmodel.New()}, extra...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Meta().Risk != capability.RiskDangerous {
+		t.Fatalf("script pack risk = %v, want dangerous", c.Meta().Risk)
+	}
 }

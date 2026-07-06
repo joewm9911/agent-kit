@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cloudwego/eino/schema"
@@ -41,11 +42,15 @@ type PackManifest struct {
 	Ref          string   // 来源 ref(观测/回溯)
 	SHA          string   // 内容树哈希
 	HasFiles     bool     // 除 SKILL.md 外还有文件(决定挂不挂 pack_read)
+	// Runtimes 是包内脚本类型(按扩展名检测:.py→python .js/.mjs→node
+	// .sh→bash),非空说明是脚本型技能包:装配层据此绑定 exec 工具
+	// (工作目录=包目录),包风险经 exec 工具传播为 Dangerous。
+	Runtimes []string
 }
 
-// PackOverrides 是 use: 条目的本地覆盖。
+// PackOverrides 是 use: 条目的本地覆盖(名字覆盖走 PackSpec.Name,
+// 物化目录与 lock 以最终名记账)。
 type PackOverrides struct {
-	Name     string     // "ns/name",覆盖 frontmatter
 	Model    *ModelDecl // 专属模型,nil 跟随宿主默认
 	MaxSteps int
 	Tools    []string // 白名单收紧(与 allowed-tools 求交集)
@@ -60,17 +65,34 @@ func LoadManifest(pd PackDir) (*PackManifest, error) {
 	}
 	_ = name // 目录/最终名已由 EnsurePack 定(含覆盖);frontmatter name 仅作缺省来源
 	hasFiles := false
-	ents, _ := os.ReadDir(pd.Dir)
-	for _, e := range ents {
-		if e.Name() != "SKILL.md" {
-			hasFiles = true
-			break
+	runtimeSet := map[string]bool{}
+	_ = filepath.Walk(pd.Dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
 		}
+		if rel, _ := filepath.Rel(pd.Dir, p); rel != "SKILL.md" {
+			hasFiles = true
+		}
+		switch filepath.Ext(p) {
+		case ".py":
+			runtimeSet["python"] = true
+		case ".js", ".mjs":
+			runtimeSet["node"] = true
+		case ".sh":
+			runtimeSet["bash"] = true
+		}
+		return nil
+	})
+	var runtimes []string
+	for r := range runtimeSet {
+		runtimes = append(runtimes, r)
 	}
+	sort.Strings(runtimes)
 	return &PackManifest{
 		NS: pd.NS, Name: pd.Name, Version: pd.Version,
 		Description: desc, Body: body, AllowedTools: allowed,
 		Dir: pd.Dir, Ref: pd.Ref, SHA: pd.SHA, HasFiles: hasFiles,
+		Runtimes: runtimes,
 	}, nil
 }
 
@@ -118,7 +140,9 @@ func parseSkillMD(path string) (name, desc string, allowed []string, body string
 
 // BuildPack 把技能包装配为能力:白名单选品 → Ring 0 闸门(与 Build 同源)
 // → react 子循环 → capability(kind=skillpack)。
-func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps) (capability.Capability, error) {
+// extra 是装配层追加的工具(脚本型包的 exec 工具,工作目录已绑定包目录),
+// 不经白名单过滤——它们是包自己的执行原语,不是宿主能力。
+func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps, extra ...capability.Capability) (capability.Capability, error) {
 	if ov.Context != "" && ov.Context != "fresh" && ov.Context != "fork" {
 		return nil, fmt.Errorf("skillpack %s: context 只支持 fresh|fork,got %q", m.Ref, ov.Context)
 	}
@@ -158,6 +182,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	if m.HasFiles {
 		caps = append(caps, packReadCap(m.Dir))
 	}
+	caps = append(caps, extra...)
 
 	// 风险 = 白名单工具的最大风险(纯指令包无工具 → readonly)。
 	risk := capability.RiskReadonly

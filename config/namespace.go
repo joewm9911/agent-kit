@@ -31,6 +31,8 @@ import (
 // nsDeps 是命名空间装配的环境。
 type nsDeps struct {
 	global       *source.Catalog // skills 的落点,亦是跨 ns cap://skill 引用的解析域
+	packRoot     string          // 外部 skillpack 的物化目录(.skills)
+	packOpts     skill.PackOptions
 	prompts      *prompt.Resolver
 	defaultModel model.ToolCallingChatModel
 	maxRisk      capability.Risk
@@ -204,9 +206,31 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		comps[cc.Name] = c
 	}
 
-	// 3. skills:编排引用 → 编译为 DAG → 进 deps.global
+	// 3. skills:编排引用 → 编译为 DAG → 进 deps.global。
+	// use: 外部链接是第四形态(skillpack):物化 → 校验 → 隔离子循环。
 	for i := range ns.Skills {
 		sc := &ns.Skills[i]
+		if sc.Use != "" && isExternalRef(sc.Use) {
+			if len(sc.Steps) > 0 {
+				return fmt.Errorf("namespace %s: skill %s: use 与 steps 互斥", ns.Name, sc.Name)
+			}
+			if sc.Name == "" {
+				return fmt.Errorf("namespace %s: 外部 skillpack(%s)必须显式 name(命名归属域团队)", ns.Name, sc.Use)
+			}
+			c, err := buildSkillpack(ctx, deps.packRoot, deps.packOpts,
+				skill.PackSpec{Use: sc.Use, Integrity: sc.Integrity, Name: ns.Name + "/" + sc.Name},
+				skill.PackOverrides{Tools: sc.Tools, Context: sc.Context},
+				skill.Deps{Catalog: deps.global, Prompts: deps.prompts,
+					DefaultModel: deps.defaultModel, Retry: nsEff.retry(),
+					ToolTimeout: nsEff.toolTimeout().Std(), DigestOver: nsEff.digestOver()})
+			if err != nil {
+				return fmt.Errorf("namespace %s: %w", ns.Name, err)
+			}
+			if err := deps.global.Add(c); err != nil {
+				return fmt.Errorf("namespace %s: skill %s: %w", ns.Name, sc.Name, err)
+			}
+			continue
+		}
 		steps := sc.Steps
 		if sc.Use != "" { // 入口引用形态:单步透传,skill 只是接口
 			if len(steps) > 0 {

@@ -20,7 +20,8 @@ package config
 // 参数级 allow 规则 + deny 规则)→06/07;预算硬停→08;结构化输出→09;
 // 上下文压缩→10;窗外会话召回→11;HTTP gateway + A2A→12;挂起/恢复
 // (dispatcher + 假通道 + file KV)→13;副本重启(file session)→14;
-// exectool 脚本执行→15;中断→16;轨迹落盘→17(随主 app 顺带断言)。
+// exectool 脚本执行→15;中断→16;轨迹落盘→17(随主 app 顺带断言);
+// 外部 skillpack(SKILL.md + 脚本,vendoring + 隔离执行)→18。
 
 import (
 	"context"
@@ -435,6 +436,55 @@ func TestLiveSmoke(t *testing.T) {
 		out := run(t, execApp.Agents["coder"], "live-15", "调用 python 工具执行脚本,计算 13 * 17 + 4,把脚本真实输出的数字报给我。")
 		if !strings.Contains(out, "225") {
 			t.Fatalf("脚本执行结果未回流(want 225): %q", out)
+		}
+	})
+
+	// —— 18 skillpack:外部 SKILL.md 技能包(含 python 脚本)在框架内执行 ——
+	// 覆盖全链路:file: 引用 → 启动期物化 .skills + lock → 隔离子循环 →
+	// workdir 绑定的 exec 工具真实跑脚本 → 结果回流宿主。
+	t.Run("18_Skillpack", func(t *testing.T) {
+		if _, err := exec.LookPath("python3"); err != nil {
+			t.Skip("python3 not available")
+		}
+		packSrc := t.TempDir()
+		md := "---\nname: report-calc\ndescription: 读取打包数据并汇报其中的校验数字\n---\n" +
+			"你是数据汇报员。你有一个 python 工具(工作目录就是技能包目录)。" +
+			"执行脚本 `print(open('data.txt').read())` 读取打包数据,把其中的数字原样报告出来。"
+		if err := os.WriteFile(packSrc+"/SKILL.md", []byte(md), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(packSrc+"/data.txt", []byte("校验数字=735211"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(packSrc+"/probe.py", []byte("print('probe')"), 0o644); err != nil { // 触发 runtimes 检测
+			t.Fatal(err)
+		}
+
+		skillsRoot := t.TempDir()
+		cfg := &Config{
+			Profile: Profile{Model: &ModelConfig{Provider: "minimax", Config: map[string]any{
+				"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
+			}}},
+			Catalog:    CatalogConfig{MaxRisk: "dangerous"}, // 含脚本的包必须显式提升准入
+			Skills:     []*SkillEntry{{Use: "file:" + packSrc}},
+			Skillpacks: SkillpacksConfig{Dir: skillsRoot},
+			Agents: []AgentConfig{{
+				Name:         "reporter",
+				Prompt:       PromptConfig{System: prompt.Value{Literal: "需要数据时调用 report-calc 技能。"}},
+				Capabilities: CapabilitiesConfig{Include: []string{"cap://skillpack/pack/report-calc"}},
+			}},
+		}
+		packApp, err := Build(ctxBg, cfg, BuildOptions{Interactor: ix})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 硬断言:物化 + lock 落盘(vendoring 生效)
+		if _, err := os.Stat(skillsRoot + "/skills.lock"); err != nil {
+			t.Fatalf("skills.lock 未落盘: %v", err)
+		}
+		out := run(t, packApp.Agents["reporter"], "live-18", "用 report-calc 技能读取打包数据,报告校验数字。")
+		if !strings.Contains(out, "735211") {
+			t.Fatalf("skillpack 脚本执行结果未回流(want 735211): %q", out)
 		}
 	})
 

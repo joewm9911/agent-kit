@@ -73,6 +73,7 @@ func needsArg0(runtime string) bool { return runtime == "bash" || runtime == "sh
 // SourceConfig 声明一个 exec 源下的一批脚本执行工具。
 type SourceConfig struct {
 	Timeout string       `json:"timeout"` // 命令/模板执行的墙钟兜底(如 30s),空=无
+	Workdir string       `json:"workdir"` // 命令/模板路径的工作目录(skillpack 绑定包目录用);engine 路径由引擎自管
 	Tools   []ToolConfig `json:"tools"`
 }
 
@@ -96,7 +97,7 @@ func New(name string, cfg SourceConfig) (source.Source, error) {
 	}
 	caps := make([]capability.Capability, 0, len(cfg.Tools))
 	for _, tc := range cfg.Tools {
-		c, err := newTool(name, tc, srcTimeout)
+		c, err := newTool(name, tc, srcTimeout, cfg.Workdir)
 		if err != nil {
 			return nil, fmt.Errorf("exec source %s: %w", name, err)
 		}
@@ -105,7 +106,7 @@ func New(name string, cfg SourceConfig) (source.Source, error) {
 	return source.Static(name, caps...), nil
 }
 
-func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration) (capability.Capability, error) {
+func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir string) (capability.Capability, error) {
 	if tc.Name == "" || tc.Runtime == "" {
 		return nil, fmt.Errorf("tool: name and runtime are required")
 	}
@@ -165,7 +166,7 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration) (capabilit
 		}),
 		Risk: risk,
 	}
-	r := &runner{runtime: tc.Runtime, engine: eng, command: cmdTmpl, timeout: timeout}
+	r := &runner{runtime: tc.Runtime, engine: eng, command: cmdTmpl, timeout: timeout, workdir: workdir}
 	return capability.New(meta, r.run), nil
 }
 
@@ -176,6 +177,7 @@ type runner struct {
 	engine  exec.Engine // 非 nil = 走引擎
 	command []string    // 非空 = 走命令模板(engine 为 nil 时)
 	timeout time.Duration
+	workdir string // 非空 = 命令/模板在该目录下执行(脚本可读同目录文件)
 }
 
 type execArgs struct {
@@ -216,6 +218,7 @@ func (r *runner) run(ctx context.Context, argsJSON string) (string, error) {
 
 	var out bytes.Buffer
 	cmd := osexec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = r.workdir // 空 = 进程 cwd
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
 		// 非零退出/超时作结果回传,不中断循环。

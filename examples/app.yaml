@@ -61,6 +61,18 @@ agents:
 #       verification_token: "${secret:FEISHU_VERIFY_TOKEN}"
 #       encrypt_key: "${secret:FEISHU_ENCRYPT_KEY}"
 
+# ---- 外部技能包:skills 列表直接引用链接,启动期下载到 .skills(vendoring)----
+# skillpacks:
+#   dir: .skills                 # 物化目录(默认;skills.lock 建议提交 git)
+#   sync: auto                   # auto=缺失即下载 | require-local=生产收紧
+# skills:
+#   - use: "github.com/anthropics/skills/pdf@v1.2.0"    # 一行集成,必须 pin
+#   - use: "https://skills.example.com/writer.zip"
+#     integrity: "sha256:9f2a..."
+#     name: docs/writer          # 覆盖 ns/名字
+#     context: fork              # 以调用方对话快照起步(默认 fresh 隔离)
+# 注:含脚本的包风险为 dangerous,需 catalog.max_risk: dangerous 显式准入。
+
 # ---- 挂起/恢复:IM 通道的 ask_user/审批等待持久化,跨进程重启可恢复 ----
 # 后端是 store.KV:dir 是 file 后端简写;多副本部署可换 redis。
 # suspend:

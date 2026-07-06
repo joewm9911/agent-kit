@@ -115,6 +115,9 @@ func LoadApp(path string) (*AppSpec, error) {
 	if err := expandParse(raw, sp, path, &app); err != nil {
 		return nil, err
 	}
+	if abs, err := filepath.Abs(path); err == nil {
+		app.baseDir = filepath.Dir(abs) // .skills 相对路径的基准
+	}
 
 	appDir := filepath.Dir(path)
 	spec := &AppSpec{App: app}
@@ -317,6 +320,13 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	// namespace/component 的 base(五级链的 app+agent 两级)。
 	agentProfile := app.Profile.merge(as.Profile)
 
+	// 外部 skillpack 策略(app 级一份;namespace 的 use: 链接经 nsDeps 生效)
+	packOpts, err := app.Skillpacks.options()
+	if err != nil {
+		return nil, nil, err
+	}
+	packRoot := app.Skillpacks.root(app.baseDir)
+
 	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
 	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。
 	mounted := source.NewCatalog(maxRisk, nil)
@@ -329,6 +339,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 			mount:    mnt.Override,      // per-mount 覆盖(最高优)
 			appModel: app.Profile.Model, // 判断 component 是否需专属 model
 			nsPath:   mnt.Path, srcCache: srcCache,
+			packRoot: packRoot, packOpts: packOpts,
 		})
 		if err != nil {
 			return nil, nil, err

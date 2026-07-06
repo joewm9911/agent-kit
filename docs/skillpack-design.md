@@ -1,6 +1,6 @@
 # Skillpack:外部 skill 链接引用、.skills 本地化与框架内执行
 
-> 状态:**设计,待评审**(v2,收口 vendoring 模型)。前置文档
+> 状态:**已落地**(批 1-5 全部实现,live 冒烟 18_Skillpack 真实 MiniMax 验证;打包期 CLI 按决策延后)。前置文档
 > [skill-interop-plan.md](skill-interop-plan.md) 定了概念与分期;本方案落成
 > 可实施设计,需求收口为三句话:
 > 1. 在现有 skill 配置里**直接写外部链接**(`use:`)即完成集成;

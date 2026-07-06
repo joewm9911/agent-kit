@@ -278,9 +278,13 @@ type Config struct {
 	// (执行单元声明)→ skills(对外产品,唯一进目录的编排单元)。
 	Namespaces []NamespaceConfig `yaml:"namespaces"`
 
-	// Skills 是平铺声明的兼容路径,新配置建议用 namespaces。
-	Skills []*skill.Declaration `yaml:"skills"`
-	Agents []AgentConfig        `yaml:"agents"`
+	// Skills 是平铺声明的兼容路径,新配置建议用 namespaces。条目二选一:
+	// 内部声明(prompt/engine/...)或外部引用(use: 链接,见 SkillEntry)。
+	Skills []*SkillEntry `yaml:"skills"`
+	Agents []AgentConfig `yaml:"agents"`
+
+	// Skillpacks 是外部技能包策略(物化目录/获取策略/pin 政策)。
+	Skillpacks SkillpacksConfig `yaml:"skillpacks"`
 
 	Serving  ServingConfig   `yaml:"serving"`
 	Channels []ChannelConfig `yaml:"channels"`
@@ -288,6 +292,9 @@ type Config struct {
 	Suspend SuspendConfig `yaml:"suspend"`
 
 	Observability ObservabilityConfig `yaml:"observability"`
+
+	// baseDir 是配置文件所在目录(Load 填充),.skills 等相对路径的基准。
+	baseDir string
 }
 
 // AppConfig 是应用级入口(app.yaml):进程级资源与接线板 + 全局默认。
@@ -325,7 +332,13 @@ type AppConfig struct {
 	Channels []ChannelConfig `yaml:"channels"`
 	Suspend  SuspendConfig   `yaml:"suspend"`
 
+	// Skillpacks 是外部技能包策略(全 app 一份,namespace 里的 use: 链接同样生效)。
+	Skillpacks SkillpacksConfig `yaml:"skillpacks"`
+
 	Observability ObservabilityConfig `yaml:"observability"`
+
+	// baseDir 是 app.yaml 所在目录(LoadApp 填充),.skills 相对路径的基准。
+	baseDir string
 }
 
 // AgentFile 是 agent 维度的配置文件(agents/<name>.yaml)。
@@ -385,10 +398,16 @@ type NamespaceSkill struct {
 	Params      map[string]capability.ParamDecl `yaml:"params"`
 	Steps       []engine.Step                   `yaml:"steps"`
 	Output      string                          `yaml:"output"`
-	// Use 是入口引用形态(与 steps 互斥):skill 退化为纯接口声明
-	// (description + params),执行整体委托给一个 component
-	// (通常是 graph/workflow 形态),params JSON 原样透传。
-	Use string `yaml:"use"`
+	// Use 是入口引用形态(与 steps 互斥),两种值域:
+	//   - 内部委托:components/<name> 等引用,skill 退化为纯接口声明,
+	//     执行整体委托给该 component,params JSON 原样透传;
+	//   - 外部链接:github.com/...@ver | https://...zip | file:...,
+	//     集成一个 SKILL.md 技能包(此时须显式 name,integrity/tools/
+	//     context 见 SkillEntry 同名字段)。
+	Use       string   `yaml:"use"`
+	Integrity string   `yaml:"integrity"`
+	Tools     []string `yaml:"tools"`
+	Context   string   `yaml:"context"`
 	// StepDefaults 是本 skill 步骤未声明 timeout/retry 时的缺省
 	// (override 链的 skill 层;更下层的步骤显式声明优先)。
 	StepDefaults struct {
@@ -406,4 +425,18 @@ type NamespaceConfig struct {
 	Tools      []SourceConfig    `yaml:"tools"`
 	Components []ComponentConfig `yaml:"components"`
 	Skills     []NamespaceSkill  `yaml:"skills"`
+}
+
+// SkillEntry 是 skills: 列表的一个条目:内部声明(内嵌 skill.Declaration)
+// 或外部引用(use: 链接)二选一。外部形态把市面 SKILL.md 技能包一行集成
+// 进来(装配期物化到 .skills,见 skillpack.go),其余字段作本地覆盖:
+// name 覆盖 ns/名字,model/max_steps 沿用内嵌声明的同名字段,tools 在
+// 包的 allowed-tools 之上再收紧(交集),context: fork 以调用方对话快照
+// 起步(与编排步骤同义)。
+type SkillEntry struct {
+	skill.Declaration `yaml:",inline"`
+	Use               string   `yaml:"use"`       // 外部链接:github.com/...@ver | https://...zip | file:...
+	Integrity         string   `yaml:"integrity"` // sha256:<hex>,可选强校验
+	Tools             []string `yaml:"tools"`     // 白名单收紧(∩ allowed-tools)
+	Context           string   `yaml:"context"`   // fresh(默认)| fork
 }
