@@ -38,6 +38,11 @@ skills:
     name: docs/pdf
     max_steps: 12
 
+# 轨迹落盘:记录"宿主选中 skill → 子循环模型调用 → python 工具执行"的
+# 完整调用链,冒烟据此硬断言技能真的被走到(而非模型绕过)。
+observability:
+  trajectory_path: "${SKILLPACK_TRAJ}"
+
 agents:
   - name: pdf-worker
     description: PDF 处理工人

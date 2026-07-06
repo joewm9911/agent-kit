@@ -669,6 +669,9 @@ func TestLiveRealPDFSkill(t *testing.T) {
 	}
 	extractedTxt := filepath.Join(workDir, "extracted.txt")
 	_ = os.Remove(extractedTxt) // 上次运行的产物不影响本次断言
+	trajPath := filepath.Join(workDir, "trajectory.jsonl")
+	_ = os.Remove(trajPath)
+	t.Setenv("SKILLPACK_TRAJ", trajPath)
 
 	cfg, err := Load(filepath.Join(scenario, "pdf-smoke.yaml"))
 	if err != nil {
@@ -695,6 +698,18 @@ func TestLiveRealPDFSkill(t *testing.T) {
 	if !strings.Contains(out, marker) && !strings.Contains(string(extracted), marker) {
 		t.Fatalf("校验码未被提取(回答与 %s 均无 %s)\n回答: %s", extractedTxt, marker, truncate(out, 400))
 	}
-	t.Logf("中间产物已保留:\n  技能安装: %s(固定目录)\n  供给链账本: %s\n  输入 PDF: %s\n  提取产物: %s",
-		skillsRoot, filepath.Join(skillsRoot, "skills.lock"), inputPDF, extractedTxt)
+
+	// 技能确实被走到的正面证据(轨迹调用链):宿主调用 skill "pdf" →
+	// 子循环内 python 工具真实执行。缺任一环 = 模型绕过了技能,判死。
+	traj, err := os.ReadFile(trajPath)
+	if err != nil {
+		t.Fatalf("轨迹未落盘: %v", err)
+	}
+	for _, span := range []string{`"name":"pdf"`, `"name":"python"`} {
+		if !strings.Contains(string(traj), span) {
+			t.Fatalf("轨迹缺 %s 调用记录(技能链路未走到)\n轨迹: %s", span, truncate(string(traj), 600))
+		}
+	}
+	t.Logf("中间产物已保留:\n  技能安装: %s(固定目录)\n  供给链账本: %s\n  输入 PDF: %s\n  提取产物: %s\n  调用轨迹: %s",
+		skillsRoot, filepath.Join(skillsRoot, "skills.lock"), inputPDF, extractedTxt, trajPath)
 }
