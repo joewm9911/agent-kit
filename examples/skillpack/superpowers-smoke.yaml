@@ -1,0 +1,45 @@
+# examples/skillpack —— 复杂技能集冒烟:obra/superpowers(Claude Code 生态
+# 最复杂的技能集之一)。同一仓库拉三个技能,覆盖三种形态:
+#   brainstorming          多文件 + scripts(.sh/.js → bash+node,Dangerous)
+#   systematic-debugging   大量参考文档(L3 pack_read)+ .sh(Dangerous)
+#   test-driven-development 纯指令 md(Readonly)
+# 由 config 包 TestLiveSuperpowers 驱动(SMOKE_LIVE 门控);
+# 环境占位:SMOKE_MODEL_PROVIDER / SMOKE_MODEL_BASE / MINIMAX_API_KEY /
+# SKILLPACK_WORK_DIR / SUPERPOWERS_TRAJ。
+
+secrets:
+  provider: env
+
+model:
+  provider: "${SMOKE_MODEL_PROVIDER}"
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+    base_url: "${SMOKE_MODEL_BASE}"
+
+catalog:
+  max_risk: dangerous            # 带脚本的技能需要显式准入
+
+work_dir: "${SKILLPACK_WORK_DIR}"
+
+skillpacks:
+  sync: auto
+
+skills:
+  - use: "github.com/obra/superpowers/skills/brainstorming@d884ae04edebef577e82ff7c4e143debd0bbec99"
+    name: dev/brainstorming
+  - use: "github.com/obra/superpowers/skills/systematic-debugging@d884ae04edebef577e82ff7c4e143debd0bbec99"
+    name: dev/systematic-debugging
+    max_steps: 10
+  - use: "github.com/obra/superpowers/skills/test-driven-development@d884ae04edebef577e82ff7c4e143debd0bbec99"
+    name: dev/tdd
+
+observability:
+  trajectory_path: "${SUPERPOWERS_TRAJ}"
+
+agents:
+  - name: coach
+    description: 研发教练
+    prompt:
+      system: "你是研发教练。遇到任务必须调用对应技能完成(头脑风暴=brainstorming,排查 bug=systematic-debugging,写测试=tdd),把用户要求原样转给技能,不要只列计划或口头答复。"
+    capabilities:
+      include: ["cap://skill/dev/*"]

@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/joewm9911/agent-kit/agent"
+	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
@@ -112,10 +113,11 @@ func run(t *testing.T, a *agent.Agent, sess, input string) string {
 		time.Sleep(wait)
 		out, err = a.Run(ctx, sess, input)
 	}
-	if err != nil && loop.Transient(err) {
-		// 框架内 3 次重试 + 测试级 2 次整轮重试后仍 5xx:厂商分钟级故障,
-		// 结论是"本子测试不确定",不是框架失败——skip 留证,别的子测试继续。
-		t.Skipf("厂商持续瞬时故障(框架重试已尽),本项不确定: %v", err)
+	if err != nil && loop.Transient(err) || err == nil && strings.TrimSpace(out) == "" {
+		// 框架内重试 + 测试级整轮重试后仍 5xx/空补全:厂商分钟级故障窗口
+		// (实测同一输入在窗口内随机返回 500 或空 content),结论是"本子
+		// 测试不确定",不是框架失败——skip 留证,别的子测试继续。
+		t.Skipf("厂商持续瞬时故障(5xx/空补全,框架重试已尽),本项不确定: err=%v empty=%v", err, strings.TrimSpace(out) == "")
 	}
 	if err != nil {
 		t.Fatalf("run(%s) error: %v", sess, err)
@@ -712,4 +714,76 @@ func TestLiveRealPDFSkill(t *testing.T) {
 	}
 	t.Logf("中间产物已保留:\n  技能安装: %s(固定目录)\n  供给链账本: %s\n  输入 PDF: %s\n  提取产物: %s\n  调用轨迹: %s",
 		skillsRoot, filepath.Join(skillsRoot, "skills.lock"), inputPDF, extractedTxt, trajPath)
+}
+
+// TestLiveSuperpowers:复杂技能集(obra/superpowers)的真实冒烟。同仓库
+// 三个技能三种形态一次装配:多文件+多脚本(brainstorming:bash+node)、
+// 重参考文档(systematic-debugging:pack_read 的真实用武之地)、纯指令
+// (tdd:Readonly)。硬断言:三包物化进固定目录、lock 三条、风险按内容
+// 正确分级、真实 MiniMax 调用 systematic-debugging 的轨迹链完整。
+//
+//	MINIMAX_API_KEY=... SMOKE_LIVE=1 go test ./config/ -run TestLiveSuperpowers -v
+func TestLiveSuperpowers(t *testing.T) {
+	if os.Getenv("SMOKE_LIVE") == "" || os.Getenv("MINIMAX_API_KEY") == "" {
+		t.Skip("set SMOKE_LIVE=1 and MINIMAX_API_KEY to run")
+	}
+	liveEnv(t, t.TempDir())
+	scenario, _ := filepath.Abs("../examples/skillpack")
+	projectRoot, _ := filepath.Abs("..")
+	t.Setenv("SKILLPACK_WORK_DIR", projectRoot)
+	skillsRoot := filepath.Join(projectRoot, "agent-kit", ".skills")
+	trajPath := filepath.Join(scenario, "work", "superpowers-trajectory.jsonl")
+	_ = os.MkdirAll(filepath.Dir(trajPath), 0o755)
+	_ = os.Remove(trajPath)
+	t.Setenv("SUPERPOWERS_TRAJ", trajPath)
+
+	cfg, err := Load(filepath.Join(scenario, "superpowers-smoke.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := Build(context.Background(), cfg, BuildOptions{Interactor: &liveInteractor{}})
+	if err != nil {
+		t.Fatalf("superpowers 装配失败: %v", err)
+	}
+
+	// 三包物化 + 风险按内容分级(脚本包 Dangerous,纯指令 Readonly)
+	const sha = "d884ae04edebef577e82ff7c4e143debd0bbec99"
+	wantRisk := map[string]capability.Risk{
+		"cap://skill/dev/brainstorming":        capability.RiskDangerous, // .sh/.js
+		"cap://skill/dev/systematic-debugging": capability.RiskDangerous, // .sh
+		"cap://skill/dev/tdd":                  capability.RiskReadonly,  // 纯 md
+	}
+	for ref, want := range wantRisk {
+		caps, err := app.Catalog.Select([]string{ref}, nil)
+		if err != nil || len(caps) != 1 {
+			t.Fatalf("%s 未入目录: %v %v", ref, caps, err)
+		}
+		if got := caps[0].Meta().Risk; got != want {
+			t.Fatalf("%s risk = %v, want %v(按包内容分级失效)", ref, got, want)
+		}
+	}
+	for _, name := range []string{"brainstorming", "systematic-debugging", "tdd"} {
+		if _, err := os.Stat(filepath.Join(skillsRoot, "dev", name+"@"+sha, "SKILL.md")); err != nil {
+			t.Fatalf("%s 未物化到固定目录: %v", name, err)
+		}
+	}
+
+	// 真实调用:排查场景走 systematic-debugging,提示技能先读自带参考文档
+	out := run(t, app.Agents["coach"], "live-sp",
+		"我的 Go 测试 TestPayment 偶发失败,重跑就过。调用 systematic-debugging 技能给我排查方案(转告技能:先读你自带的 root-cause-tracing.md 参考文档再作答)。")
+
+	traj, err := os.ReadFile(trajPath)
+	if err != nil {
+		t.Fatalf("轨迹未落盘: %v", err)
+	}
+	if !strings.Contains(string(traj), `"name":"systematic-debugging"`) {
+		t.Fatalf("轨迹缺 systematic-debugging 调用记录(技能未被走到)")
+	}
+	if strings.Contains(string(traj), `"name":"pack_read"`) {
+		t.Log("✓ 子循环使用 pack_read 读取了技能自带参考文档(L3 渐进披露)")
+	} else {
+		t.Log("⚠ 模型未调 pack_read(措辞自由度,人工复核轨迹)")
+	}
+	softContains(t, out, "根因", "按技能方法论作答")
+	t.Logf("产物:技能 %s;轨迹 %s", skillsRoot, trajPath)
 }
