@@ -1,6 +1,7 @@
-// Package exec 定义脚本执行引擎的协议(可扩展接缝):一段脚本怎么被
-// 隔离执行,由 agent-kit 的使用方实现并注册(docker/远程/WASM/…),框架
-// 不含任何沙箱实现。脚本执行工具(impl/source/exec 等)从这里取引擎。
+// Package exec 定义脚本执行沙箱的协议(可扩展接缝):脚本在哪个隔离环境
+// 执行,由使用方实现并注册(docker/远程/WASM/…),核心不含沙箱实现(官方
+// docker 实现见 impl/exec/docker)。命名用 sandbox 而非 engine,与编排引擎
+// (runtime/engine)区分。
 package exec
 
 import (
@@ -9,35 +10,35 @@ import (
 	"sync"
 )
 
-// Engine 是一种脚本类型的执行后端。给定脚本正文与参数,回传输出;
+// Sandbox 是一种脚本类型的隔离执行后端。给定脚本正文与参数,回传输出;
 // 隔离/资源限制由实现负责,框架不做假设。
-type Engine interface {
+type Sandbox interface {
 	Exec(ctx context.Context, script string, args []string) (string, error)
 }
 
-// EngineFactory 按 engine_config 构造引擎实例。
-type EngineFactory func(conf map[string]any) (Engine, error)
+// SandboxFactory 按 sandbox_config 构造沙箱实例。
+type SandboxFactory func(conf map[string]any) (Sandbox, error)
 
 var (
-	mu      sync.RWMutex
-	engines = map[string]EngineFactory{}
+	mu        sync.RWMutex
+	sandboxes = map[string]SandboxFactory{}
 )
 
-// RegisterEngine 注册自定义执行引擎(docker/远程/WASM/…),config 里以
-// tool.engine 引用。空导入注册即可。
-func RegisterEngine(name string, f EngineFactory) {
+// RegisterSandbox 注册自定义执行沙箱(docker/远程/WASM/…),config 里以
+// tool.sandbox 或 app 级 exec.default_sandbox 引用。空导入注册即可。
+func RegisterSandbox(name string, f SandboxFactory) {
 	mu.Lock()
 	defer mu.Unlock()
-	if _, ok := engines[name]; ok {
-		panic(fmt.Sprintf("exec: engine %q already registered", name))
+	if _, ok := sandboxes[name]; ok {
+		panic(fmt.Sprintf("exec: sandbox %q already registered", name))
 	}
-	engines[name] = f
+	sandboxes[name] = f
 }
 
-// Lookup 返回已注册的引擎工厂。
-func Lookup(name string) (EngineFactory, bool) {
+// Lookup 返回已注册的沙箱工厂。
+func Lookup(name string) (SandboxFactory, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
-	f, ok := engines[name]
+	f, ok := sandboxes[name]
 	return f, ok
 }

@@ -16,7 +16,7 @@ import (
 )
 
 func init() {
-	exec.RegisterEngine("docker", func(conf map[string]any) (exec.Engine, error) {
+	exec.RegisterSandbox("docker", func(conf map[string]any) (exec.Sandbox, error) {
 		img, _ := conf["image"].(string)
 		if img == "" {
 			return nil, fmt.Errorf("docker engine: image is required")

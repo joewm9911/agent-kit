@@ -81,9 +81,9 @@ func TestExecTemplateRuntimes(t *testing.T) {
 }
 
 // fakeEngine 是测试用的自定义引擎:不起进程,回显收到的脚本与参数。
-type fakeEngine struct{ tag string }
+type fakeSandbox struct{ tag string }
 
-func (e fakeEngine) Exec(_ context.Context, script string, args []string) (string, error) {
+func (e fakeSandbox) Exec(_ context.Context, script string, args []string) (string, error) {
 	return e.tag + ":" + script + "|" + strings.Join(args, ","), nil
 }
 
@@ -92,15 +92,15 @@ var registerFake sync.Once
 // TestExecCustomEngine 验证 engine 路径:注册的引擎替代进程执行,拿到脚本与参数。
 func TestExecCustomEngine(t *testing.T) {
 	registerFake.Do(func() {
-		exec.RegisterEngine("fake", func(conf map[string]any) (exec.Engine, error) {
+		exec.RegisterSandbox("fake", func(conf map[string]any) (exec.Sandbox, error) {
 			tag, _ := conf["tag"].(string)
-			return fakeEngine{tag: tag}, nil
+			return fakeSandbox{tag: tag}, nil
 		})
 	})
 
 	src, err := New("exec", SourceConfig{
 		Tools: []ToolConfig{
-			{Name: "py", Runtime: "python", Engine: "fake", EngineConf: map[string]any{"tag": "T"}},
+			{Name: "py", Runtime: "python", Sandbox: "fake", SandboxConf: map[string]any{"tag": "T"}},
 		},
 	})
 	if err != nil {
@@ -120,8 +120,8 @@ func TestExecValidation(t *testing.T) {
 		want string
 	}{
 		{"unknown-runtime-no-fallback", ToolConfig{Name: "x", Runtime: "ruby"}, "未知 runtime"},
-		{"engine-and-command", ToolConfig{Name: "x", Runtime: "bash", Engine: "fake", Command: []string{"bash", "-c"}}, "互斥"},
-		{"unknown-engine", ToolConfig{Name: "x", Runtime: "python", Engine: "ghost"}, "unknown engine"},
+		{"engine-and-command", ToolConfig{Name: "x", Runtime: "bash", Sandbox: "fake", Command: []string{"bash", "-c"}}, "互斥"},
+		{"unknown-sandbox", ToolConfig{Name: "x", Runtime: "python", Sandbox: "ghost"}, "unknown sandbox"},
 		{"missing-name", ToolConfig{Runtime: "sh"}, "required"},
 	}
 	for _, c := range cases {

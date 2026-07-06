@@ -4,12 +4,12 @@
 //
 // 执行引擎三级解析(见 runner):
 //
-//	tool.engine 指定   → 用注册的 Engine(自定义沙箱/远程/WASM)
+//	tool.sandbox 指定  → 用注册的 Sandbox(docker/远程/WASM)
 //	否则 tool.command  → exec 该命令(命令里可包一层沙箱,如 docker/firejail)
 //	否则               → 内置模板(python3 -c / node -e / bash -c / sh -c),宿主直跑
 //
 // 能力默认 Risk=Dangerous(跑代码),不入目录除非 catalog.max_risk: dangerous。
-// **框架不含任何沙箱实现**——隔离交给部署(容器/VM 里跑,或 command/engine
+// **框架不含任何沙箱实现**——隔离交给部署(容器/VM 里跑,或 command/sandbox
 // 包一层)。非零退出/超时作结果回传,不返 error,让大脑看到报错自行调整。
 //
 //	tools:
@@ -18,7 +18,7 @@
 //	    config:
 //	      timeout: 30s
 //	      tools:
-//	        - {name: python, runtime: python, engine: docker, engine_config: {...}}
+//	        - {name: python, runtime: python, sandbox: docker, sandbox_config: {...}}
 //	        - {name: node,   runtime: node}
 //	        - {name: bash,   runtime: bash, command: ["firejail","--quiet","bash","-c"]}
 //	        - {name: sh,     runtime: sh}
@@ -51,7 +51,7 @@ func init() {
 	})
 }
 
-// 脚本执行引擎协议(Engine/EngineFactory/RegisterEngine)已上浮基座 exec 包
+// 脚本执行沙箱协议(Sandbox/SandboxFactory/RegisterSandbox)已上浮基座 exec 包
 // (可扩展接缝);这里的 source 只负责把脚本包成能力并选引擎。
 
 // ---- 内置运行时模板(宿主直跑)----
@@ -82,9 +82,9 @@ type ToolConfig struct {
 	Name        string         `json:"name"`
 	Runtime     string         `json:"runtime"`     // bash | sh | python | node(决定 $0 占位与默认模板)
 	Description string         `json:"description"` // 给模型看的说明,空=按 runtime 生成
-	Command     []string       `json:"command"`     // 覆盖内置模板(命令里包沙箱);与 engine 互斥
-	Engine      string         `json:"engine"`      // 注册的引擎名;优先于 command/模板
-	EngineConf  map[string]any `json:"engine_config"`
+	Command     []string       `json:"command"`     // 覆盖内置模板(命令里包沙箱);与 sandbox 互斥
+	Sandbox     string         `json:"sandbox"`     // 注册的沙箱名;优先于 command/模板
+	SandboxConf map[string]any `json:"sandbox_config"`
 	Timeout     string         `json:"timeout"` // 覆盖源级 timeout
 	Risk        string         `json:"risk"`    // 默认 dangerous
 }
@@ -110,8 +110,8 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 	if tc.Name == "" || tc.Runtime == "" {
 		return nil, fmt.Errorf("tool: name and runtime are required")
 	}
-	if tc.Engine != "" && len(tc.Command) > 0 {
-		return nil, fmt.Errorf("tool %s: engine 与 command 互斥", tc.Name)
+	if tc.Sandbox != "" && len(tc.Command) > 0 {
+		return nil, fmt.Errorf("tool %s: sandbox 与 command 互斥", tc.Name)
 	}
 
 	// 风险默认 dangerous(跑代码)。
@@ -131,17 +131,17 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 		}
 	}
 
-	// 解析执行器(三级):engine > command > 内置模板。装配期定死。
-	var eng exec.Engine
+	// 解析执行器(三级):sandbox > command > 内置模板。装配期定死。
+	var sb exec.Sandbox
 	var cmdTmpl []string
 	switch {
-	case tc.Engine != "":
-		f, ok := exec.Lookup(tc.Engine)
+	case tc.Sandbox != "":
+		f, ok := exec.Lookup(tc.Sandbox)
 		if !ok {
-			return nil, fmt.Errorf("tool %s: unknown engine %q(需先 RegisterEngine)", tc.Name, tc.Engine)
+			return nil, fmt.Errorf("tool %s: unknown sandbox %q(需先 RegisterSandbox)", tc.Name, tc.Sandbox)
 		}
-		if eng, err = f(tc.EngineConf); err != nil {
-			return nil, fmt.Errorf("tool %s: engine %q: %w", tc.Name, tc.Engine, err)
+		if sb, err = f(tc.SandboxConf); err != nil {
+			return nil, fmt.Errorf("tool %s: sandbox %q: %w", tc.Name, tc.Sandbox, err)
 		}
 	case len(tc.Command) > 0:
 		cmdTmpl = tc.Command
@@ -166,7 +166,7 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 		}),
 		Risk: risk,
 	}
-	r := &runner{runtime: tc.Runtime, engine: eng, command: cmdTmpl, timeout: timeout, workdir: workdir}
+	r := &runner{runtime: tc.Runtime, sandbox: sb, command: cmdTmpl, timeout: timeout, workdir: workdir}
 	return capability.New(meta, r.run), nil
 }
 
@@ -174,8 +174,8 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 
 type runner struct {
 	runtime string
-	engine  exec.Engine // 非 nil = 走引擎
-	command []string    // 非空 = 走命令模板(engine 为 nil 时)
+	sandbox exec.Sandbox // 非 nil = 走沙箱
+	command []string     // 非空 = 走命令模板(sandbox 为 nil 时)
 	timeout time.Duration
 	workdir string // 非空 = 命令/模板在该目录下执行(脚本可读同目录文件)
 }
@@ -203,9 +203,9 @@ func (r *runner) run(ctx context.Context, argsJSON string) (string, error) {
 		defer cancel()
 	}
 
-	// 引擎路径:隔离/资源限制由引擎负责。
-	if r.engine != nil {
-		return r.engine.Exec(ctx, in.Script, args)
+	// 沙箱路径:隔离/资源限制由沙箱负责。
+	if r.sandbox != nil {
+		return r.sandbox.Exec(ctx, in.Script, args)
 	}
 
 	// 命令/模板路径:拼 argv 后宿主执行(命令里可能已包一层沙箱)。
