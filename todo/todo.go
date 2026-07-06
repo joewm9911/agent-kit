@@ -200,7 +200,7 @@ func (t *Todo) Capabilities() []capability.Capability {
 	readMeta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_read"},
 		Description: "读取当前任务计划清单。",
-		Params:      schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
+		Params:      capability.NoParams, // 无参工具:空 schema 会被部分厂商 400
 	}
 	read := capability.New(readMeta, func(ctx context.Context, _ string) (string, error) {
 		list := t.loadState(ctx, sessionKey(ctx)).List

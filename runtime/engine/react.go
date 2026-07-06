@@ -31,8 +31,15 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 
 	cfg := &react.AgentConfig{
 		ToolCallingModel: asm.Model,
-		ToolsConfig:      compose.ToolsNodeConfig{Tools: tools},
-		MaxStep:          maxStep,
+		ToolsConfig: compose.ToolsNodeConfig{
+			Tools: tools,
+			// 工具名幻觉防御:默认行为是 ToolsNode 报错→整轮失败;转成结果
+			// 字符串让模型自纠(与"错误作结果回传"的既有哲学一致)。
+			UnknownToolsHandler: func(_ context.Context, name, _ string) (string, error) {
+				return "工具 " + name + " 不存在。可用工具见工具列表,请改用真实存在的工具或直接作答。", nil
+			},
+		},
+		MaxStep: maxStep,
 	}
 	if asm.Modifier != nil {
 		cfg.MessageModifier = react.MessageModifier(asm.Modifier)

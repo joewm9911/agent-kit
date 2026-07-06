@@ -82,6 +82,11 @@ type Capability interface {
 // InvokeFunc 是能力的统一执行契约:入参为 JSON 字符串,出参为字符串。
 type InvokeFunc func(ctx context.Context, argsJSON string) (string, error)
 
+// NoParams 显式声明"该工具确实无入参":工具形态的 ToolInfo.ParamsOneOf
+// 置为 nil——eino FAQ 明确无参工具必须传 nil,空 schema 会被部分厂商
+// 拒绝(400)。仅作身份标记,不要调用其方法。
+var NoParams = &schema.ParamsOneOf{}
+
 // New 从一个执行函数构造能力,是自定义能力最直接的入口。
 func New(meta Meta, fn InvokeFunc) Capability {
 	if meta.Params == nil {
@@ -118,10 +123,14 @@ type funcTool struct {
 }
 
 func (t *funcTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+	params := t.meta.Params
+	if params == NoParams {
+		params = nil // 无参工具:ParamsOneOf 必须为 nil(见 NoParams)
+	}
 	return &schema.ToolInfo{
 		Name:        t.name,
 		Desc:        t.meta.Description,
-		ParamsOneOf: t.meta.Params,
+		ParamsOneOf: params,
 	}, nil
 }
 
