@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
+	"fmt"
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 )
@@ -147,5 +148,34 @@ func TestStreamToolCallChecker(t *testing.T) {
 	))
 	if err != nil || got {
 		t.Fatalf("pure text must be final answer: %v %v", got, err)
+	}
+}
+
+// TestReActToolErrorAsResult:工具返回 error(如参数解析失败)不再炸轮——
+// middleware 转成结果字符串,模型读错误自纠后正常收尾。
+func TestReActToolErrorAsResult(t *testing.T) {
+	fails := 0
+	brittle := capability.New(capability.Meta{
+		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "brittle"},
+	}, func(_ context.Context, _ string) (string, error) {
+		fails++
+		return "", fmt.Errorf("parse args: unexpected end of JSON input")
+	})
+	m := testmodel.New(
+		testmodel.ToolCallMsg("brittle", `{"broken`),
+		schema.AssistantMessage("参数有误,已停止重试。", nil),
+	)
+	runner, err := Build(context.Background(), "react", &Assembly{
+		Model: m, Capabilities: []capability.Capability{brittle}, MaxSteps: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runner.Generate(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if err != nil {
+		t.Fatalf("tool error must not kill the turn: %v", err)
+	}
+	if out.Content != "参数有误,已停止重试。" || fails != 1 {
+		t.Fatalf("got %q fails=%d", out.Content, fails)
 	}
 }

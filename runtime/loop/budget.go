@@ -25,6 +25,9 @@ type ErrBudgetExhausted struct {
 	Reason string
 }
 
+// TurnTerminal 标记轮次终止级错误(穿透工具错误兜底,见 engine)。
+func (e *ErrBudgetExhausted) TurnTerminal() {}
+
 func (e *ErrBudgetExhausted) Error() string {
 	return "budget exhausted: " + e.Reason
 }

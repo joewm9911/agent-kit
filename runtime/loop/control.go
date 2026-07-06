@@ -18,6 +18,9 @@ type ErrInterrupted struct{}
 
 func (*ErrInterrupted) Error() string { return "run interrupted by user" }
 
+// TurnTerminal 标记轮次终止级错误(穿透工具错误兜底,见 engine)。
+func (*ErrInterrupted) TurnTerminal() {}
+
 // ControlState 是会话级的运行控制:让运行中的循环可被叫停(interrupt)
 // 与驾驶(steer)。没有它,"停,别做了"只能排在同会话串行队列后面——
 // 等任务做完才被读到,为时已晚。

@@ -59,6 +59,7 @@ import (
 	_ "github.com/joewm9911/agent-kit/impl/store/redis" // todo 等 KV 分布式后端
 	_ "github.com/joewm9911/agent-kit/std"
 
+	"github.com/cloudwego/eino-ext/callbacks/langfuse"
 	"github.com/cloudwego/eino/callbacks"
 
 	"github.com/joewm9911/agent-kit/config"
@@ -153,6 +154,21 @@ func main() {
 
 	// 进度切面:每一步模型/工具调用可见(含技能子循环内部)
 	callbacks.AppendGlobalHandlers(observe.Progress(os.Stdout))
+
+	// 可选:Langfuse tracing(eino-ext 现成 handler,与进度切面并挂)。
+	// 守卫弹回/digest 摘要等内层调用已自报 span,接上即得完整调用树。
+	//   export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-...
+	//   export LANGFUSE_HOST=https://cloud.langfuse.com   # 可省略
+	if pk, sk := os.Getenv("LANGFUSE_PUBLIC_KEY"), os.Getenv("LANGFUSE_SECRET_KEY"); pk != "" && sk != "" {
+		host := os.Getenv("LANGFUSE_HOST")
+		if host == "" {
+			host = "https://cloud.langfuse.com"
+		}
+		handler, flush := langfuse.NewLangfuseHandler(&langfuse.Config{Host: host, PublicKey: pk, SecretKey: sk})
+		defer flush()
+		callbacks.AppendGlobalHandlers(handler)
+		fmt.Printf("观测:Langfuse 已接入(%s)\n", host)
+	}
 
 	// 会话按进程隔离:每次启动都是新会话(session ID 才是会话身份,file
 	// 后端跨进程持久,写死 ID 会导致"重启=续聊")。想跨重启续聊,显式

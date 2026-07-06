@@ -43,6 +43,10 @@ type ErrSuspended struct {
 	Question      string // 已送达用户的问题
 }
 
+// TurnTerminal 标记本错误为"轮次终止级":必须穿透工具错误转结果的
+// 兜底 middleware(engine 侧按此接口放行),否则挂起信号会被吞掉。
+func (e *ErrSuspended) TurnTerminal() {}
+
 func (e *ErrSuspended) Error() string {
 	return "run suspended, waiting for user reply (interaction " + e.InteractionID + ")"
 }

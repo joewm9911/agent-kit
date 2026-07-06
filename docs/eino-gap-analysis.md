@@ -96,7 +96,7 @@ Langfuse 接线示例。
 
 | eino ADK 件 | 值得借的设计 | 对应自研件 | 优先级 |
 |---|---|---|---|
-| Summarization | **Finalizer.PreserveSkills**:压缩后保留已加载技能内容(默认 5 个/5000 token/总 25000)——直接命中我们"压缩摧毁技能上下文"的历史病灶 | loop.Compactor | 高 |
+| Summarization | **Finalizer.PreserveSkills**:压缩后保留已加载技能内容。复核后**当前架构不适用**:我们的技能正文进子循环 persona,主循环压缩不可及——这是 inline 模式(技能内容作为工具结果进主上下文)才有的病,待 P2 inline 落地时一并做 | loop.Compactor | 随 inline |
 | ModelRetryConfig | **ShouldRetry 语义否决**:不只重试网络错,还能"拒绝不合格输出并改写下次输入、覆盖退避"——比我们 Transient 启发式强一档;我们的守卫弹回(FinishGuard 系)其实是它的特化 | RetryModel + 守卫 | 中 |
 | ToolReduction | 大结果 offload 成文件 + **旧轮工具消息清理**(ClearRetentionSuffixLimit 保留最近 N 轮,ClearAtLeastTokens 保护 KV-cache) | digest(over/truncate/read_result) | 中 |
 | PlanTask | 任务**依赖图**(blocks/blockedBy + DFS 环检测) | todo | 低(交互场景暂不需要) |
@@ -122,10 +122,11 @@ Langfuse 接线示例。
 
 | # | 项 | 规模 | 建议 |
 |---|---|---|---|
-| P0 | M1 ToolCallMiddlewares 错误转结果(放行 InterruptRerun)+ S2 剩余两件 | 小 | 立即 |
+| ✅ | M1 ToolCallMiddlewares 错误转结果(放行 InterruptRerun);S2 的 ToolArgumentsHandler/ToolAliases 暂无场景,登记不接 | 小 | 已完成 |
 | ✅ | M2 serving/通道侧流 Close 核对 | 审查 | 已通过(serving/dispatcher 均 defer Close) |
-| P1 | Compactor 增加 PreserveSkills 等价机制 | 中 | 下一批 |
-| P1 | S5 Langfuse/CozeLoop 接线示例 | 小 | 下一批 |
+| ✅ | M1 已落地:react 装配统一挂 ToolCallMiddlewares(错误转结果,放行 InterruptRerun),覆盖主循环与全部技能/组件子循环;行为测试钉住"坏 JSON 不炸轮" | 小 | 已完成 |
+| ✅ | S5 已落地:interactive 可选接入 Langfuse(LANGFUSE_PUBLIC_KEY/SECRET_KEY 即启用,与进度切面并挂) | 小 | 已完成 |
+| — | PreserveSkills:复核不适用(见上表),随 inline 模式再做 | — | 搁置 |
 | P1 | RetryModel 引入 ShouldRetry 语义否决(与守卫弹回统一) | 中 | 设计后做 |
 | P2 | S1 审批挂起迁 StatefulInterrupt + CheckPointStore(迁移设计先行) | 大 | 评审 |
 | P2 | S3 CallOption 透传、S4 FieldMapping、ToolSearch、PatchToolCalls | 各小-中 | 按需 |
