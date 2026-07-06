@@ -33,7 +33,7 @@ type nsDeps struct {
 	global       *source.Catalog // skills 的落点,亦是跨 ns cap://skill 引用的解析域
 	packRoot     string          // 外部 skillpack 的物化目录(.skills)
 	packOpts     skill.PackOptions
-	execCfg      ExecConfig // app 级默认沙箱策略(透传给 pack 的 exec 工具)
+	execCfg      ExecConfig // app 级默认沙箱策略(透传给 ns 内 exec 源与 pack 的 exec 工具)
 	prompts      *prompt.Resolver
 	defaultModel model.ToolCallingChatModel
 	maxRisk      capability.Risk
@@ -108,7 +108,13 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			}
 			continue
 		}
-		src, err := source.New(ctx, tc.Type, tc.Name, tc.Config)
+		sconf := tc.Config
+		if tc.Type == "exec" {
+			// app 级 exec 策略(default_sandbox/require_sandbox)同样覆盖
+			// namespace 内声明的 exec 源,与顶层 sources、skillpack 一致。
+			sconf = deps.execCfg.injectInto(sconf)
+		}
+		src, err := source.New(ctx, tc.Type, tc.Name, sconf)
 		if err != nil {
 			return fmt.Errorf("namespace %s: tool source %s: %w", ns.Name, tc.Name, err)
 		}

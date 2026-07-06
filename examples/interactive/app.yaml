@@ -8,6 +8,9 @@
 #   OPS_API_BASE      业务后端(默认 runner 内置 mock)
 #   OPS_DATA_DIR      工作目录(默认 ./data/interactive;技能装其下 agent-kit/.skills)
 #   PDF_SKILL_REF     pdf 技能来源(默认真实 anthropics/skills,pin sha)
+#   OPS_SANDBOX       脚本执行沙箱(runner 检测:有 docker → "docker",否则 "" 宿主直跑)
+#   OPS_SANDBOX_IMAGE 沙箱镜像(默认 python:3.12-slim;pdf 技能进沙箱需带 pypdf 的镜像,
+#                     见 examples/exec-runtime/Dockerfile)
 
 secrets:
   provider: env
@@ -24,6 +27,41 @@ catalog:
   max_risk: dangerous
 skillpacks:
   sync: auto
+
+# 脚本执行沙箱(app 级策略):default_sandbox 覆盖**所有** exec 能力——
+# 计算域的 python 工具、pdf 技能包自动生成的脚本工具,不逐个显式配就统一
+# 进这里指定的沙箱。docker 沙箱由 runner 空导入 impl/exec/docker 注册,
+# 每次执行 = 一次性加固容器(--rm、无网络、只读根、cap-drop=ALL、限内存)。
+# 生产写死并加 require_sandbox: true(无沙箱可用的 exec 工具装配即 fail
+# fast,脚本裸跑架构上不可能):
+#   exec:
+#     default_sandbox: docker
+#     sandbox_config: {image: "agent-kit-runtime:latest", network: none, memory: 512m}
+#     require_sandbox: true
+exec:
+  default_sandbox: "${OPS_SANDBOX}"
+  sandbox_config:
+    image: "${OPS_SANDBOX_IMAGE}"
+    network: none
+    memory: 256m
+
+# 计算域(全局兼容源):python 脚本执行工具,agent 用 capabilities.include
+# 选品直挂工具面(见 agents/ops-manager.yaml)。沙箱不在这里配——上面的
+# exec: 块装配期注入;工具级可显式覆盖(优先于 app 默认),形如:
+#   - {name: python, runtime: python, sandbox: docker,
+#      sandbox_config: {image: "python:3.12-slim", network: none}}
+# 或用 command 自己包一层隔离(与 sandbox 互斥):
+#   - {name: python, runtime: python, command: ["firejail","--quiet","python3","-c"]}
+sources:
+  - name: calc
+    type: exec
+    required: true
+    config:
+      timeout: 60s
+      tools:
+        - name: python
+          runtime: python
+          description: 执行一段 python3 脚本做计算/数据处理,返回 stdout。script=脚本内容(用 print 输出结果),args=空格分隔参数(可空)。
 
 model:
   provider: minimax

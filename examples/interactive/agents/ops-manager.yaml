@@ -2,7 +2,7 @@
 
 description: 电商运营主管助手,负责定价审查、活动策划、客户跟进
 prompt:
-  system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief,PDF 文件的读取/生成用 pdf 技能(把文件绝对路径原样传给它)。多步骤任务先列计划。"
+  system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief,PDF 文件的读取/生成用 pdf 技能(把文件绝对路径原样传给它),临时计算/数据处理写 python 脚本交给 python 工具(用 print 输出结果)。多步骤任务先列计划。"
 # 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
 loop:
   max_steps: 20
@@ -15,6 +15,11 @@ namespaces:
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
   - ../namespaces/docs.yaml
+
+# 全局源选品:app.yaml sources 里的 calc(python 脚本执行)直挂本 agent
+# 工具面。跑在哪由 app 级 exec: 块决定(default_sandbox),此处只做选品。
+capabilities:
+  include: ["cap://tool/calc/*"]
 
 # 具名存储实例:四类内部状态各一个实例,模块块的 store 槽用
 # cap://store/<kind>/<name> 引用。分布式部署把 type 换成 redis

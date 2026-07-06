@@ -9,8 +9,21 @@
 //	> 用 quick-product-qa 查降噪耳机价格
 //	> 给 P100 做完整定价审查
 //	> 我们在卖哪些产品?汇总整理生成一份 PDF 汇报(pdf 技能;需 python3 + pypdf)
+//	> 用 python 算一下 P100 提价 8% 后毛利率是多少,顺便打印 platform 看跑在哪
 //
-// pdf 技能是 Dangerous 风险:每次调用会在终端请求批准(y 放行,a 本会话免问)。
+// 脚本执行与沙箱:app.yaml 的 exec: 块是 app 级默认沙箱策略,覆盖计算域的
+// python 工具与 pdf 技能包的脚本。本 runner 启动时检测 docker:
+//
+//	有 docker  → OPS_SANDBOX=docker,脚本进一次性加固容器(python 打印
+//	             platform 会看到 Linux——证明不在宿主上跑);
+//	无 docker  → 宿主直跑并打印告警(装 docker 或 export OPS_SANDBOX=docker 强制)。
+//
+// 默认镜像 python:3.12-slim(公共镜像,纯计算够用);要让 pdf 技能的脚本
+// 也进沙箱,build examples/exec-runtime/Dockerfile(预装 pypdf/nodejs)后
+// export OPS_SANDBOX_IMAGE=agent-kit-runtime:latest。
+//
+// pdf 技能与 python 工具都是 Dangerous 风险:每次调用会在终端请求批准
+// (y 放行,a 本会话免问)。
 package main
 
 import (
@@ -21,11 +34,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 
+	_ "github.com/joewm9911/agent-kit/impl/exec/docker" // 注册 docker 沙箱(exec.default_sandbox: docker)
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
-	_ "github.com/joewm9911/agent-kit/impl/source/exectool" // pdf 技能的脚本执行
+	_ "github.com/joewm9911/agent-kit/impl/source/exectool" // pdf 技能与计算域的脚本执行
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/vector"
 	_ "github.com/joewm9911/agent-kit/std"
@@ -77,6 +92,23 @@ func main() {
 	setDefault("OPS_DATA_DIR", "./data/interactive") // 技能装 <此目录>/agent-kit/.skills
 	setDefault("PDF_SKILL_REF", "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d")
 
+	// 沙箱注入:有 docker 就默认全部脚本进容器;没有则宿主直跑并告警
+	// (装配不静默——启动横幅明示脚本跑在哪)。生产应写死 default_sandbox
+	// 并开 require_sandbox,见 app.yaml 注释。
+	sandboxNote := ""
+	if _, err := osexec.LookPath("docker"); err == nil {
+		setDefault("OPS_SANDBOX", "docker")
+	} else {
+		setDefault("OPS_SANDBOX", "")
+	}
+	setDefault("OPS_SANDBOX_IMAGE", "python:3.12-slim")
+	if os.Getenv("OPS_SANDBOX") == "" {
+		sandboxNote = "宿主直跑(未检测到 docker;安装 docker 或 export OPS_SANDBOX=docker 后脚本进加固容器)"
+	} else {
+		sandboxNote = fmt.Sprintf("%s(镜像 %s;脚本在一次性加固容器里跑,宿主不可见)",
+			os.Getenv("OPS_SANDBOX"), os.Getenv("OPS_SANDBOX_IMAGE"))
+	}
+
 	// 配置树相对仓库根;也支持从本目录运行
 	appPath := "examples/interactive/app.yaml"
 	if _, err := os.Stat(appPath); err != nil {
@@ -100,10 +132,17 @@ func main() {
 
 	skillsDir, _ := filepath.Abs(filepath.Join(os.Getenv("OPS_DATA_DIR"), "agent-kit", ".skills"))
 	fmt.Printf("ops-manager ready(模型: MiniMax;业务后端: 内置 mock;技能安装: %s)\n", skillsDir)
-	fmt.Println("提示:pdf 技能跑脚本需要 python3 + pypdf(pip install pypdf);输入 exit 退出。")
+	fmt.Printf("脚本沙箱:%s\n", sandboxNote)
+	fmt.Println("提示:宿主直跑时 pdf 技能需要 python3 + pypdf(pip install pypdf);输入 exit 退出。")
 	fmt.Println("挂载能力:")
 	if mounted := app.AgentMounts["ops-manager"]; mounted != nil {
 		for _, m := range mounted.List() {
+			fmt.Printf("  %-50s risk=%s\n", m.Ref, m.Risk)
+		}
+	}
+	// 全局源直挂的工具(capabilities.include 选品,不在 AgentMounts 里)
+	for _, m := range app.Catalog.List() {
+		if m.Ref.Kind == "tool" && m.Ref.Domain == "calc" {
 			fmt.Printf("  %-50s risk=%s\n", m.Ref, m.Risk)
 		}
 	}
