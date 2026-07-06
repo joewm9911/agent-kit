@@ -317,7 +317,8 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	if err != nil {
 		return nil, fmt.Errorf("resolve prompt.system: %w", err)
 	}
-	layers := loop.PromptLayers{Loop: loopTpl.Text, Persona: personaTpl.Text}
+	// Focus 只在主循环开:skill/component 子循环的目标是 args,不是外层用户原话。
+	layers := loop.PromptLayers{Loop: loopTpl.Text, Persona: personaTpl.Text, Focus: true}
 	if todoOn {
 		layers.Plan = td.PlanSection // 计划每轮注入消息尾部(harness 强制可见)
 	} else if layers.Loop == "" {

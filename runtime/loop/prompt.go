@@ -53,7 +53,18 @@ type PromptLayers struct {
 	// Plan 是当前任务计划注入器:每轮把计划渲染进消息尾部,计划的
 	// 可见性由 harness 保证而非模型记忆(压缩、遗忘都不影响)。
 	Plan func(ctx context.Context) string
+	// Focus 开启后把本轮用户问题(runctx.Input)重述注入消息最尾——
+	// 记忆/计划的尾部注入会把用户问题压到上下文中部(注意力最弱位),
+	// 遗留计划因此能劫持当前问题;重述把"专注当前问题"变成位置事实,
+	// 循环中段(尾部被工具结果占据时)也持续锚定本轮目标。只该在主循环
+	// 开启:外层用户问题穿进 skill/component 子循环是提示词海拔违规,
+	// 子循环的目标是它收到的 args,不是外层原话。
+	Focus bool
 }
+
+// focusMaxLen 是问题重述的长度上限(rune):超长输入(粘贴文档等)截断,
+// 完整原文本来就在上方用户消息里,重述只为锚定注意力。
+const focusMaxLen = 300
 
 // Modifier 把四层拼装为消息,返回 engine.MessageModifier。
 //
@@ -110,6 +121,17 @@ func (p PromptLayers) Modifier() engine.MessageModifier {
 		if p.Plan != nil {
 			if plan := p.Plan(ctx); plan != "" {
 				out = append(out, schema.SystemMessage(plan))
+			}
+		}
+		// 本轮问题重述:占据最尾(最高近因位),排在记忆与计划之后——
+		// 注意力排序 = 当前问题 > 计划 > 记忆。
+		if p.Focus {
+			if in := runctx.Input(ctx); in != "" {
+				if r := []rune(in); len(r) > focusMaxLen {
+					in = string(r[:focusMaxLen]) + "……(截断,完整原文见上方用户消息)"
+				}
+				out = append(out, schema.SystemMessage(
+					"# 本轮用户问题(优先目标)\n「"+in+"」\n先完成对它的回答;计划中的事项在回答完成后再对照处理,不要抢在当前问题之前执行。"))
 			}
 		}
 		return out

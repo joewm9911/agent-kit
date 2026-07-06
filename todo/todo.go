@@ -227,7 +227,7 @@ func (t *Todo) PlanSection(ctx context.Context) string {
 	if bag := runctx.TurnState(ctx); bag != nil {
 		if _, written := bag.Load(turnWritten + key); !written {
 			return "# 遗留任务计划(来自之前的对话轮次,非本轮所列)\n" +
-				"先判断与当前问题的关系:无关项用 todo_write 提交删除后的清单(全部无关就提交空 todos 清空);仍相关则继续推进并更新状态。\n" +
+				"先回答用户当前的问题,之后再处理本计划:无关项用 todo_write 提交删除后的清单(全部无关就提交空 todos 清空);仍相关则在回答完成后继续推进并更新状态。\n" +
 				render(list)
 		}
 	}

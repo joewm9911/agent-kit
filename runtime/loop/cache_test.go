@@ -99,3 +99,44 @@ func TestEstimateCJK(t *testing.T) {
 		t.Fatalf("cjk estimate = %d, want ~75", got)
 	}
 }
+
+// TestModifierFocusOrder 验证 Focus 层:本轮用户问题重述占据消息最尾
+// (记忆、计划之后——注意力排序 = 当前问题 > 计划 > 记忆);超长截断;
+// 未开启/无输入时不注入。
+func TestModifierFocusOrder(t *testing.T) {
+	layers := PromptLayers{
+		Memories: func(context.Context) []string { return []string{"记忆片段"} },
+		Plan:     func(context.Context) string { return "# 当前任务计划\n☐ 事项" },
+		Focus:    true,
+	}
+	mod := layers.Modifier()
+	ctx := runctx.WithInput(context.Background(), "我们在卖哪些商品?")
+	out := mod(ctx, []*schema.Message{schema.UserMessage("我们在卖哪些商品?")})
+
+	n := len(out)
+	if !strings.Contains(out[n-1].Content, "本轮用户问题") || !strings.Contains(out[n-1].Content, "我们在卖哪些商品") {
+		t.Fatalf("focus restatement must be the last message, got %q", out[n-1].Content)
+	}
+	if !strings.Contains(out[n-2].Content, "任务计划") || !strings.Contains(out[n-3].Content, "记忆片段") {
+		t.Fatalf("tail order must be memories < plan < focus, got %q / %q", out[n-3].Content, out[n-2].Content)
+	}
+
+	// 超长输入截断,提示原文在上方
+	long := strings.Repeat("问", 400)
+	out = mod(runctx.WithInput(context.Background(), long), []*schema.Message{schema.UserMessage(long)})
+	tail := out[len(out)-1].Content
+	if strings.Contains(tail, long) || !strings.Contains(tail, "截断") {
+		t.Fatalf("long input must be truncated in restatement, len=%d", len(tail))
+	}
+
+	// Focus 关闭 / 无输入:不注入
+	off := PromptLayers{Plan: layers.Plan}
+	out = off.Modifier()(ctx, []*schema.Message{schema.UserMessage("q")})
+	if strings.Contains(out[len(out)-1].Content, "本轮用户问题") {
+		t.Fatal("focus must be opt-in")
+	}
+	out = mod(context.Background(), []*schema.Message{schema.UserMessage("q")})
+	if strings.Contains(out[len(out)-1].Content, "本轮用户问题") {
+		t.Fatal("no input, no restatement")
+	}
+}
