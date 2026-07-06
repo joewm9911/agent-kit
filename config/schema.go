@@ -285,6 +285,7 @@ type Config struct {
 
 	// Skillpacks 是外部技能包策略(物化目录/获取策略/pin 政策)。
 	Skillpacks SkillpacksConfig `yaml:"skillpacks"`
+	Exec       ExecConfig       `yaml:"exec"`
 
 	Serving  ServingConfig   `yaml:"serving"`
 	Channels []ChannelConfig `yaml:"channels"`
@@ -336,6 +337,7 @@ type AppConfig struct {
 
 	// Skillpacks 是外部技能包策略(全 app 一份,namespace 里的 use: 链接同样生效)。
 	Skillpacks SkillpacksConfig `yaml:"skillpacks"`
+	Exec       ExecConfig       `yaml:"exec"`
 
 	Observability ObservabilityConfig `yaml:"observability"`
 

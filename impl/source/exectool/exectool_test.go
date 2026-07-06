@@ -150,3 +150,63 @@ func TestExecCustomCommand(t *testing.T) {
 		t.Fatalf("custom command: got %q", out)
 	}
 }
+
+// TestExecDefaultSandbox 验证四级解析的装配层默认:工具未配 sandbox/command
+// 时回落到 SourceConfig.DefaultSandbox。
+func TestExecDefaultSandbox(t *testing.T) {
+	exec.RegisterSandbox("dfake", func(map[string]any) (exec.Sandbox, error) {
+		return fakeSandbox{tag: "D"}, nil
+	})
+	src, err := New("s", SourceConfig{
+		DefaultSandbox: "dfake",
+		Tools:          []ToolConfig{{Name: "py", Runtime: "python"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps, _ := src.Sync(context.Background())
+	out, err := capability.Invoke(context.Background(), caps[0], `{"script":"print(1)"}`)
+	if err != nil || !strings.HasPrefix(out, "D:") {
+		t.Fatalf("should fall back to default sandbox: %q %v", out, err)
+	}
+}
+
+// TestExecToolSandboxOverridesDefault 验证工具级 sandbox 优先于装配层默认。
+func TestExecToolSandboxOverridesDefault(t *testing.T) {
+	exec.RegisterSandbox("ovr", func(map[string]any) (exec.Sandbox, error) {
+		return fakeSandbox{tag: "OVR"}, nil
+	})
+	exec.RegisterSandbox("dfake2", func(map[string]any) (exec.Sandbox, error) {
+		return fakeSandbox{tag: "D2"}, nil
+	})
+	src, err := New("s", SourceConfig{
+		DefaultSandbox: "dfake2",
+		Tools:          []ToolConfig{{Name: "py", Runtime: "python", Sandbox: "ovr"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps, _ := src.Sync(context.Background())
+	out, _ := capability.Invoke(context.Background(), caps[0], `{"script":"x"}`)
+	if !strings.HasPrefix(out, "OVR:") {
+		t.Fatalf("tool-level sandbox must win over default: %q", out)
+	}
+}
+
+// TestExecRequireSandboxFailFast 验证 require_sandbox 下无沙箱可用即装配失败,
+// 但显式 command 的工具仍放行(命令里可自带隔离)。
+func TestExecRequireSandboxFailFast(t *testing.T) {
+	_, err := New("s", SourceConfig{
+		RequireSandbox: true,
+		Tools:          []ToolConfig{{Name: "py", Runtime: "python"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "require_sandbox") {
+		t.Fatalf("require_sandbox with no sandbox must fail fast, got %v", err)
+	}
+	if _, err := New("s", SourceConfig{
+		RequireSandbox: true,
+		Tools:          []ToolConfig{{Name: "b", Runtime: "bash", Command: []string{"bash", "-c"}}},
+	}); err != nil {
+		t.Fatalf("explicit command should pass under require_sandbox: %v", err)
+	}
+}

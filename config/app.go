@@ -227,7 +227,11 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	}
 	global := source.NewCatalog(maxRisk, logger)
 	for _, sc := range ac.Sources {
-		src, err := source.New(ctx, sc.Type, sc.Name, sc.Config)
+		sconf := sc.Config
+		if sc.Type == "exec" {
+			sconf = ac.Exec.injectInto(sconf)
+		}
+		src, err := source.New(ctx, sc.Type, sc.Name, sconf)
 		if err != nil {
 			return nil, fmt.Errorf("source %s: %w", sc.Name, err)
 		}

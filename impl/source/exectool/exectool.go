@@ -75,6 +75,11 @@ type SourceConfig struct {
 	Timeout string       `json:"timeout"` // 命令/模板执行的墙钟兜底(如 30s),空=无
 	Workdir string       `json:"workdir"` // 命令/模板路径的工作目录(skillpack 绑定包目录用);engine 路径由引擎自管
 	Tools   []ToolConfig `json:"tools"`
+	// 装配层默认沙箱策略(app 级 exec 块注入):工具未显式配 sandbox/command
+	// 时回落到它;require_sandbox 时禁止回落到内置模板(宿主直跑)。
+	DefaultSandbox     string         `json:"default_sandbox"`
+	DefaultSandboxConf map[string]any `json:"default_sandbox_config"`
+	RequireSandbox     bool           `json:"require_sandbox"`
 }
 
 // ToolConfig 声明一个脚本执行工具。
@@ -95,9 +100,10 @@ func New(name string, cfg SourceConfig) (source.Source, error) {
 	if err != nil {
 		return nil, fmt.Errorf("exec source %s: timeout: %w", name, err)
 	}
+	def := sandboxDefault{name: cfg.DefaultSandbox, conf: cfg.DefaultSandboxConf, require: cfg.RequireSandbox}
 	caps := make([]capability.Capability, 0, len(cfg.Tools))
 	for _, tc := range cfg.Tools {
-		c, err := newTool(name, tc, srcTimeout, cfg.Workdir)
+		c, err := newTool(name, tc, srcTimeout, cfg.Workdir, def)
 		if err != nil {
 			return nil, fmt.Errorf("exec source %s: %w", name, err)
 		}
@@ -106,7 +112,15 @@ func New(name string, cfg SourceConfig) (source.Source, error) {
 	return source.Static(name, caps...), nil
 }
 
-func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir string) (capability.Capability, error) {
+// sandboxDefault 是装配层注入的默认沙箱策略(非 exec 包全局单例:每次 New
+// 从配置解析后随构造下传,消费方持有,不读全局)。
+type sandboxDefault struct {
+	name    string
+	conf    map[string]any
+	require bool
+}
+
+func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir string, def sandboxDefault) (capability.Capability, error) {
 	if tc.Name == "" || tc.Runtime == "" {
 		return nil, fmt.Errorf("tool: name and runtime are required")
 	}
@@ -131,24 +145,33 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 		}
 	}
 
-	// 解析执行器(三级):sandbox > command > 内置模板。装配期定死。
+	// 解析执行器(四级):工具级 sandbox > 工具级 command > 装配层默认 sandbox
+	// > 内置模板(宿主直跑)。require_sandbox 时禁用最后一级——无沙箱即
+	// fail fast,脚本裸跑架构上不可能。
+	sbName, sbConf := tc.Sandbox, tc.SandboxConf
+	if sbName == "" && len(tc.Command) == 0 && def.name != "" {
+		sbName, sbConf = def.name, def.conf
+	}
 	var sb exec.Sandbox
 	var cmdTmpl []string
 	switch {
-	case tc.Sandbox != "":
-		f, ok := exec.Lookup(tc.Sandbox)
+	case sbName != "":
+		f, ok := exec.Lookup(sbName)
 		if !ok {
-			return nil, fmt.Errorf("tool %s: unknown sandbox %q(需先 RegisterSandbox)", tc.Name, tc.Sandbox)
+			return nil, fmt.Errorf("tool %s: unknown sandbox %q(需先 RegisterSandbox)", tc.Name, sbName)
 		}
-		if sb, err = f(tc.SandboxConf); err != nil {
-			return nil, fmt.Errorf("tool %s: sandbox %q: %w", tc.Name, tc.Sandbox, err)
+		if sb, err = f(sbConf); err != nil {
+			return nil, fmt.Errorf("tool %s: sandbox %q: %w", tc.Name, sbName, err)
 		}
 	case len(tc.Command) > 0:
 		cmdTmpl = tc.Command
 	default:
+		if def.require {
+			return nil, fmt.Errorf("tool %s: require_sandbox 已开但该工具无沙箱可用(既无工具级 sandbox,也无 exec.default_sandbox)——拒绝宿主直跑", tc.Name)
+		}
 		t, ok := builtinTemplates[tc.Runtime]
 		if !ok {
-			return nil, fmt.Errorf("tool %s: 未知 runtime %q 且未提供 command/engine(内置:bash|sh|python|node)", tc.Name, tc.Runtime)
+			return nil, fmt.Errorf("tool %s: 未知 runtime %q 且未提供 command/sandbox(内置:bash|sh|python|node)", tc.Name, tc.Runtime)
 		}
 		cmdTmpl = t
 	}

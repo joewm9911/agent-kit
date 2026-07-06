@@ -133,7 +133,11 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	}
 	catalog := source.NewCatalog(maxRisk, logger)
 	for _, sc := range cfg.Sources {
-		src, err := source.New(ctx, sc.Type, sc.Name, sc.Config)
+		sconf := sc.Config
+		if sc.Type == "exec" {
+			sconf = cfg.Exec.injectInto(sconf)
+		}
+		src, err := source.New(ctx, sc.Type, sc.Name, sconf)
 		if err != nil {
 			return nil, fmt.Errorf("source %s: %w", sc.Name, err)
 		}
