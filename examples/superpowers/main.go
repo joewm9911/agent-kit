@@ -67,8 +67,14 @@ func main() {
 
 	callbacks.AppendGlobalHandlers(observe.Progress(os.Stdout))
 
+	// 会话按进程隔离(session ID 才是会话身份);SP_SESSION 显式指定可续聊。
+	sessionID := os.Getenv("SP_SESSION")
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("cli-%d", os.Getpid())
+	}
+
 	skillsDir, _ := filepath.Abs(filepath.Join(os.Getenv("SP_WORK_DIR"), "agent-kit", ".skills"))
-	fmt.Printf("研发教练 ready(模型: MiniMax;技能安装: %s)\n", skillsDir)
+	fmt.Printf("研发教练 ready(模型: MiniMax;会话: %s;技能安装: %s)\n", sessionID, skillsDir)
 	fmt.Println("提示:技能脚本需 python3/node;带脚本的技能调用需终端审批;输入 exit 退出。")
 	fmt.Println("挂载技能:")
 	for _, m := range app.Catalog.List() {
@@ -89,7 +95,7 @@ func main() {
 		if input == "exit" {
 			break
 		}
-		answer, err := ag.Run(ctx, "cli", input)
+		answer, err := ag.Run(ctx, sessionID, input)
 		if err != nil {
 			fmt.Println("error:", err)
 			continue

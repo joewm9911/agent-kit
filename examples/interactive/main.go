@@ -130,8 +130,16 @@ func main() {
 	// 进度切面:每一步模型/工具调用可见(含技能子循环内部)
 	callbacks.AppendGlobalHandlers(observe.Progress(os.Stdout))
 
+	// 会话按进程隔离:每次启动都是新会话(session ID 才是会话身份,file
+	// 后端跨进程持久,写死 ID 会导致"重启=续聊")。想跨重启续聊,显式
+	// OPS_SESSION=<上次的会话 ID>(历史见 <OPS_DATA_DIR>/ops-sessions/)。
+	sessionID := os.Getenv("OPS_SESSION")
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("cli-%d", os.Getpid())
+	}
+
 	skillsDir, _ := filepath.Abs(filepath.Join(os.Getenv("OPS_DATA_DIR"), "agent-kit", ".skills"))
-	fmt.Printf("ops-manager ready(模型: MiniMax;业务后端: 内置 mock;技能安装: %s)\n", skillsDir)
+	fmt.Printf("ops-manager ready(模型: MiniMax;业务后端: 内置 mock;会话: %s;技能安装: %s)\n", sessionID, skillsDir)
 	fmt.Printf("脚本沙箱:%s\n", sandboxNote)
 	fmt.Println("提示:宿主直跑时 pdf 技能需要 python3 + pypdf(pip install pypdf);输入 exit 退出。")
 	fmt.Println("挂载能力:")
@@ -163,7 +171,7 @@ func main() {
 		if input == "exit" {
 			break
 		}
-		answer, err := ag.Run(ctx, "cli", input)
+		answer, err := ag.Run(ctx, sessionID, input)
 		if err != nil {
 			fmt.Println("error:", err)
 			continue
