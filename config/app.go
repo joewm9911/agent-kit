@@ -261,13 +261,23 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 		AgentMounts: map[string]*source.Catalog{},
 	}
 	srcCache := newSourceCache()
+	// 具名解析环境:agent 注册表(agents 建成后回填)+ 具名模型 Hub。
+	agentNames := make([]string, 0, len(spec.Agents))
 	for _, as := range spec.Agents {
-		a, mounted, err := buildAgentFromSpec(ctx, as, ac, global, prompts, defaultModel, maxRisk, srcCache, opts)
+		agentNames = append(agentNames, as.Name)
+	}
+	hubs, err := newSkillHubs(ac.Models, ac.Profile.retry(), agentNames)
+	if err != nil {
+		return nil, err
+	}
+	for _, as := range spec.Agents {
+		a, mounted, err := buildAgentFromSpec(ctx, as, ac, global, prompts, defaultModel, maxRisk, srcCache, hubs, opts)
 		if err != nil {
 			return nil, fmt.Errorf("agent %s: %w", as.Name, err)
 		}
 		app.Agents[a.Name()] = a
 		app.AgentMounts[a.Name()] = mounted
+		hubs.agents.add(a.Name(), a) // frontmatter agent: 的调用期解析
 	}
 
 	// 6. gateway 与 IM 通道(接线板)
@@ -313,7 +323,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 // → 叠加全局兼容源的 include 选品 → 交给 buildAgent。
 func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, global *source.Catalog,
 	prompts *prompt.Resolver, defaultModel einomodel.ToolCallingChatModel,
-	maxRisk capability.Risk, srcCache *sourceCache,
+	maxRisk capability.Risk, srcCache *sourceCache, hubs *skillHubs,
 	opts BuildOptions) (*agent.Agent, *source.Catalog, error) {
 
 	// 执行画像:agent 主循环 eff = app.merge(agent自己);也作为其
@@ -339,7 +349,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 			mount:    mnt.Override,      // per-mount 覆盖(最高优)
 			appModel: app.Profile.Model, // 判断 component 是否需专属 model
 			nsPath:   mnt.Path, srcCache: srcCache,
-			packRoot: packRoot, packOpts: packOpts, execCfg: app.Exec,
+			packRoot: packRoot, packOpts: packOpts, execCfg: app.Exec, hubs: hubs,
 		})
 		if err != nil {
 			return nil, nil, err

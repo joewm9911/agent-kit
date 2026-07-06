@@ -238,7 +238,7 @@ func EnsurePack(ctx context.Context, root string, spec PackSpec, opts PackOption
 	// 包根必须有 SKILL.md;读 frontmatter 定名(spec.Name 覆盖优先)。
 	fullName := spec.Name
 	if fullName == "" {
-		name, _, _, _, err := parseSkillMD(filepath.Join(srcDir, "SKILL.md"))
+		name, _, _, _, _, err := parseSkillMD(filepath.Join(srcDir, "SKILL.md"))
 		if err != nil {
 			return PackDir{}, fmt.Errorf("skillpack %s: %w", spec.Use, err)
 		}

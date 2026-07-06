@@ -96,6 +96,13 @@ type Deps struct {
 	// Todo 是组件级调用清单的持有对象(仅 decl.Todo 时用),由装配层注入
 	// 后端。component 的清单是调用级临时草稿(结束即弃),用进程内后端即可。
 	Todo *todo.Todo
+	// AgentHub 按名解析已装配 agent(skillpack frontmatter `agent:` 字段,
+	// eino AgentHub 的本地等价物)。装配层注入;查找延迟到调用期(agent
+	// 可能晚于技能装配),名字合法性由装配层在装配期校验。
+	AgentHub func(name string) (capability.Capability, bool)
+	// ModelHub 按名解析具名模型(skillpack frontmatter `model:` 字段)。
+	// 装配层注入,装配期解析,查不到 fail fast。
+	ModelHub func(ctx context.Context, name string) (einomodel.ToolCallingChatModel, error)
 }
 
 // Build 把声明装配为能力:解析全部引用并锁版本 → 检查依赖 →

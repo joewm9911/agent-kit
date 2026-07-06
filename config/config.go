@@ -163,6 +163,16 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		defaultModel = loop.FinishGuard(loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry())))
 	}
 
+	// 具名解析环境:agent 注册表(agents 建成后回填)+ 具名模型 Hub。
+	agentNames := make([]string, 0, len(cfg.Agents))
+	for i := range cfg.Agents {
+		agentNames = append(agentNames, cfg.Agents[i].Name)
+	}
+	hubs, err := newSkillHubs(cfg.Models, cfg.Profile.retry(), agentNames)
+	if err != nil {
+		return nil, err
+	}
+
 	// 4. skills:装配后入目录,供 agent 选品。条目二选一:内部声明走
 	// skill.Build(确定性编排),use: 外部链接走 skillpack 全链路
 	// (物化 → 校验 → 隔离子循环,治理与内部同源)。
@@ -189,7 +199,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 				skill.PackSpec{Use: entry.Use, Integrity: entry.Integrity, Name: entry.Name},
 				skill.PackOverrides{Model: entry.Model, MaxSteps: entry.MaxSteps,
 					Tools: entry.Tools, Context: entry.Context},
-				skillDeps, cfg.Exec)
+				skillDeps, cfg.Exec, hubs)
 		} else {
 			c, err = skill.Build(ctx, &entry.Declaration, skillDeps)
 		}
@@ -207,7 +217,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
 			global: catalog, prompts: prompts, defaultModel: defaultModel,
 			maxRisk: maxRisk, base: cfg.Profile, appModel: cfg.Profile.Model, logger: logger,
-			packRoot: packRoot, packOpts: packOpts, execCfg: cfg.Exec,
+			packRoot: packRoot, packOpts: packOpts, execCfg: cfg.Exec, hubs: hubs,
 		})
 		if err != nil {
 			return nil, err
@@ -235,6 +245,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 			return nil, fmt.Errorf("agent %s: %w", ac.Name, err)
 		}
 		app.Agents[a.Name()] = a
+		hubs.agents.add(a.Name(), a) // frontmatter agent: 的调用期解析
 	}
 
 	// 7. gateway 与 IM 通道

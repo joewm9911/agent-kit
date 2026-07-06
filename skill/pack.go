@@ -46,6 +46,13 @@ type PackManifest struct {
 	// .sh→bash),非空说明是脚本型技能包:装配层据此绑定 exec 工具
 	// (工作目录=包目录),包风险经 exec 工具传播为 Dangerous。
 	Runtimes []string
+	// 以下来自 frontmatter,与 eino ADK Skill middleware 协议对齐:
+	// Context 取 ""(隔离,默认)| fork(隔离,eino 语义)|
+	// fork_with_context(带调用方对话快照);Agent/Model 按名指定执行
+	// agent 或模型,经 Deps.AgentHub/ModelHub 解析。
+	Context string
+	Agent   string
+	Model   string
 }
 
 // PackOverrides 是 use: 条目的本地覆盖(名字覆盖走 PackSpec.Name,
@@ -59,11 +66,19 @@ type PackOverrides struct {
 
 // LoadManifest 从已物化的包目录解析 manifest(pd 来自 EnsurePack)。
 func LoadManifest(pd PackDir) (*PackManifest, error) {
-	name, desc, allowed, body, err := parseSkillMD(filepath.Join(pd.Dir, "SKILL.md"))
+	name, desc, allowed, front, body, err := parseSkillMD(filepath.Join(pd.Dir, "SKILL.md"))
 	if err != nil {
 		return nil, fmt.Errorf("skillpack %s: %w", pd.Ref, err)
 	}
 	_ = name // 目录/最终名已由 EnsurePack 定(含覆盖);frontmatter name 仅作缺省来源
+	switch front.Context {
+	case "", "fork", "fork_with_context":
+	default:
+		return nil, fmt.Errorf("skillpack %s: frontmatter context 只支持 fork|fork_with_context,got %q", pd.Ref, front.Context)
+	}
+	if front.Agent != "" && front.Model != "" {
+		return nil, fmt.Errorf("skillpack %s: frontmatter agent 与 model 互斥(agent 模式下模型由该 agent 自身决定)", pd.Ref)
+	}
 	hasFiles := false
 	runtimeSet := map[string]bool{}
 	_ = filepath.Walk(pd.Dir, func(p string, info os.FileInfo, err error) error {
@@ -93,37 +108,53 @@ func LoadManifest(pd PackDir) (*PackManifest, error) {
 		Description: desc, Body: body, AllowedTools: allowed,
 		Dir: pd.Dir, Ref: pd.Ref, SHA: pd.SHA, HasFiles: hasFiles,
 		Runtimes: runtimes,
+		Context:  front.Context, Agent: front.Agent, Model: front.Model,
 	}, nil
+}
+
+// skillFront 是 frontmatter 里与执行语义相关的扩展字段(eino/agentskills
+// 协议对齐)。
+type skillFront struct {
+	Context string // "" | fork | fork_with_context
+	Agent   string // 按名指定执行 agent(经 Deps.AgentHub)
+	Model   string // 按名指定模型(经 Deps.ModelHub)
 }
 
 // parseSkillMD 解析 SKILL.md:YAML frontmatter(--- 包围)+ Markdown 正文。
 // allowed-tools 兼容两种写法:YAML 列表,或空格/逗号分隔的字符串
 // (Claude Code 生态两种都存在)。
-func parseSkillMD(path string) (name, desc string, allowed []string, body string, err error) {
+func parseSkillMD(path string) (name, desc string, allowed []string, front2 skillFront, body string, err error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", nil, "", fmt.Errorf("读取 SKILL.md: %w", err)
+		return "", "", nil, front2, "", fmt.Errorf("读取 SKILL.md: %w", err)
 	}
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	rest, ok := strings.CutPrefix(text, "---\n")
 	if !ok {
-		return "", "", nil, "", fmt.Errorf("SKILL.md 缺 frontmatter(--- 开头)")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md 缺 frontmatter(--- 开头)")
 	}
 	front, body, ok := strings.Cut(rest, "\n---")
 	if !ok {
-		return "", "", nil, "", fmt.Errorf("SKILL.md frontmatter 未闭合(缺结尾 ---)")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter 未闭合(缺结尾 ---)")
 	}
 	var fm struct {
 		Name         string `yaml:"name"`
 		Description  string `yaml:"description"`
 		AllowedTools any    `yaml:"allowed-tools"`
+		// 以下三个字段与 eino ADK Skill middleware / agentskills.io 协议对齐:
+		// context 取 fork(隔离)| fork_with_context(带调用方对话快照);
+		// agent/model 按名指定执行 agent 或模型(经装配层 Hub 解析)。
+		Context string `yaml:"context"`
+		Agent   string `yaml:"agent"`
+		Model   string `yaml:"model"`
 	}
 	if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
-		return "", "", nil, "", fmt.Errorf("SKILL.md frontmatter 解析失败: %w", err)
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter 解析失败: %w", err)
 	}
 	if fm.Description == "" {
-		return "", "", nil, "", fmt.Errorf("SKILL.md frontmatter 缺 description(L1 选品依据)")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter 缺 description(L1 选品依据)")
 	}
+	front2 = skillFront{Context: fm.Context, Agent: fm.Agent, Model: fm.Model}
 	switch v := fm.AllowedTools.(type) {
 	case nil:
 	case string:
@@ -133,9 +164,9 @@ func parseSkillMD(path string) (name, desc string, allowed []string, body string
 			allowed = append(allowed, fmt.Sprint(it))
 		}
 	default:
-		return "", "", nil, "", fmt.Errorf("SKILL.md allowed-tools: 期望列表或字符串")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md allowed-tools: 期望列表或字符串")
 	}
-	return fm.Name, fm.Description, allowed, strings.TrimSpace(strings.TrimPrefix(body, "\n")), nil
+	return fm.Name, fm.Description, allowed, front2, strings.TrimSpace(strings.TrimPrefix(body, "\n")), nil
 }
 
 // BuildPack 把技能包装配为能力:白名单选品 → Ring 0 闸门(与 Build 同源)
@@ -148,13 +179,35 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	if ov.Context != "" && ov.Context != "fresh" && ov.Context != "fork" {
 		return nil, fmt.Errorf("skillpack %s: context 只支持 fresh|fork,got %q", m.Ref, ov.Context)
 	}
+	// 快照 fork 判定:本地覆盖(agent-kit 语义,fork=快照)优先;否则
+	// frontmatter 公共协议语义——fork_with_context=快照,fork=隔离(即默认
+	// 子循环,无需动作)。
+	snapshotFork := ov.Context == "fork" || (ov.Context == "" && m.Context == "fork_with_context")
 
-	// 模型:专属或跟随宿主默认(与 Build 同规则)。
+	// frontmatter agent: 委托执行——技能内容交给指定的已装配 agent,
+	// 工具面/治理/模型都是该 agent 自己的,本包不再建子循环。
+	if m.Agent != "" {
+		if deps.AgentHub == nil {
+			return nil, fmt.Errorf("skillpack %s: frontmatter 声明 agent: %q 但装配环境未提供 AgentHub", m.Ref, m.Agent)
+		}
+		return buildAgentDelegate(m, snapshotFork, deps.AgentHub), nil
+	}
+
+	// 模型:条目覆盖 > frontmatter model:(经 ModelHub)> 宿主默认。
 	mdl := deps.DefaultModel
 	if ov.Model != nil {
 		built, err := buildDeclModel(ctx, ov.Model, deps.Retry)
 		if err != nil {
 			return nil, fmt.Errorf("skillpack %s: %w", m.Ref, err)
+		}
+		mdl = built
+	} else if m.Model != "" {
+		if deps.ModelHub == nil {
+			return nil, fmt.Errorf("skillpack %s: frontmatter 声明 model: %q 但装配环境未提供 ModelHub(app 级 models: 具名模型)", m.Ref, m.Model)
+		}
+		built, err := deps.ModelHub(ctx, m.Model)
+		if err != nil {
+			return nil, fmt.Errorf("skillpack %s: model %q: %w", m.Ref, m.Model, err)
 		}
 		mdl = built
 	}
@@ -217,8 +270,8 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
 		task := capability.ParseSingle(argsJSON, "input")
 		// 上下文边界与内部 skill 一致:独立子循环,过程不回流宿主;
-		// context: fork 时以调用方对话快照 + 任务起步。
-		if ov.Context == "fork" {
+		// 快照 fork 时以调用方对话快照 + 任务起步。
+		if snapshotFork {
 			ctx = runctx.WithForkContext(ctx)
 		}
 		out, err := runner.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(task)))
@@ -227,6 +280,33 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 		}
 		return out.Content, nil
 	}), nil
+}
+
+// buildAgentDelegate 构造 frontmatter agent: 模式的能力:调用期经 AgentHub
+// 解析目标 agent(agent 装配晚于技能,名字合法性由装配层在装配期校验),
+// 把 L2 正文 + 用户任务组成完整指令交其执行。风险标 mutating(实际风险
+// 由目标 agent 的工具面与其审批/预算治理决定,这里取保守中档)。
+func buildAgentDelegate(m *PackManifest, snapshotFork bool, hub func(string) (capability.Capability, bool)) capability.Capability {
+	meta := capability.Meta{
+		Ref:         capability.Ref{Kind: "skill", Domain: m.NS, Name: m.Name, Version: m.Version},
+		Description: m.Description,
+		Params:      capability.SingleParam("input", "任务描述(自然语言)"),
+		Risk:        capability.RiskMutating,
+		Tags:        []string{"ref:" + m.Ref, "sha:" + m.SHA[:12], "agent:" + m.Agent},
+	}
+	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
+		target, ok := hub(m.Agent)
+		if !ok {
+			return "", fmt.Errorf("skillpack %s: frontmatter 指定的 agent %q 不存在", m.Ref, m.Agent)
+		}
+		if snapshotFork {
+			ctx = runctx.WithForkContext(ctx)
+		}
+		task := capability.ParseSingle(argsJSON, "input")
+		instr := "[技能指令]\n" + m.Body + "\n\n[任务]\n" + task
+		payload, _ := json.Marshal(map[string]string{"task": instr})
+		return capability.Invoke(ctx, target, string(payload))
+	})
 }
 
 // packReadCap 是包目录的只读工具(L3 渐进披露):list 列文件、read 读内容。

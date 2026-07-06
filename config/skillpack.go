@@ -78,7 +78,8 @@ func isExternalRef(use string) bool {
 // 脚本型包(检测到 runtimes)经 source 注册表构造 exec 工具,工作目录
 // 绑定包目录——config 不碰 impl,exectool 未空导入时 fail fast 指路。
 func buildSkillpack(ctx context.Context, root string, opts skill.PackOptions,
-	spec skill.PackSpec, ov skill.PackOverrides, deps skill.Deps, execCfg ExecConfig) (capability.Capability, error) {
+	spec skill.PackSpec, ov skill.PackOverrides, deps skill.Deps, execCfg ExecConfig,
+	hubs *skillHubs) (capability.Capability, error) {
 
 	pd, err := skill.EnsurePack(ctx, root, spec, opts)
 	if err != nil {
@@ -87,6 +88,18 @@ func buildSkillpack(ctx context.Context, root string, opts skill.PackOptions,
 	m, err := skill.LoadManifest(pd)
 	if err != nil {
 		return nil, err
+	}
+	// frontmatter agent:/model: 的按名解析环境(eino AgentHub/ModelHub 的
+	// 本地等价物)。agent 名在装配期对照"已声明 agent"校验,fail fast;
+	// 实例查找延迟到调用期(agent 装配晚于技能)。
+	if hubs != nil {
+		deps.AgentHub = hubs.agents.lookup
+		deps.ModelHub = hubs.models
+		if m.Agent != "" && !hubs.known[m.Agent] {
+			return nil, fmt.Errorf("skillpack %s: frontmatter 指定的 agent %q 未在本 app 声明", spec.Use, m.Agent)
+		}
+	} else if m.Agent != "" {
+		return nil, fmt.Errorf("skillpack %s: frontmatter 声明 agent: %q,但当前装配路径不支持按名引用 agent", spec.Use, m.Agent)
 	}
 	var extra []capability.Capability
 	if len(m.Runtimes) > 0 {

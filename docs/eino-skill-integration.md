@@ -1,8 +1,8 @@
 # eino ADK Skill 与 agent-kit skillpack 的集成方案
 
-> 状态:**方案评审中**。结论先行:**不建议用 eino 的 Skill middleware 替换自研
-> skillpack 执行层**(它绑定 ADK 运行时,且不覆盖我们的治理/供应链/沙箱强制);
-> 建议做**协议与接口双向对齐**——SKILL.md frontmatter 全兼容 + 提供 eino
+> 状态:**方案 C 已落地(P0+P1)**。结论:**不用 eino 的 Skill middleware 替换
+> 自研 skillpack 执行层**(它绑定 ADK 运行时,且不覆盖我们的治理/供应链/沙箱
+> 强制);做**协议与接口双向对齐**——SKILL.md frontmatter 全兼容 + 提供 eino
 > `skill.Backend` 适配器,技能资产两边通用,执行层各走各的。
 
 ## 1. 背景
@@ -94,15 +94,19 @@ BuildPack + applyGates(治理不降级)。三件事:
 
 ## 5. 落地清单(方案 C)
 
-- [ ] P0 `skill/pack.go` LoadManifest:解析 `agent:`/`model:`;BuildPack fork
-      路径接 AgentHub 语义的本地等价物(按名查已装配 agent/模型,查不到
-      fail fast)。冒烟:frontmatter 带 model 的技能路由到指定模型。
-- [ ] P1 新包 `impl/skillbridge/einoskill`(impl 层,核心零依赖不变):
-      实现 eino `skill.Backend`;单测:eino 侧 List/Get 与我们 LoadManifest
-      结果一致。
+- [x] P0 frontmatter 全兼容(`skill/pack.go`):解析并校验 `context:`
+      (fork=隔离,fork_with_context=带调用方快照;本地 use: 条目的
+      Context 覆盖保持 agent-kit 语义且优先)、`agent:`(经 Deps.AgentHub
+      调用期解析、装配期对照已声明 agent 名 fail fast、委托执行 = L2 正文
+      +任务交给目标 agent 的 invokeAsSub)、`model:`(经 Deps.ModelHub
+      装配期解析,顶层 `models:` 具名模型块,懒构建+缓存+Ring 0 包装;
+      与 `agent:` 互斥)。config 两条装配路径(单文件/多文件)接线
+      skillHubs;测试覆盖解析/互斥/两个 Hub/端到端委托。
+- [x] P1 `impl/skill/einoskill`:实现 eino `skill.Backend`,把物化目录
+      (<ns>/<name>@<ver>)以 "<ns>/<name>" 暴露给 eino ADK Skill
+      middleware;frontmatter 扩展字段透传;单测覆盖 List/Get/忽略无
+      SKILL.md 目录。
 - [ ] P2 `context: inline` 设计评审后实施。
-- [ ] 文档:skillpack 文档声明"SKILL.md frontmatter 与 eino ADK Skill
-      middleware 全兼容"。
 
 ## 6. 持续对照项(不是本方案范围,记录避免遗忘)
 

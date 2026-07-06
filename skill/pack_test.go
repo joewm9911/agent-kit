@@ -22,6 +22,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/source"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 
+	einomodel "github.com/cloudwego/eino/components/model"
 	_ "github.com/joewm9911/agent-kit/impl/source/exectool"
 )
 
@@ -189,18 +190,18 @@ func TestParseSkillMDVariants(t *testing.T) {
 	p := filepath.Join(dir, "SKILL.md")
 	// 字符串形态 allowed-tools(Claude Code 生态常见)
 	_ = os.WriteFile(p, []byte("---\nname: a\ndescription: d\nallowed-tools: \"cap://tool/x/a, cap://tool/x/b\"\n---\n正文"), 0o644)
-	_, _, allowed, body, err := parseSkillMD(p)
+	_, _, allowed, _, body, err := parseSkillMD(p)
 	if err != nil || len(allowed) != 2 || body != "正文" {
 		t.Fatalf("string allowed-tools: %v %v %q", allowed, err, body)
 	}
 	// 缺 description:拒绝
 	_ = os.WriteFile(p, []byte("---\nname: a\n---\n正文"), 0o644)
-	if _, _, _, _, err := parseSkillMD(p); err == nil {
+	if _, _, _, _, _, err := parseSkillMD(p); err == nil {
 		t.Fatal("missing description must fail")
 	}
 	// 缺 frontmatter:拒绝
 	_ = os.WriteFile(p, []byte("just markdown"), 0o644)
-	if _, _, _, _, err := parseSkillMD(p); err == nil {
+	if _, _, _, _, _, err := parseSkillMD(p); err == nil {
 		t.Fatal("missing frontmatter must fail")
 	}
 }
@@ -371,5 +372,135 @@ func TestScriptPackRuntimesAndExecBinding(t *testing.T) {
 	}
 	if c.Meta().Risk != capability.RiskDangerous {
 		t.Fatalf("script pack risk = %v, want dangerous", c.Meta().Risk)
+	}
+}
+
+// writeFrontPack 造一个带扩展 frontmatter 的纯指令包并物化。
+func writeFrontPack(t *testing.T, front string) *PackManifest {
+	t.Helper()
+	dir := t.TempDir()
+	md := "---\nname: fx/probe\ndescription: 探针技能\n" + front + "\n---\n[FXBODY] 按指引行事。"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(md), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pd, err := EnsurePack(context.Background(), t.TempDir(), PackSpec{Use: "file:" + dir}, PackOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadManifest(pd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// TestManifestFrontMatterCompat 验证 eino/agentskills 协议字段:context/
+// agent/model 解析;非法 context 与 agent+model 同设拒绝。
+func TestManifestFrontMatterCompat(t *testing.T) {
+	m := writeFrontPack(t, "context: fork_with_context\nmodel: fast")
+	if m.Context != "fork_with_context" || m.Model != "fast" || m.Agent != "" {
+		t.Fatalf("manifest front: %+v", m)
+	}
+
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: x\ndescription: d\ncontext: banana\n---\n正文"), 0o644)
+	pd, err := EnsurePack(context.Background(), t.TempDir(), PackSpec{Use: "file:" + dir}, PackOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadManifest(pd); err == nil || !strings.Contains(err.Error(), "context") {
+		t.Fatalf("invalid context must fail, got %v", err)
+	}
+
+	dir2 := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir2, "SKILL.md"),
+		[]byte("---\nname: x\ndescription: d\nagent: a\nmodel: m\n---\n正文"), 0o644)
+	pd2, err := EnsurePack(context.Background(), t.TempDir(), PackSpec{Use: "file:" + dir2}, PackOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadManifest(pd2); err == nil || !strings.Contains(err.Error(), "互斥") {
+		t.Fatalf("agent+model must be mutually exclusive, got %v", err)
+	}
+}
+
+// TestBuildPackModelHub 验证 frontmatter model: 经 ModelHub 解析;
+// 缺 Hub fail fast;条目覆盖优先级不受影响(ov.Model 已有既有测试)。
+func TestBuildPackModelHub(t *testing.T) {
+	m := writeFrontPack(t, "model: fast")
+
+	if _, err := BuildPack(context.Background(), m, PackOverrides{}, Deps{DefaultModel: &echoInputModel{}}); err == nil ||
+		!strings.Contains(err.Error(), "ModelHub") {
+		t.Fatalf("model: without hub must fail fast, got %v", err)
+	}
+
+	hubbed := &echoInputModel{}
+	resolved := ""
+	deps := Deps{DefaultModel: &echoInputModel{}, ModelHub: func(_ context.Context, name string) (einomodel.ToolCallingChatModel, error) {
+		resolved = name
+		return hubbed, nil
+	}}
+	c, err := BuildPack(context.Background(), m, PackOverrides{}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capability.Invoke(context.Background(), c, `{"input":"干活"}`); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != "fast" || len(hubbed.seen) == 0 {
+		t.Fatalf("hub model must be used: resolved=%q calls=%d", resolved, len(hubbed.seen))
+	}
+}
+
+// TestBuildPackAgentDelegate 验证 frontmatter agent: 委托:目标经 AgentHub
+// 调用期解析,收到 L2 正文 + 任务组成的完整指令;fork_with_context 透传
+// 快照 fork 语义;查不到报错;缺 Hub 装配 fail fast。
+func TestBuildPackAgentDelegate(t *testing.T) {
+	m := writeFrontPack(t, "agent: helper\ncontext: fork_with_context")
+
+	if _, err := BuildPack(context.Background(), m, PackOverrides{}, Deps{DefaultModel: &echoInputModel{}}); err == nil ||
+		!strings.Contains(err.Error(), "AgentHub") {
+		t.Fatalf("agent: without hub must fail fast, got %v", err)
+	}
+
+	var gotArgs string
+	var gotFork bool
+	target := capability.New(capability.Meta{
+		Ref: capability.Ref{Kind: "agent", Domain: "app", Name: "helper"},
+	}, func(ctx context.Context, argsJSON string) (string, error) {
+		gotArgs, gotFork = argsJSON, runctx.ForkRequested(ctx)
+		return "delegated-ok", nil
+	})
+	hub := func(name string) (capability.Capability, bool) {
+		if name == "helper" {
+			return target, true
+		}
+		return nil, false
+	}
+	c, err := BuildPack(context.Background(), m, PackOverrides{}, Deps{AgentHub: hub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := capability.Invoke(context.Background(), c, `{"input":"查一下P100"}`)
+	if err != nil || out != "delegated-ok" {
+		t.Fatalf("delegate: %q %v", out, err)
+	}
+	if !strings.Contains(gotArgs, "[FXBODY]") || !strings.Contains(gotArgs, "查一下P100") {
+		t.Fatalf("target must receive body+task, got %q", gotArgs)
+	}
+	if !gotFork {
+		t.Fatal("fork_with_context must request snapshot fork")
+	}
+
+	// 查不到:调用期报错
+	m2 := writeFrontPack(t, "agent: ghost")
+	c2, err := BuildPack(context.Background(), m2, PackOverrides{}, Deps{AgentHub: hub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capability.Invoke(context.Background(), c2, `{"input":"x"}`); err == nil ||
+		!strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("unknown agent must error at call time, got %v", err)
 	}
 }

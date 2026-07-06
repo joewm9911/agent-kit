@@ -34,6 +34,7 @@ type nsDeps struct {
 	packRoot     string          // 外部 skillpack 的物化目录(.skills)
 	packOpts     skill.PackOptions
 	execCfg      ExecConfig // app 级默认沙箱策略(透传给 ns 内 exec 源与 pack 的 exec 工具)
+	hubs         *skillHubs // frontmatter agent:/model: 的按名解析环境
 	prompts      *prompt.Resolver
 	defaultModel model.ToolCallingChatModel
 	maxRisk      capability.Risk
@@ -230,7 +231,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 				skill.Deps{Catalog: deps.global, Prompts: deps.prompts,
 					DefaultModel: deps.defaultModel, Retry: nsEff.retry(),
 					ToolTimeout: nsEff.toolTimeout().Std(), DigestOver: nsEff.digestOver()},
-				deps.execCfg)
+				deps.execCfg, deps.hubs)
 			if err != nil {
 				return fmt.Errorf("namespace %s: %w", ns.Name, err)
 			}
