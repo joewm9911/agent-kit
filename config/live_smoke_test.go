@@ -728,7 +728,7 @@ func TestLiveSuperpowers(t *testing.T) {
 		t.Skip("set SMOKE_LIVE=1 and MINIMAX_API_KEY to run")
 	}
 	liveEnv(t, t.TempDir())
-	scenario, _ := filepath.Abs("../examples/skillpack")
+	scenario, _ := filepath.Abs("../examples/superpowers")
 	projectRoot, _ := filepath.Abs("..")
 	t.Setenv("SKILLPACK_WORK_DIR", projectRoot)
 	skillsRoot := filepath.Join(projectRoot, "agent-kit", ".skills")
@@ -737,7 +737,7 @@ func TestLiveSuperpowers(t *testing.T) {
 	_ = os.Remove(trajPath)
 	t.Setenv("SUPERPOWERS_TRAJ", trajPath)
 
-	cfg, err := Load(filepath.Join(scenario, "superpowers-smoke.yaml"))
+	cfg, err := Load(filepath.Join(scenario, "smoke.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,22 +768,29 @@ func TestLiveSuperpowers(t *testing.T) {
 		}
 	}
 
-	// 真实调用:排查场景走 systematic-debugging,提示技能先读自带参考文档
+	// 真实调用 1(Dangerous 脚本包):排障走 systematic-debugging,
+	// 转告技能先读自带参考文档(L3 渐进披露的真实用例)
 	out := run(t, app.Agents["coach"], "live-sp",
 		"我的 Go 测试 TestPayment 偶发失败,重跑就过。调用 systematic-debugging 技能给我排查方案(转告技能:先读你自带的 root-cause-tracing.md 参考文档再作答)。")
+	softContains(t, out, "根因", "按技能方法论作答")
+
+	// 真实调用 2(Readonly 纯指令包):写测试任务应路由到 tdd
+	run(t, app.Agents["coach"], "live-sp2",
+		"我要给一个新的折扣计算函数写测试。调用 tdd 技能,告诉我第一步该做什么。")
 
 	traj, err := os.ReadFile(trajPath)
 	if err != nil {
 		t.Fatalf("轨迹未落盘: %v", err)
 	}
-	if !strings.Contains(string(traj), `"name":"systematic-debugging"`) {
-		t.Fatalf("轨迹缺 systematic-debugging 调用记录(技能未被走到)")
+	for _, span := range []string{`"name":"systematic-debugging"`, `"name":"tdd"`} {
+		if !strings.Contains(string(traj), span) {
+			t.Fatalf("轨迹缺 %s 调用记录(双技能路由未走通)", span)
+		}
 	}
 	if strings.Contains(string(traj), `"name":"pack_read"`) {
 		t.Log("✓ 子循环使用 pack_read 读取了技能自带参考文档(L3 渐进披露)")
 	} else {
 		t.Log("⚠ 模型未调 pack_read(措辞自由度,人工复核轨迹)")
 	}
-	softContains(t, out, "根因", "按技能方法论作答")
 	t.Logf("产物:技能 %s;轨迹 %s", skillsRoot, trajPath)
 }

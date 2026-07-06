@@ -1,4 +1,4 @@
-# examples/skillpack —— 复杂技能集冒烟:obra/superpowers(Claude Code 生态
+# examples/superpowers —— 复杂技能集冒烟:obra/superpowers(Claude Code 生态
 # 最复杂的技能集之一)。同一仓库拉三个技能,覆盖三种形态:
 #   brainstorming          多文件 + scripts(.sh/.js → bash+node,Dangerous)
 #   systematic-debugging   大量参考文档(L3 pack_read)+ .sh(Dangerous)
