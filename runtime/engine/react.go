@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"io"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/flow/agent/react"
@@ -24,9 +26,12 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 		return nil, err
 	}
 
-	maxStep := asm.MaxSteps
-	if maxStep <= 0 {
-		maxStep = 25
+	// max_steps 的对外语义是"工具调用轮数"(直觉语义);eino 的 MaxStep 按
+	// 节点转移计数,一轮 = ChatModel + Tools = 2 步,最后必须以 ChatModel
+	// 收尾——换算 2N+1,让配置 N 恰好允许 N 轮工具调用 + 一次收尾作答。
+	rounds := asm.MaxSteps
+	if rounds <= 0 {
+		rounds = 12
 	}
 
 	cfg := &react.AgentConfig{
@@ -39,7 +44,12 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 				return "工具 " + name + " 不存在。可用工具见工具列表,请改用真实存在的工具或直接作答。", nil
 			},
 		},
-		MaxStep: maxStep,
+		MaxStep: rounds*2 + 1,
+		// 流式工具调用判定:默认实现按首个非空包判断,"先文本后工具调用"
+		// 的模型(含 reasoning 前置)会被误判为终答。改为读到工具调用或
+		// EOF 才下结论——正确性优先,代价是纯文本终答的分支判定要等流
+		// 收尾(react 内部消费的是流副本,不影响对外流式输出)。
+		StreamToolCallChecker: streamToolCallChecker,
 	}
 	if asm.Modifier != nil {
 		cfg.MessageModifier = react.MessageModifier(asm.Modifier)
@@ -58,6 +68,24 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 		return nil, err
 	}
 	return &reactRunner{ag: ag}, nil
+}
+
+// streamToolCallChecker 读流直到看到工具调用或 EOF:兼容"先文本/推理、
+// 后工具调用"的模型(eino 默认按首个非空包判定,这类模型会被误判终答)。
+func streamToolCallChecker(_ context.Context, sr *schema.StreamReader[*schema.Message]) (bool, error) {
+	defer sr.Close()
+	for {
+		msg, err := sr.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		if len(msg.ToolCalls) > 0 {
+			return true, nil
+		}
+	}
 }
 
 type reactRunner struct {

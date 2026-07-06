@@ -74,7 +74,9 @@ func (g *finishGuard) Generate(ctx context.Context, msgs []*schema.Message, opts
 			"[收口检查] 上一条输出无效:"+reason+"。"+
 				"要继续执行任务,必须现在就发起真实的工具调用(tool_call);"+
 				"任务已完成就直接给出最终结果;确实无法完成就说明原因并更新计划。不要输出代码块形式的调用,不要承诺稍后。"))
-		out, err = g.inner.Generate(ctx, msgs, opts...)
+		out, err = observedGenerate(ctx, "finish-guard/bounce", func(ctx context.Context, ms []*schema.Message) (*schema.Message, error) {
+			return g.inner.Generate(ctx, ms, opts...)
+		}, msgs)
 	}
 	// 弹回预算耗尽仍是伪执行形态:放行但打上显式标记——编造的"执行结果"
 	// 不允许冒充真实执行(实测退化形态:弹回后模型反而虚构 completed 与
@@ -133,7 +135,9 @@ func (g *checkedFinish) Generate(ctx context.Context, msgs []*schema.Message, op
 			break
 		}
 		msgs = append(msgs, out, schema.SystemMessage(correction))
-		out, err = g.inner.Generate(ctx, msgs, opts...)
+		out, err = observedGenerate(ctx, "finish-check/bounce", func(ctx context.Context, ms []*schema.Message) (*schema.Message, error) {
+			return g.inner.Generate(ctx, ms, opts...)
+		}, msgs)
 	}
 	return out, err
 }

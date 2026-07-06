@@ -37,6 +37,9 @@ type Profile struct {
 // loop(而非 session)——它压缩的是"执行单元循环的工作上下文",主 loop 与
 // component 都有,只有主 loop 额外有 session;归 loop 才能全链降级到 component。
 type LoopProfile struct {
+	// MaxSteps 是工具调用的轮数上限(直觉语义:一轮 = 一次模型决策 + 一批
+	// 工具执行;react 装配时换算为 eino 的节点步数 2N+1,额外的 1 是收尾
+	// 作答)。默认 12 轮。
 	MaxSteps   *int                   `yaml:"max_steps"`
 	Compaction *loop.CompactionConfig `yaml:"compaction"`
 }

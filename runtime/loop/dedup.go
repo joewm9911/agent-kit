@@ -197,7 +197,9 @@ func (g *repeatBreak) Generate(ctx context.Context, msgs []*schema.Message, opts
 	for _, tc := range out.ToolCalls {
 		msgs = append(msgs, schema.ToolMessage(correction, tc.ID))
 	}
-	out, err = g.inner.Generate(ctx, msgs, opts...)
+	out, err = observedGenerate(ctx, "repeat-break/bounce", func(ctx context.Context, ms []*schema.Message) (*schema.Message, error) {
+		return g.inner.Generate(ctx, ms, opts...)
+	}, msgs)
 	if err != nil || !matchesHot(out, hot) {
 		return out, err
 	}

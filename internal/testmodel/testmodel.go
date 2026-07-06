@@ -10,8 +10,14 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// Fake 按序返回 Responses;耗尽后返回固定收尾消息。
+// Fake 按序返回 Responses;耗尽后返回固定收尾消息。状态放共享内核:
+// WithTools 按契约返回**新实例**(不修改当前实例),脚本与计数仍共享,
+// 测试无论持有哪个实例都读到同一份 Calls。
 type Fake struct {
+	*fakeState
+}
+
+type fakeState struct {
 	mu        sync.Mutex
 	Responses []*schema.Message
 	Calls     int // 累计 Generate/Stream 次数
@@ -20,7 +26,7 @@ type Fake struct {
 
 // New 创建脚本化模型。
 func New(responses ...*schema.Message) *Fake {
-	return &Fake{Responses: responses}
+	return &Fake{&fakeState{Responses: responses}}
 }
 
 // ToolCallMsg 构造一条发起工具调用的 assistant 消息。
@@ -58,7 +64,7 @@ func (f *Fake) Stream(ctx context.Context, in []*schema.Message, opts ...model.O
 	return sr, nil
 }
 
-// WithTools 实现 model.ToolCallingChatModel。
+// WithTools 实现 model.ToolCallingChatModel:返回共享内核的新实例。
 func (f *Fake) WithTools(_ []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return f, nil
+	return &Fake{f.fakeState}, nil
 }

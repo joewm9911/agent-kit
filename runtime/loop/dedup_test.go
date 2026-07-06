@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/core/capability"
@@ -153,5 +154,42 @@ func TestRepeatBreak(t *testing.T) {
 	out, err = RepeatBreak(m3).Generate(ctx, []*schema.Message{schema.UserMessage("q")})
 	if err != nil || len(out.ToolCalls) != 1 || m3.Calls != 1 {
 		t.Fatalf("non-hot call passes through: %v %+v", err, out)
+	}
+}
+
+// TestObservedGenerate 验证内层模型调用的 callback 切面:handler 收到
+// OnStart/OnEnd,RunInfo.Name 标注调用点;无 handler 时透传不炸。
+func TestObservedGenerate(t *testing.T) {
+	gen := func(_ context.Context, ms []*schema.Message) (*schema.Message, error) {
+		return schema.AssistantMessage("内层结果", nil), nil
+	}
+
+	// 无 handler:透传
+	out, err := observedGenerate(context.Background(), "digest/x", gen, nil)
+	if err != nil || out.Content != "内层结果" {
+		t.Fatalf("passthrough: %v %+v", err, out)
+	}
+
+	// 有 handler:OnStart/OnEnd 各一次,RunInfo.Name 可见
+	var starts, ends int
+	var seenName string
+	h := callbacks.NewHandlerBuilder().
+		OnStartFn(func(ctx context.Context, info *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
+			starts++
+			return ctx
+		}).
+		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, _ callbacks.CallbackOutput) context.Context {
+			ends++
+			if info != nil {
+				seenName = info.Name
+			}
+			return ctx
+		}).Build()
+	ctx := callbacks.InitCallbacks(context.Background(), &callbacks.RunInfo{Name: "outer"}, h)
+	if _, err := observedGenerate(ctx, "finish-guard/bounce", gen, nil); err != nil {
+		t.Fatal(err)
+	}
+	if starts != 1 || ends != 1 || seenName != "finish-guard/bounce" {
+		t.Fatalf("callbacks: starts=%d ends=%d name=%q", starts, ends, seenName)
 	}
 }

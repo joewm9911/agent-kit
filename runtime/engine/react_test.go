@@ -84,3 +84,68 @@ func TestPlanExecute(t *testing.T) {
 		t.Fatalf("got %q", out.Content)
 	}
 }
+
+// TestReActMaxStepsMeansRounds:max_steps 的对外语义 = 工具调用轮数。
+// 配 N 恰好允许 N 轮工具调用 + 一次收尾作答;N-1 则超限。
+func TestReActMaxStepsMeansRounds(t *testing.T) {
+	script := func() *testmodel.Fake {
+		return testmodel.New(
+			testmodel.ToolCallMsg("echo", `{"input":"1"}`),
+			testmodel.ToolCallMsg("echo", `{"input":"2"}`),
+			schema.AssistantMessage("完成", nil),
+		)
+	}
+
+	// 2 轮工具调用,max_steps=2:恰好放行
+	runner, err := Build(context.Background(), "react", &Assembly{
+		Model: script(), Capabilities: []capability.Capability{echoCap()}, MaxSteps: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runner.Generate(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if err != nil || out.Content != "完成" {
+		t.Fatalf("2 rounds under max_steps=2 must pass: %v %+v", err, out)
+	}
+
+	// max_steps=1:第二轮超限
+	runner, err = Build(context.Background(), "react", &Assembly{
+		Model: script(), Capabilities: []capability.Capability{echoCap()}, MaxSteps: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Generate(context.Background(), []*schema.Message{schema.UserMessage("go")}); err == nil ||
+		!strings.Contains(err.Error(), "max steps") {
+		t.Fatalf("2 rounds under max_steps=1 must exceed, got %v", err)
+	}
+}
+
+// TestStreamToolCallChecker:先文本后工具调用的流被正确判定为工具调用;
+// 纯文本流判定为终答。
+func TestStreamToolCallChecker(t *testing.T) {
+	feed := func(msgs ...*schema.Message) *schema.StreamReader[*schema.Message] {
+		sr, sw := schema.Pipe[*schema.Message](len(msgs))
+		for _, m := range msgs {
+			sw.Send(m, nil)
+		}
+		sw.Close()
+		return sr
+	}
+
+	got, err := streamToolCallChecker(context.Background(), feed(
+		schema.AssistantMessage("我先说明一下,", nil),
+		testmodel.ToolCallMsg("echo", `{}`),
+	))
+	if err != nil || !got {
+		t.Fatalf("text-then-toolcall must be detected: %v %v", got, err)
+	}
+
+	got, err = streamToolCallChecker(context.Background(), feed(
+		schema.AssistantMessage("这就是", nil),
+		schema.AssistantMessage("最终回答。", nil),
+	))
+	if err != nil || got {
+		t.Fatalf("pure text must be final answer: %v %v", got, err)
+	}
+}

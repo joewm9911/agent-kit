@@ -215,7 +215,9 @@ func (d *digested) digest(ctx context.Context, out string) string {
 	if task == "" {
 		task = "(未知,保守保留通用要点)"
 	}
-	sum, err := d.m.Generate(ctx, []*schema.Message{
+	sum, err := observedGenerate(ctx, "digest/"+name, func(ctx context.Context, ms []*schema.Message) (*schema.Message, error) {
+		return d.m.Generate(ctx, ms)
+	}, []*schema.Message{
 		schema.SystemMessage(digestSystem),
 		schema.UserMessage(fmt.Sprintf("当前任务:%s\n\n工具 %s 的原始结果:\n%s", task, name, clipped)),
 	})

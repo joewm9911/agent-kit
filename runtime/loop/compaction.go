@@ -214,7 +214,9 @@ func Summarize(ctx context.Context, m model.ToolCallingChatModel, cfg Compaction
 		}
 		fmt.Fprintf(&sb, "%s: %s\n", msg.Role, content)
 	}
-	out, err := m.Generate(ctx, []*schema.Message{
+	out, err := observedGenerate(ctx, "compaction/summarize", func(ctx context.Context, ms []*schema.Message) (*schema.Message, error) {
+		return m.Generate(ctx, ms)
+	}, []*schema.Message{
 		schema.SystemMessage(cfg.summarizePrompt()),
 		schema.UserMessage(sb.String()),
 	})

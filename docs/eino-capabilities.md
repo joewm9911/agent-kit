@@ -95,17 +95,20 @@ HITL:`Interrupt/StatefulInterrupt/CompositeInterrupt` + 地址寻址(`agent:A;no
 1. **✅ 合规**:react Modifier/Rewriter 分工与顺序、WithTools 不可变性、工具错误
    作结果回传(避免 ToolsNode 错误炸轮次)、stream Copy/Close、全局 callbacks
    一次性注入、外部变量只读。
-2. **⚠ MaxStep 语义**:一轮消耗 2 步,配置 20=10 轮。待决策:文档写清或 ×2。
-3. **⚠ 无参工具 ParamsOneOf**:FAQ 明确必须 nil;我们 todo_read 传了空 map
-   ——部分厂商 400 风险(MiniMax 未触发,换厂商可能炸)。→ 已修/待修见提交。
-4. **⚠ ToolsNode 防御未配**:UnknownToolsHandler(工具名幻觉时 ToolsNode 会
-   直接报错,react 轮次失败)、ToolArgumentsHandler(参数非法 JSON)。建议在
-   BuildReAct 的 ToolsConfig 补上,把两类错误转成结果字符串让模型自纠——
-   与我们既有哲学一致。
-5. **○ StreamToolCallChecker**:MiniMax 走 openai 兼容协议,默认首包判定大概率
-   够用;serving 上流式前用真流量验一次,不行再自定义。
-6. **○ 观测改进**:内层模型调用(digest/compactor/守卫弹回)加
-   `callbacks.ReuseHandlers`;或用 `react.WithMessageFuture` 获取中间消息。
+2. **✅ 已修 MaxStep 语义**:max_steps 对外语义改为"工具调用轮数",react
+   装配换算 2N+1(BuildReAct);配置 N = N 轮工具调用 + 一次收尾作答。
+3. **✅ 已修 无参工具 ParamsOneOf**:capability.NoParams 标记 → ToolInfo
+   置 nil;todo_read 采用。
+4. **✅ 已修(部分)ToolsNode 防御**:UnknownToolsHandler 已配(工具名幻觉
+   转结果自纠);ToolArgumentsHandler 未配——各工具自行解析参数并以友好
+   错误回传,暂无需求。
+5. **✅ 已修 StreamToolCallChecker**:自定义 checker 读到工具调用或 EOF 才
+   判定(兼容先文本后工具调用的模型);代价是纯文本终答的分支判定等到
+   流收尾。
+6. **✅ 已修 观测改进**:loop.observedGenerate 给内层模型调用挂
+   ReuseHandlers + OnStart/OnEnd 切面(digest 摘要、压缩摘要、三守卫弹回),
+   进度/tracing 可见独立子 span;testmodel.WithTools 也已按契约返回共享
+   内核的新实例。
 7. **✋ 长期**:suspend↔compose checkpoint(KV 同构)、Compactor↔Summarization
    (PreserveSkills)、RetryModel↔ModelRetryConfig(ShouldRetry 语义)、
    动态工具选品↔ToolSearch。升级 eino 版本时逐项对照。
