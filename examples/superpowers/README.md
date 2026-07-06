@@ -27,3 +27,15 @@ commit 拉三个技能,一次装配覆盖三种形态——
 环境占位:SMOKE_MODEL_PROVIDER / SMOKE_MODEL_BASE / MINIMAX_API_KEY /
 SKILLPACK_WORK_DIR / SUPERPOWERS_TRAJ(由测试注入)。中间产物
 (work/、宿主根 agent-kit/.skills)保留且 gitignore。
+
+## 交互版
+
+`interactive.yaml` + `main.go` 是同一技能集的**可交互副本**(smoke.yaml 保持纯
+测试用途)。真实 MiniMax,coach agent 按你的问题路由到 brainstorming /
+systematic-debugging / tdd:
+
+    MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
+    go run ./examples/superpowers
+
+首启从 GitHub 下载三个技能到 <work_dir>/agent-kit/.skills(之后零网络)。带
+脚本的技能是 Dangerous 风险,调用时终端请求审批(y 放行,a 本会话免问)。

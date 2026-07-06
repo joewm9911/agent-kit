@@ -1,0 +1,46 @@
+# examples/superpowers/interactive.yaml —— superpowers 技能集的可交互副本
+# (smoke.yaml 保持纯测试用途,两者独立演进)。真实 MiniMax + obra/superpowers
+# 三个真实技能;coach agent 按你的问题路由到对应技能。入口:
+#   go run ./examples/superpowers
+#
+# 环境占位(runner 注入默认):MINIMAX_API_KEY(必填)/ SP_MODEL_BASE /
+# SP_WORK_DIR。技能装到 <work_dir>/agent-kit/.skills(首启下载,之后零网络)。
+# 带脚本的技能是 Dangerous:每次调用终端请求审批(y 放行,a 本会话免问)。
+
+secrets:
+  provider: env
+
+model:
+  provider: minimax
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+    base_url: "${SP_MODEL_BASE}"
+
+catalog:
+  max_risk: dangerous            # 带脚本的技能需要显式准入
+
+work_dir: "${SP_WORK_DIR}"
+
+skillpacks:
+  sync: auto
+
+skills:
+  - use: "github.com/obra/superpowers/skills/brainstorming@d884ae04edebef577e82ff7c4e143debd0bbec99"
+    name: dev/brainstorming
+  - use: "github.com/obra/superpowers/skills/systematic-debugging@d884ae04edebef577e82ff7c4e143debd0bbec99"
+    name: dev/systematic-debugging
+    max_steps: 10
+  - use: "github.com/obra/superpowers/skills/test-driven-development@d884ae04edebef577e82ff7c4e143debd0bbec99"
+    name: dev/tdd
+
+agents:
+  - name: coach
+    description: 研发教练
+    loop:
+      max_steps: 20
+      compaction: {max_messages: 40, keep_recent: 10}   # 交互长会话放宽
+    budget: {max_model_calls: 200, max_tokens: 2000000}
+    prompt:
+      system: "你是研发教练。遇到任务必须调用对应技能完成(头脑风暴=brainstorming,排查 bug=systematic-debugging,写测试=tdd),把用户要求原样转给技能,不要只列计划或口头答复。"
+    capabilities:
+      include: ["cap://skill/dev/*"]
