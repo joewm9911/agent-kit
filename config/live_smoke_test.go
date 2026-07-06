@@ -43,6 +43,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/serving"
+	"github.com/joewm9911/agent-kit/skill"
 
 	_ "github.com/joewm9911/agent-kit/impl/source/exectool"
 )
@@ -549,4 +550,43 @@ func waitSend(t *testing.T, fc *fakeChannel, timeout time.Duration) string {
 		t.Fatal("等待通道外发消息超时")
 		return ""
 	}
+}
+
+// TestLiveRealSkillpack:真实世界验证——从 anthropics/skills 官方仓库拉一个
+// 真实技能(github codeload 路径 + 真实 SKILL.md 格式),物化 → 装配 → 真实
+// MiniMax 在隔离子循环里按其指令作答。fixture 测机制,这里测生态兼容。
+//
+//	MINIMAX_API_KEY=... SMOKE_LIVE=1 go test ./config/ -run TestLiveRealSkillpack -v
+func TestLiveRealSkillpack(t *testing.T) {
+	if os.Getenv("SMOKE_LIVE") == "" || os.Getenv("MINIMAX_API_KEY") == "" {
+		t.Skip("set SMOKE_LIVE=1 and MINIMAX_API_KEY to run")
+	}
+	liveEnv(t, t.TempDir())
+	// pin 到具体 commit:供给链锁定,测试可复现
+	const ref = "github.com/anthropics/skills/skills/internal-comms@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
+
+	skillsRoot := t.TempDir()
+	cfg := &Config{
+		Profile: Profile{Model: &ModelConfig{Provider: "minimax", Config: map[string]any{
+			"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
+		}}},
+		Catalog:    CatalogConfig{MaxRisk: "dangerous"}, // 真实包可能带脚本
+		Skills:     []*SkillEntry{{Use: ref, Declaration: skill.Declaration{Name: "docs/internal-comms"}}},
+		Skillpacks: SkillpacksConfig{Dir: skillsRoot},
+		Agents: []AgentConfig{{
+			Name:         "comms",
+			Prompt:       PromptConfig{System: prompt.Value{Literal: "写内部通告用 internal-comms 技能。"}},
+			Capabilities: CapabilitiesConfig{Include: []string{"cap://skillpack/docs/internal-comms"}},
+		}},
+	}
+	app, err := Build(context.Background(), cfg, BuildOptions{Interactor: &liveInteractor{}})
+	if err != nil {
+		t.Fatalf("真实技能装配失败(生态兼容缺口): %v", err)
+	}
+	if _, err := os.Stat(skillsRoot + "/skills.lock"); err != nil {
+		t.Fatalf("skills.lock 未落盘: %v", err)
+	}
+	out := run(t, app.Agents["comms"], "live-real",
+		"用 internal-comms 技能:给团队写一句话通告,内容是周五下午系统维护两小时。")
+	softContains(t, out, "维护", "真实技能按指令产出")
 }
