@@ -132,6 +132,15 @@ skills:
     steps:
       - {name: apply, use: "tools/shop/update_price", args: '{"sku":"{sku}","price":"{price}"}'}
 
+  # 只读库存查询:主循环的库存查询入口。get_inventory 是域内工具不出域,
+  # 没有这个只读技能,模型会抓 restock 这类改动性技能当查询用(实测)。
+  - name: check-inventory
+    description: 查询商品库存明细(只读):各仓可用/预留数量与近30天出入库流水
+    params:
+      sku: {type: string, desc: 商品 SKU, required: true}
+    steps:
+      - {name: detail, use: "tools/shop/get_inventory", args: '{"sku":"{sku}"}'}
+
   # 上下架:单步透传 mutating 工具
   - name: set-product-status
     description: 商品上下架(改动性操作,受审批策略约束)

@@ -193,3 +193,34 @@ func TestObservedGenerate(t *testing.T) {
 		t.Fatalf("callbacks: starts=%d ends=%d name=%q", starts, ends, seenName)
 	}
 }
+
+// TestDedupSkillArgsOnly 验证 kind=skill 的仅同参判定:结果每次不同
+// (子循环模型生成)也照样计数——第 2 次提醒、第 3 次拦截;纯工具的
+// 同参不同结果(轮询类)仍不受影响(见 TestDedupPollingUnaffected)。
+func TestDedupSkillArgsOnly(t *testing.T) {
+	execs := 0
+	varying := capability.New(capability.Meta{
+		Ref: capability.Ref{Kind: "skill", Domain: "catalog", Name: "restock"},
+	}, func(_ context.Context, _ string) (string, error) {
+		execs++
+		return fmt.Sprintf("补货完成,措辞第 %d 版", execs), nil
+	})
+	c := DedupCalls([]capability.Capability{varying})[0]
+	ctx := runctx.WithTurnState(runctx.With(context.Background(), "a", "sk"))
+
+	if out := dedupInvoke(t, ctx, c, `{"sku":"P100"}`); strings.Contains(out, "重复调用") {
+		t.Fatalf("first call clean, got %q", out)
+	}
+	out := dedupInvoke(t, ctx, c, `{"sku":"P100"}`)
+	if !strings.Contains(out, "[重复调用]") || execs != 2 {
+		t.Fatalf("2nd identical-args skill call must warn despite differing output: %q execs=%d", out, execs)
+	}
+	out = dedupInvoke(t, ctx, c, `{"sku":"P100"}`)
+	if !strings.Contains(out, "已拦截") || execs != 2 {
+		t.Fatalf("3rd call must be blocked (no execution): %q execs=%d", out, execs)
+	}
+	// 换参数照常执行
+	if out := dedupInvoke(t, ctx, c, `{"sku":"P200"}`); strings.Contains(out, "重复调用") || execs != 3 {
+		t.Fatalf("different args reset: %q execs=%d", out, execs)
+	}
+}

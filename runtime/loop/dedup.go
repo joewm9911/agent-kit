@@ -3,12 +3,16 @@
 // read_result 打转,直到 max steps 把轮次拖死)。L1 只祈使"报错不要同参
 // 重试",对"成功但反复调"没有硬约束——这里补上:
 //
-//	第 2 次同参且结果与上次一致 → 照常执行,结果后附加提醒;
-//	第 3 次起                   → 不再执行,回放上次结果并要求换路径。
+//	第 2 次重复 → 照常执行,结果后附加提醒;
+//	第 3 次起   → 不再执行,回放上次结果并要求换路径。
+//
+// 重复的判定分两档:纯工具 = 同参**且**同结果(结果确定,变化说明是
+// 轮询类,重置计数);kind=skill = **仅同参**——技能结果是子循环模型
+// 生成的自然语言,每次措辞都不同,按结果判定永不触发(实测同参 mutating
+// 技能连执行 5 次),而同轮内同参重调技能几乎必然是退化。
 //
 // 计数按 (执行域, 能力, 参数) 分键,存轮内状态袋(runctx.TurnState),
-// 轮结束即弃;参数一变即重置,结果有变化也重置(轮询类调用不受影响)。
-// 无轮语义(未经 agent 入口装袋)不介入。
+// 轮结束即弃;参数一变即重置。无轮语义(未经 agent 入口装袋)不介入。
 package loop
 
 import (
@@ -36,7 +40,7 @@ const (
 	dedupHotKey    = "loop.dedup.hot\x1f" // + scope → *dedupHot
 )
 
-const dedupWarn = "\n\n[重复调用] 本次调用与上一次的参数、结果完全相同——不要再重复,基于已有结果推进任务;需要不同信息就改变参数。"
+const dedupWarn = "\n\n[重复调用] 本次调用与上一次的参数完全相同——不要再重复,基于已有结果推进任务;需要不同信息就改变参数。"
 
 // DedupCalls 给能力集套上重复调用断路器。
 func DedupCalls(caps []capability.Capability) []capability.Capability {
@@ -91,8 +95,10 @@ func (d *deduped) invoke(ctx context.Context, argsJSON string, exec func() (stri
 	if err != nil {
 		return out, err
 	}
-	if st.count > 0 && out == st.last {
-		bag.Store(key, dedupState{count: st.count + 1, last: st.last})
+	// kind=skill 仅同参判定(模型生成的结果天然不稳定);纯工具还需同结果
+	// (结果变化 = 轮询类,重置)。
+	if st.count > 0 && (d.inner.Meta().Ref.Kind == "skill" || out == st.last) {
+		bag.Store(key, dedupState{count: st.count + 1, last: out})
 		return out + dedupWarn, nil
 	}
 	// 首次调用,或结果发生变化(轮询类):重新计数。
