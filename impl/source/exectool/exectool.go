@@ -160,7 +160,9 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 		if !ok {
 			return nil, fmt.Errorf("tool %s: unknown sandbox %q(需先 RegisterSandbox)", tc.Name, sbName)
 		}
-		if sb, err = f(sbConf); err != nil {
+		// runtime 注入沙箱配置:沙箱据此选容器内解释器(docker 等据 runtime
+		// 决定跑 python/node/bash)。
+		if sb, err = f(withRuntime(sbConf, tc.Runtime)); err != nil {
 			return nil, fmt.Errorf("tool %s: sandbox %q: %w", tc.Name, sbName, err)
 		}
 	case len(tc.Command) > 0:
@@ -255,4 +257,14 @@ func parseTimeout(s string) (time.Duration, error) {
 		return 0, nil
 	}
 	return time.ParseDuration(s)
+}
+
+// withRuntime 把工具的 runtime 并入沙箱配置(不覆盖已显式声明的 runtime),
+// 供沙箱实现按脚本类型选解释器。
+func withRuntime(conf map[string]any, runtime string) map[string]any {
+	out := map[string]any{"runtime": runtime}
+	for k, v := range conf {
+		out[k] = v
+	}
+	return out
 }
