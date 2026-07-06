@@ -293,6 +293,7 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 
 func (a *Agent) prepare(ctx context.Context, sessionID string) context.Context {
 	ctx = runctx.With(ctx, a.name, sessionID)
+	ctx = runctx.WithTurnState(ctx) // 轮内状态袋(todo 收口、催办去重等)
 	if a.interactor != nil && runctx.GetInteractor(ctx) == nil {
 		ctx = runctx.WithInteractor(ctx, a.interactor)
 	}

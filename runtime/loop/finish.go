@@ -79,3 +79,52 @@ func (g *finishGuard) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChat
 	}
 	return &finishGuard{inner: inner}, nil
 }
+
+// CheckedFinish 给模型套上可插拔的收口检查(Ring 0):模型给出无 tool_calls
+// 的最终文本时依次运行注入的检查,任一返回非空即作为纠正指令弹回重试
+// (同 FinishGuard 的有界弹回)。与 FinishGuard 的分工:FinishGuard 拦
+// "输出形态无效"(伪调用/空头承诺),内置且无状态;CheckedFinish 挂
+// "收尾时状态未收口"类业务纪律(如 todo 计划残留),检查由装配层注入,
+// loop 不感知具体纪律。检查自身负责节流(如"每轮最多催一次",经
+// runctx.TurnState 去重),守卫只管弹回。只作用于 Generate,流式透传。
+func CheckedFinish(m model.ToolCallingChatModel, checks ...func(context.Context) string) model.ToolCallingChatModel {
+	if len(checks) == 0 {
+		return m
+	}
+	return &checkedFinish{inner: m, checks: checks}
+}
+
+type checkedFinish struct {
+	inner  model.ToolCallingChatModel
+	checks []func(context.Context) string
+}
+
+func (g *checkedFinish) Generate(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	out, err := g.inner.Generate(ctx, msgs, opts...)
+	for bounce := 0; err == nil && len(out.ToolCalls) == 0 && bounce < finishGuardBounces; bounce++ {
+		correction := ""
+		for _, check := range g.checks {
+			if correction = check(ctx); correction != "" {
+				break
+			}
+		}
+		if correction == "" {
+			break
+		}
+		msgs = append(msgs, out, schema.SystemMessage(correction))
+		out, err = g.inner.Generate(ctx, msgs, opts...)
+	}
+	return out, err
+}
+
+func (g *checkedFinish) Stream(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return g.inner.Stream(ctx, msgs, opts...)
+}
+
+func (g *checkedFinish) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	inner, err := g.inner.WithTools(tools)
+	if err != nil {
+		return nil, err
+	}
+	return &checkedFinish{inner: inner, checks: g.checks}, nil
+}

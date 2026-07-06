@@ -3,7 +3,10 @@
 // ctx 取这些信息,避免层层透传参数。
 package runctx
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 type keyAgent struct{}
 type keySession struct{}
@@ -97,4 +100,20 @@ func WithUser(ctx context.Context, userID string) context.Context {
 func User(ctx context.Context) string {
 	s, _ := ctx.Value(keyUser{}).(string)
 	return s
+}
+
+type keyTurnState struct{}
+
+// WithTurnState 在一次用户轮的入口挂一个轮内共享的可变状态袋:同轮的
+// 能力/守卫用它记"本轮已发生"类事实(todo 本轮已写入、收口已催办等),
+// 轮结束随 ctx 即弃。子循环共享同一个袋,键应自带作用域(如拼上执行域)。
+func WithTurnState(ctx context.Context) context.Context {
+	return context.WithValue(ctx, keyTurnState{}, &sync.Map{})
+}
+
+// TurnState 取当前轮的状态袋;不在轮内(未经 WithTurnState)返回 nil,
+// 调用方应把 nil 当"无轮语义"降级处理,而非报错。
+func TurnState(ctx context.Context) *sync.Map {
+	m, _ := ctx.Value(keyTurnState{}).(*sync.Map)
+	return m
 }

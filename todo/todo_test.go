@@ -211,3 +211,64 @@ func TestLoopPromptVariantConsistency(t *testing.T) {
 		t.Fatal("default L1 lost its todo discipline")
 	}
 }
+
+// TestTodoFinishCheck 验证收口守卫的触发矩阵:本轮写过计划且有未收口项
+// → 催一次(每轮限一次);全 completed / 本轮没写过 / 无轮语义 → 不催。
+func TestTodoFinishCheck(t *testing.T) {
+	// 无轮语义(未经 agent 入口):不介入
+	bare := testCtx("a", "fc0")
+	writeTodos(t, bare, `{"todos":[{"content":"x","status":"pending"}]}`)
+	if msg := td.FinishCheck(bare); msg != "" {
+		t.Fatalf("no turn state must not nag, got %q", msg)
+	}
+
+	// 本轮写过 + 有未收口项:催一次,第二次去重
+	ctx := runctx.WithTurnState(testCtx("a", "fc1"))
+	writeTodos(t, ctx, `{"todos":[{"content":"x","status":"in_progress","active_form":"做x"},{"content":"y","status":"pending"}]}`)
+	msg := td.FinishCheck(ctx)
+	if !strings.Contains(msg, "2 项未收口") {
+		t.Fatalf("expect nag with open count, got %q", msg)
+	}
+	if again := td.FinishCheck(ctx); again != "" {
+		t.Fatalf("must nag at most once per turn, got %q", again)
+	}
+
+	// 全部 completed:不催
+	ctx2 := runctx.WithTurnState(testCtx("a", "fc2"))
+	writeTodos(t, ctx2, `{"todos":[{"content":"x","status":"completed"}]}`)
+	if msg := td.FinishCheck(ctx2); msg != "" {
+		t.Fatalf("all completed must not nag, got %q", msg)
+	}
+
+	// 残留计划、本轮没写过:不催(交给 PlanSection 的遗留标注)
+	writeTodos(t, runctx.WithTurnState(testCtx("a", "fc3")),
+		`{"todos":[{"content":"old","status":"pending"}]}`)
+	newTurn := runctx.WithTurnState(testCtx("a", "fc3"))
+	if msg := td.FinishCheck(newTurn); msg != "" {
+		t.Fatalf("untouched stale plan must not nag, got %q", msg)
+	}
+}
+
+// TestTodoPlanSectionStale 验证遗留计划标注:同轮写入后是"当前任务计划",
+// 新轮未写入时降为"遗留任务计划"并指示清理;写入后恢复。
+func TestTodoPlanSectionStale(t *testing.T) {
+	turn1 := runctx.WithTurnState(testCtx("a", "stale"))
+	writeTodos(t, turn1, `{"todos":[{"content":"x","status":"pending"}]}`)
+	if s := td.PlanSection(turn1); !strings.Contains(s, "当前任务计划") {
+		t.Fatalf("same turn must render active header, got %q", s)
+	}
+
+	turn2 := runctx.WithTurnState(testCtx("a", "stale"))
+	if s := td.PlanSection(turn2); !strings.Contains(s, "遗留任务计划") || !strings.Contains(s, "清空") {
+		t.Fatalf("new turn must render stale header with cleanup hint, got %q", s)
+	}
+	writeTodos(t, turn2, `{"todos":[{"content":"y","status":"in_progress"}]}`)
+	if s := td.PlanSection(turn2); !strings.Contains(s, "当前任务计划") {
+		t.Fatalf("after write the header must be active again, got %q", s)
+	}
+
+	// 无轮语义:保持既有行为(当前任务计划)
+	if s := td.PlanSection(testCtx("a", "stale")); !strings.Contains(s, "当前任务计划") {
+		t.Fatalf("nil turn state keeps active header, got %q", s)
+	}
+}

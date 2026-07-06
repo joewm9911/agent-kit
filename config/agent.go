@@ -165,6 +165,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	// 各持各的后端,互不覆盖。todo 仅启用时构造;result 仅消化启用时构造。
 	todoOn := ac.Todo.Enabled == nil || *ac.Todo.Enabled
 	var td *todo.Todo
+	loopModel := m // 主循环用的模型(可能追加收口守卫);摘要类消费(digest/压缩)用裸 m
 	if todoOn {
 		kv, ttl, err := resolveKV(ac.Todo.Store, ac.Todo.StoreConfig, ac.Stores, "todo")
 		if err != nil {
@@ -172,6 +173,11 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		}
 		td = todo.New(kv, ttl)
 		caps = append(caps, td.Capabilities()...)
+		// 计划收口守卫(Ring 0):纯文本收尾前清单仍有未收口项就弹回一次,
+		// "正文说完成、状态还 pending"的漂移在轮内抹平。只包主循环模型——
+		// digest/压缩的摘要 Generate 也是纯文本收尾,包上会被误弹回;
+		// skill 子循环的临时清单随调用即弃(ClearCurrent),无需收口。
+		loopModel = loop.CheckedFinish(m, td.FinishCheck)
 	}
 	var resultKV store.KV
 	var resultTTL time.Duration
@@ -336,11 +342,11 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	}
 
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
-		Model:        m,
+		Model:        loopModel, // 主循环模型(todo 启用时带计划收口守卫)
 		Capabilities: caps,
 		MaxSteps:     eff.maxSteps(),
 		Modifier:     layers.Modifier(),
-		Rewriter:     loop.Compactor(m, comp),
+		Rewriter:     loop.Compactor(m, comp), // 压缩摘要用裸 m,不受收口守卫弹回
 	})
 	if err != nil {
 		return nil, err

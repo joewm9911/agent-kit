@@ -41,6 +41,11 @@ const (
 	maxTodoContentLen = 500
 	nudgeAfterCalls   = 5 // 有进行中任务时,连续 N 次非 todo 调用触发提醒
 	sep               = "\x1f"
+
+	// 轮内状态袋(runctx.TurnState)的键前缀,拼上执行域键隔离:
+	// written = 本轮写过计划;nagged = 本轮收口检查已催办过(每轮最多一次)。
+	turnWritten = "todo.written" + sep
+	turnNagged  = "todo.nagged" + sep
 )
 
 // todoState 是一个执行域的完整计划状态,整体作为一个 KV 值原子读改写:
@@ -173,6 +178,9 @@ func (t *Todo) Capabilities() []capability.Capability {
 			return msg, nil // 违规以结果回传纠正,循环不中断
 		}
 		key := sessionKey(ctx)
+		if bag := runctx.TurnState(ctx); bag != nil {
+			bag.Store(turnWritten+key, true) // 本轮动过计划(收口检查的触发前提)
+		}
 		if len(args.Todos) == 0 {
 			if err := t.kv.Delete(ctx, key); err != nil {
 				return "", err
@@ -207,12 +215,55 @@ func (t *Todo) Capabilities() []capability.Capability {
 
 // PlanSection 渲染当前执行域的计划,供 L 层每轮注入消息尾部
 // (loop.PromptLayers.Plan)。计划为空时返回空串(不注入)。
+// 本轮尚未写过计划时(经 runctx.TurnState 判定),标注为"遗留计划"并
+// 指示清理——否则旧问题的残留计划配上"全部完成前不要停"的祈使,等于
+// 指示模型把旧账抄进新清单,pending 项跨问题无限累计。
 func (t *Todo) PlanSection(ctx context.Context) string {
-	list := t.loadState(ctx, sessionKey(ctx)).List
+	key := sessionKey(ctx)
+	list := t.loadState(ctx, key).List
 	if len(list) == 0 {
 		return ""
 	}
+	if bag := runctx.TurnState(ctx); bag != nil {
+		if _, written := bag.Load(turnWritten + key); !written {
+			return "# 遗留任务计划(来自之前的对话轮次,非本轮所列)\n" +
+				"先判断与当前问题的关系:无关项用 todo_write 提交删除后的清单(全部无关就提交空 todos 清空);仍相关则继续推进并更新状态。\n" +
+				render(list)
+		}
+	}
 	return "# 当前任务计划(完成一项立刻用 todo_write 更新;全部完成前不要停)\n" + render(list)
+}
+
+// FinishCheck 是主循环的计划收口检查(装配层经 loop.CheckedFinish 注入):
+// 模型即将以纯文本收尾时,若本轮写过计划且清单仍有非 completed 项,返回
+// 纠正指令弹回一次(每轮最多一次,经轮内状态袋去重)——把"正文说完成了、
+// 状态还是 pending"的漂移在轮内抹平,不靠模型自觉。本轮没动过计划
+// (纯问答轮/残留计划未被认领)不催,残留由 PlanSection 的遗留标注处理。
+func (t *Todo) FinishCheck(ctx context.Context) string {
+	bag := runctx.TurnState(ctx)
+	if bag == nil {
+		return "" // 无轮语义(未经 agent 入口),不介入
+	}
+	key := sessionKey(ctx)
+	if _, written := bag.Load(turnWritten + key); !written {
+		return ""
+	}
+	if _, nagged := bag.Load(turnNagged + key); nagged {
+		return ""
+	}
+	open := 0
+	for _, item := range t.loadState(ctx, key).List {
+		if item.Status != "completed" {
+			open++
+		}
+	}
+	if open == 0 {
+		return ""
+	}
+	bag.Store(turnNagged+key, true)
+	return fmt.Sprintf("[计划收口] 你即将结束本轮回答,但任务计划还有 %d 项未收口。"+
+		"先用 todo_write 提交与实际一致的完整清单:已完成的标 completed;不再做或与本轮无关的直接删掉;"+
+		"确实要后续轮次继续的保持原状,并在回答里说明进展到哪。然后再给出最终回答。", open)
 }
 
 // Nudge 给能力集套上计划卡住提醒(Ring 0):存在进行中任务时,连续
