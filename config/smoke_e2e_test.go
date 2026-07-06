@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -315,8 +314,6 @@ func setupSmokeEnv(t *testing.T) *smokeBackend {
 	t.Setenv("MINIMAX_API_KEY", "dummy-for-script")
 	t.Setenv("SMOKE_API_BASE", srv.URL)
 	t.Setenv("SMOKE_DATA_DIR", t.TempDir())
-	fixture, _ := filepath.Abs("../examples/smoke/skills/pdf-fixture")
-	t.Setenv("PDF_SKILL_REF", "file:"+fixture)
 	return backend
 }
 
@@ -354,11 +351,11 @@ func TestSmokeAssembly(t *testing.T) {
 	}
 	mounted := app.AgentMounts["ops-manager"]
 	// 只有导出 skill 进挂载目录:catalog 5 + marketing 3 + crm 1
-	if got := len(mounted.List()); got != 10 {
+	if got := len(mounted.List()); got != 9 {
 		for _, m := range mounted.List() {
 			t.Log(m.Ref.String())
 		}
-		t.Fatalf("mounted entries = %d, want 10", got)
+		t.Fatalf("mounted entries = %d, want 9", got)
 	}
 	for _, ref := range []string{
 		"cap://skill/catalog/price-review",

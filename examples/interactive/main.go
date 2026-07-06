@@ -1,17 +1,16 @@
-// examples/smoke/run:把冒烟场景的 ops-manager 拉起为**可交互 agent**。
+// examples/interactive:冒烟场景的**可交互副本**——smoke 树保持纯测试用途,
+// 本目录独立演进。真实 MiniMax + 内置 mock 业务后端 + 真实 pdf 技能。
 //
 //	MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
-//	go run ./examples/smoke/run
-//
-// 与测试驱动的区别:这里是真人对话——业务后端(商品/库存/价格/客户)由
-// 本进程内置 mock 提供,模型是真实 MiniMax,pdf 技能默认拉真实的
-// anthropics/skills(可用 PDF_SKILL_REF 覆盖)。ask_user 与审批走终端。
+//	go run ./examples/interactive
 //
 // 试试:
 //
 //	> 用 quick-product-qa 查降噪耳机价格
 //	> 给 P100 做完整定价审查
-//	> 提取 /tmp/x.pdf 的文本(pdf 技能;需 python3 + pypdf)
+//	> 我们在卖哪些产品?汇总整理生成一份 PDF 汇报(pdf 技能;需 python3 + pypdf)
+//
+// pdf 技能是 Dangerous 风险:每次调用会在终端请求批准(y 放行,a 本会话免问)。
 package main
 
 import (
@@ -35,15 +34,14 @@ import (
 
 	"github.com/joewm9911/agent-kit/config"
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
-	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
-// mockBackend 是内置业务后端:与 config 包冒烟测试同一形状的五个端点。
+// mockBackend 是内置业务后端(商品/库存/价格/客户),与冒烟测试同形。
 func mockBackend() *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/products", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `[{"id":"P100","name":"降噪耳机","price":129}]`)
+		fmt.Fprint(w, `[{"id":"P100","name":"降噪耳机","price":129},{"id":"P200","name":"机械键盘","price":399}]`)
 	})
 	mux.HandleFunc("/products/", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"id":"P100","name":"降噪耳机","price":129,"cost":80}`)
@@ -60,7 +58,7 @@ func mockBackend() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// setDefault 只在未设置时注入默认值(已导出的环境不覆盖)。
+// setDefault 只在未设置时注入默认值(外部已导出的环境优先)。
 func setDefault(key, val string) {
 	if os.Getenv(key) == "" {
 		os.Setenv(key, val)
@@ -74,28 +72,19 @@ func main() {
 	srv := mockBackend()
 	defer srv.Close()
 
-	setDefault("SMOKE_MODEL_PROVIDER", "minimax")
-	setDefault("SMOKE_MODEL_BASE", "https://api.minimaxi.com/v1")
-	setDefault("SMOKE_API_BASE", srv.URL)
-	setDefault("SMOKE_DATA_DIR", "./data/smoke") // work_dir:技能装 <此目录>/agent-kit/.skills
-	// pdf 技能:默认真实 anthropics/skills(pin);离线/自定义用 PDF_SKILL_REF 覆盖
+	setDefault("OPS_MODEL_BASE", "https://api.minimaxi.com/v1")
+	setDefault("OPS_API_BASE", srv.URL)
+	setDefault("OPS_DATA_DIR", "./data/interactive") // 技能装 <此目录>/agent-kit/.skills
 	setDefault("PDF_SKILL_REF", "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d")
 
-	// 配置树相对仓库根;支持从仓库根或本目录运行
-	appPath := "examples/smoke/app.yaml"
+	// 配置树相对仓库根;也支持从本目录运行
+	appPath := "examples/interactive/app.yaml"
 	if _, err := os.Stat(appPath); err != nil {
-		appPath = "../app.yaml"
+		appPath = "app.yaml"
 	}
 	spec, err := config.LoadApp(appPath)
 	if err != nil {
 		log.Fatal(err)
-	}
-	// 冒烟树的压缩阈值是为测试强制触发调的(12/4),交互长任务里会中途
-	// 压掉工作上下文导致模型丢失工具调用惯性;交互模式放宽。
-	for _, as := range spec.Agents {
-		if as.Name == "ops-manager" {
-			as.Loop.Compaction = &loop.CompactionConfig{MaxMessages: 40, KeepRecent: 10}
-		}
 	}
 	app, err := config.BuildApp(context.Background(), spec, config.BuildOptions{Interactor: cli.NewCLI()})
 	if err != nil {
@@ -109,8 +98,8 @@ func main() {
 	// 进度切面:每一步模型/工具调用可见(含技能子循环内部)
 	callbacks.AppendGlobalHandlers(observe.Progress(os.Stdout))
 
-	skillsDir, _ := filepath.Abs(filepath.Join(os.Getenv("SMOKE_DATA_DIR"), "agent-kit", ".skills"))
-	fmt.Printf("ops-manager ready(模型: 真实 MiniMax;业务后端: 内置 mock;技能安装: %s)\n", skillsDir)
+	skillsDir, _ := filepath.Abs(filepath.Join(os.Getenv("OPS_DATA_DIR"), "agent-kit", ".skills"))
+	fmt.Printf("ops-manager ready(模型: MiniMax;业务后端: 内置 mock;技能安装: %s)\n", skillsDir)
 	fmt.Println("提示:pdf 技能跑脚本需要 python3 + pypdf(pip install pypdf);输入 exit 退出。")
 	fmt.Println("挂载能力:")
 	if mounted := app.AgentMounts["ops-manager"]; mounted != nil {

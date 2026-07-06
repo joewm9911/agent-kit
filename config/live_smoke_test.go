@@ -76,8 +76,6 @@ func liveEnv(t *testing.T, dataDir string) *smokeBackend {
 	}
 	t.Setenv("SMOKE_API_BASE", srv.URL)
 	t.Setenv("SMOKE_DATA_DIR", dataDir)
-	fixture, _ := filepath.Abs("../examples/smoke/skills/pdf-fixture")
-	t.Setenv("PDF_SKILL_REF", "file:"+fixture) // 测试封闭;交互 runner 换真实 github ref
 	return backend
 }
 

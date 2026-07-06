@@ -1,0 +1,6 @@
+# 文档域:外部技能包挂载点。PDF_SKILL_REF 默认真实 anthropics/skills
+# (runner 注入 pin sha),可覆盖为 file:/其他链接。
+skills:
+  - name: pdf
+    use: "${PDF_SKILL_REF}"
+    max_steps: 12

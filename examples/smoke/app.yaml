@@ -1,6 +1,6 @@
 # examples/smoke —— 端到端冒烟场景:电商运营中台。
 # 这棵配置树刻意用满框架全部能力,是能力覆盖的活文档:
-#   4 个 namespace(catalog 商品域 / marketing 营销域 / crm 客户域 / docs 文档域)
+#   3 个 namespace(catalog 商品域 / marketing 营销域 / crm 客户域)
 #   2 个 agent(ops-manager 运营主管 / support-bot 客服)
 #   8 种引擎、并行 graph、fork、{$input}、override 链、审批策略、预算、
 #   digest、会话记忆、todo……逐项由 config 包的 smoke 测试断言。
@@ -19,14 +19,6 @@ secrets:
 reliability:
   retry: {max_attempts: 3, base_delay: 500ms}
   tool_timeout: 60s
-
-# 外部技能包:安装到 <work_dir>/agent-kit/.skills;真实 pdf 技能带脚本
-# (Risk=Dangerous),准入需显式提升。
-work_dir: "${SMOKE_DATA_DIR}"
-catalog:
-  max_risk: dangerous
-skillpacks:
-  sync: auto
 
 model:
   provider: "${SMOKE_MODEL_PROVIDER}"

@@ -1,0 +1,39 @@
+# examples/interactive —— 冒烟场景的**可交互副本**(smoke 树保持纯测试用途,
+# 两树独立演进):真实 MiniMax + 内置 mock 业务后端 + 真实 pdf 技能
+# (anthropics/skills),入口 go run ./examples/interactive。
+#
+# 环境占位(runner 会注入默认,亦可外部覆盖):
+#   MINIMAX_API_KEY   必填(keychain 取)
+#   OPS_MODEL_BASE    模型 base_url(默认国内 api.minimaxi.com)
+#   OPS_API_BASE      业务后端(默认 runner 内置 mock)
+#   OPS_DATA_DIR      工作目录(默认 ./data/interactive;技能装其下 agent-kit/.skills)
+#   PDF_SKILL_REF     pdf 技能来源(默认真实 anthropics/skills,pin sha)
+
+secrets:
+  provider: env
+
+# 执行画像基线(app 层):model + reliability 全体执行单元的降级源。
+reliability:
+  retry: {max_attempts: 3, base_delay: 500ms}
+  tool_timeout: 60s
+
+# 外部技能包:安装到 <work_dir>/agent-kit/.skills;pdf 技能带脚本
+# (Risk=Dangerous),准入需显式提升。
+work_dir: "${OPS_DATA_DIR}"
+catalog:
+  max_risk: dangerous
+skillpacks:
+  sync: auto
+
+model:
+  provider: minimax
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+    base_url: "${OPS_MODEL_BASE}"
+
+agents:
+  - agents/ops-manager.yaml
+  - agents/support-bot.yaml
+
+observability:
+  log: false

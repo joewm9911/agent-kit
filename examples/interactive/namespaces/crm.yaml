@@ -1,0 +1,30 @@
+# 客户域:最小形态的能力域——一个工具 + 一个带 fork 的编排。
+# 同时充当"多 agent 共享 namespace"的验证对象(两个 agent 都挂载它,
+# 源连接按文件缓存共享,只 Sync 一次)。
+
+tools:
+  - name: cdp
+    type: http
+    config:
+      tools:
+        - name: get_customer
+          description: 查询客户画像
+          method: GET
+          url: "${OPS_API_BASE}/customers/{id}"
+          params:
+            id: {type: string, desc: 客户 ID, required: true, in: path}
+
+components:
+  - name: crm_analyst
+    engine: react
+    loop: {max_steps: 4}
+    prompt: "你是客户分析师。基于画像「{profile}」和用户当前的问题,给出跟进建议。"
+
+skills:
+  - name: customer-brief
+    description: 生成客户跟进简报(分析师继承当前对话背景)
+    params:
+      id: {type: string, desc: 客户 ID, required: true}
+    steps:
+      - {name: profile, use: "tools/cdp/get_customer", args: '{"id":"{id}"}', timeout: 30s}
+      - {name: advice,  use: "components/crm_analyst", args: '{"profile":"{profile}"}', context: fork}
