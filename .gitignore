@@ -1,3 +1,6 @@
 .claude/settings.local.json
 .DS_Store
 examples/examples
+
+# 冒烟中间产物(本地保留,不入库)
+/data/

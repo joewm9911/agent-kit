@@ -234,7 +234,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 func packReadCap(dir string) capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "pack", Name: "pack_read"},
-		Description: "读取本技能包内的打包文件。path 为空列出全部文件;非空返回该文件内容(只读,仅限包内)。",
+		Description: "读取技能包自带的参考文件(仅限包内打包的文档/模板,path 为空列清单)。注意:用户的文件不在包内,读写用户文件请用脚本执行工具(如 python)。",
 		Params:      capability.SingleParam("path", "包内相对路径;空 = 列出文件清单"),
 	}
 	return capability.New(meta, func(_ context.Context, argsJSON string) (string, error) {
@@ -265,7 +265,7 @@ func packReadCap(dir string) capability.Capability {
 			return "", err
 		}
 		if abs != base && !strings.HasPrefix(abs, base+string(filepath.Separator)) {
-			return "路径越界:只能读取技能包内的文件。", nil
+			return "路径越界:pack_read 只能读技能包自带的文件。要访问用户的文件路径,请改用脚本执行工具(如 python 的 open())。", nil
 		}
 		data, err := os.ReadFile(abs)
 		if err != nil {

@@ -26,11 +26,13 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -589,4 +591,115 @@ func TestLiveRealSkillpack(t *testing.T) {
 	out := run(t, app.Agents["comms"], "live-real",
 		"用 internal-comms 技能:给团队写一句话通告,内容是周五下午系统维护两小时。")
 	softContains(t, out, "维护", "真实技能按指令产出")
+}
+
+// ---- 真实 PDF 技能冒烟(中间产物保留)----
+
+// minimalPDF 构造一页含可提取文本标记的最小合法 PDF(pypdf 可读,已验证)。
+func minimalPDF(marker string) []byte {
+	content := []byte("BT /F1 24 Tf 72 700 Td (" + marker + ") Tj ET")
+	objs := [][]byte{
+		[]byte("<< /Type /Catalog /Pages 2 0 R >>"),
+		[]byte("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+		[]byte("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"),
+		append(append([]byte(fmt.Sprintf("<< /Length %d >>\nstream\n", len(content))), content...), []byte("\nendstream")...),
+		[]byte("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+	}
+	out := []byte("%PDF-1.4\n")
+	offsets := make([]int, 0, len(objs))
+	for i, o := range objs {
+		offsets = append(offsets, len(out))
+		out = append(out, []byte(fmt.Sprintf("%d 0 obj\n", i+1))...)
+		out = append(out, o...)
+		out = append(out, []byte("\nendobj\n")...)
+	}
+	xref := len(out)
+	out = append(out, []byte(fmt.Sprintf("xref\n0 %d\n0000000000 65535 f \n", len(objs)+1))...)
+	for _, off := range offsets {
+		out = append(out, []byte(fmt.Sprintf("%010d 00000 n \n", off))...)
+	}
+	out = append(out, []byte(fmt.Sprintf("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF", len(objs)+1, xref))...)
+	return out
+}
+
+// TestLiveRealPDFSkill:Anthropic 官方 pdf 技能的端到端真实冒烟。
+// 全链路:github 拉取(pin sha)→ .skills 物化 + lock → 真实 MiniMax 在
+// 隔离子循环里按 SKILL.md 指令写 pypdf 脚本 → workdir 绑定执行 → 提取
+// 真实 PDF 里的校验码回流。**中间产物全部保留**在 data/pdf-skill-smoke/
+// (.skills 物化树、skills.lock、输入 PDF、模型产出),供人工检视;
+// 二跑命中 lock 零网络。pypdf 依赖装入本目录 pylib(pip --target,
+// 不动系统环境),经 PYTHONPATH 生效。
+//
+//	MINIMAX_API_KEY=... SMOKE_LIVE=1 go test ./config/ -run TestLiveRealPDFSkill -v
+func TestLiveRealPDFSkill(t *testing.T) {
+	if os.Getenv("SMOKE_LIVE") == "" || os.Getenv("MINIMAX_API_KEY") == "" {
+		t.Skip("set SMOKE_LIVE=1 and MINIMAX_API_KEY to run")
+	}
+	liveEnv(t, t.TempDir())
+
+	// 中间产物根(保留,不清理):../data/pdf-skill-smoke
+	arts, err := filepath.Abs("../data/pdf-skill-smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workDir, pylib := filepath.Join(arts, "work"), filepath.Join(arts, "pylib")
+	for _, d := range []string{workDir, pylib} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// pypdf:装入产物目录(不动系统),经 PYTHONPATH 对 exec 子进程生效
+	t.Setenv("PYTHONPATH", pylib)
+	if err := exec.Command("python3", "-c", "import pypdf").Run(); err != nil {
+		t.Log("installing pypdf into", pylib)
+		if out, err := exec.Command("python3", "-m", "pip", "install", "--quiet", "--target", pylib, "pypdf").CombinedOutput(); err != nil {
+			t.Skipf("pip install pypdf failed(装不上依赖,跳过): %v\n%s", err, out)
+		}
+	}
+
+	const marker = "AGENTKIT-PDF-SMOKE-88231"
+	inputPDF := filepath.Join(workDir, "input.pdf")
+	if err := os.WriteFile(inputPDF, minimalPDF(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extractedTxt := filepath.Join(workDir, "extracted.txt")
+	_ = os.Remove(extractedTxt) // 上次运行的产物不影响本次断言
+
+	const ref = "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
+	cfg := &Config{
+		Profile: Profile{Model: &ModelConfig{Provider: "minimax", Config: map[string]any{
+			"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
+		}}},
+		Catalog:    CatalogConfig{MaxRisk: "dangerous"}, // pdf 技能带脚本 → Dangerous,显式准入
+		Skills:     []*SkillEntry{{Use: ref, Declaration: skill.Declaration{Name: "docs/pdf", MaxSteps: 12}}},
+		Skillpacks: SkillpacksConfig{Dir: filepath.Join(arts, ".skills")},
+		Agents: []AgentConfig{{
+			Name:         "pdf-worker",
+			Prompt:       PromptConfig{System: prompt.Value{Literal: "处理 PDF 文件一律使用 docs/pdf 技能,把文件绝对路径原样传给它。"}},
+			Capabilities: CapabilitiesConfig{Include: []string{"cap://skill/docs/pdf"}},
+		}},
+	}
+	app, err := Build(context.Background(), cfg, BuildOptions{Interactor: &liveInteractor{}})
+	if err != nil {
+		t.Fatalf("真实 pdf 技能装配失败: %v", err)
+	}
+	// 硬断言:vendoring 产物落盘
+	if _, err := os.Stat(filepath.Join(arts, ".skills", "skills.lock")); err != nil {
+		t.Fatalf("skills.lock 未落盘: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(arts, ".skills", "docs", "pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d", "SKILL.md")); err != nil {
+		t.Fatalf("pdf 技能未物化: %v", err)
+	}
+
+	task := fmt.Sprintf(
+		"用 docs/pdf 技能处理:提取 %s 的全部文本,报告其中 AGENTKIT- 开头的校验码,并把提取到的全文写入 %s。",
+		inputPDF, extractedTxt)
+	out := run(t, app.Agents["pdf-worker"], "live-pdf", task)
+
+	extracted, _ := os.ReadFile(extractedTxt)
+	if !strings.Contains(out, marker) && !strings.Contains(string(extracted), marker) {
+		t.Fatalf("校验码未被提取(回答与 %s 均无 %s)\n回答: %s", extractedTxt, marker, truncate(out, 400))
+	}
+	t.Logf("中间产物已保留:\n  技能物化: %s\n  供给链账本: %s\n  输入 PDF: %s\n  提取产物: %s",
+		filepath.Join(arts, ".skills"), filepath.Join(arts, ".skills", "skills.lock"), inputPDF, extractedTxt)
 }
