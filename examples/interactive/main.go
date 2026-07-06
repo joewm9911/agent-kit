@@ -1,8 +1,10 @@
 // examples/interactive:冒烟场景的**可交互副本**——smoke 树保持纯测试用途,
 // 本目录独立演进。真实 MiniMax + 内置 mock 业务后端 + 真实 pdf 技能。
 //
-//	MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
+//	ZHIPU_API_KEY=$(security find-generic-password -a agent-kit -s zhipu-api-key -w) \
 //	go run ./examples/interactive
+//
+// 默认模型智谱 glm-5.2;切 MiniMax:OPS_MODEL_PROVIDER=minimax + MINIMAX_API_KEY。
 //
 // 业务数据(backend.go,确定性生成):20 商品 × 6 品类 × 3 仓库 × 30 天
 // 销售序列 × 80 订单 × 10 客户,埋有异常(热销缺货 P103、下滑积压 P108、
@@ -47,6 +49,7 @@ import (
 
 	_ "github.com/joewm9911/agent-kit/impl/exec/docker" // 注册 docker 沙箱(exec.default_sandbox: docker)
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
+	_ "github.com/joewm9911/agent-kit/impl/model/zhipu"
 	_ "github.com/joewm9911/agent-kit/impl/source/exectool" // pdf 技能与计算域的脚本执行
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/vector"
@@ -67,13 +70,29 @@ func setDefault(key, val string) {
 }
 
 func main() {
-	if os.Getenv("MINIMAX_API_KEY") == "" {
-		log.Fatal("需要 MINIMAX_API_KEY(keychain: security find-generic-password -a agent-kit -s minimax-api-key -w)")
+	// 模型选择:provider 感知的 key/base/model 默认注入(key 永不写进配置文件)。
+	// 默认智谱 GLM;OPS_MODEL_PROVIDER=minimax 切回 MiniMax。
+	setDefault("OPS_MODEL_PROVIDER", "zhipu")
+	provider := os.Getenv("OPS_MODEL_PROVIDER")
+	switch provider {
+	case "minimax":
+		setDefault("OPS_MODEL_KEY", os.Getenv("MINIMAX_API_KEY"))
+		setDefault("OPS_MODEL_BASE", "https://api.minimaxi.com/v1")
+		if os.Getenv("OPS_MODEL_KEY") == "" {
+			log.Fatal("需要 MINIMAX_API_KEY(keychain: security find-generic-password -a agent-kit -s minimax-api-key -w)")
+		}
+	default: // zhipu(及自带 base 的 openai 兼容网关)
+		setDefault("OPS_MODEL_KEY", os.Getenv("ZHIPU_API_KEY"))
+		setDefault("OPS_MODEL_BASE", "https://open.bigmodel.cn/api/paas/v4")
+		if os.Getenv("OPS_MODEL_KEY") == "" {
+			log.Fatal("需要 ZHIPU_API_KEY(keychain: security find-generic-password -a agent-kit -s zhipu-api-key -w)")
+		}
 	}
+	setDefault("OPS_MODEL_NAME", "") // 空 = 厂商默认(glm-5.2 / MiniMax-Text-01)
+
 	srv := newBackendData().serve()
 	defer srv.Close()
 
-	setDefault("OPS_MODEL_BASE", "https://api.minimaxi.com/v1")
 	setDefault("OPS_API_BASE", srv.URL)
 	setDefault("OPS_DATA_DIR", "./data/interactive") // 技能装 <此目录>/agent-kit/.skills
 	setDefault("PDF_SKILL_REF", "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d")
@@ -125,7 +144,11 @@ func main() {
 	}
 
 	skillsDir, _ := filepath.Abs(filepath.Join(os.Getenv("OPS_DATA_DIR"), "agent-kit", ".skills"))
-	fmt.Printf("ops-manager ready(模型: MiniMax;业务后端: 内置 mock;会话: %s;技能安装: %s)\n", sessionID, skillsDir)
+	modelName := os.Getenv("OPS_MODEL_NAME")
+	if modelName == "" {
+		modelName = "厂商默认"
+	}
+	fmt.Printf("ops-manager ready(模型: %s/%s;业务后端: 内置 mock;会话: %s;技能安装: %s)\n", provider, modelName, sessionID, skillsDir)
 	fmt.Printf("脚本沙箱:%s\n", sandboxNote)
 	fmt.Println("提示:宿主直跑时 pdf 技能需要 python3 + pypdf(pip install pypdf);输入 exit 退出。")
 	fmt.Println("挂载能力:")

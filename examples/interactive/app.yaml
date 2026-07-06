@@ -12,6 +12,9 @@
 #   OPS_SANDBOX_IMAGE 沙箱镜像(默认 python:3.12-slim;pdf 技能进沙箱需带 pypdf 的镜像,
 #                     见 examples/exec-runtime/Dockerfile)
 #   OPS_SESSION       会话 ID(默认 cli-<pid>,每次启动新会话;传上次的 ID 续聊)
+#   OPS_MODEL_PROVIDER 模型厂商(默认 zhipu;可选 minimax / openai)
+#   OPS_MODEL_KEY      模型 API key(默认取 ZHIPU_API_KEY / MINIMAX_API_KEY)
+#   OPS_MODEL_NAME     模型名(空 = 各厂商默认:glm-5.2 / MiniMax-Text-01)
 
 secrets:
   provider: env
@@ -64,11 +67,14 @@ sources:
           runtime: python
           description: 执行一段 python3 脚本做计算/数据处理,返回 stdout。script=脚本内容(用 print 输出结果),args=空格分隔参数(可空)。
 
+# 模型可切换(runner 按 OPS_MODEL_PROVIDER 注入默认;默认 zhipu/glm-5.2):
+#   OPS_MODEL_PROVIDER=minimax MINIMAX_API_KEY=... 切回 MiniMax
 model:
-  provider: minimax
+  provider: "${OPS_MODEL_PROVIDER}"
   config:
-    api_key: "${MINIMAX_API_KEY}"
+    api_key: "${OPS_MODEL_KEY}"
     base_url: "${OPS_MODEL_BASE}"
+    model: "${OPS_MODEL_NAME}"
 
 agents:
   - agents/ops-manager.yaml
