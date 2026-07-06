@@ -1,0 +1,47 @@
+# examples/skillpack —— 外部技能包(skillpack)冒烟场景:
+# 一行 use: 引用 Anthropic 官方 pdf 技能(pin 到 commit),启动期下载安装到
+# <PROJECT_WORK_DIR>/agent-kit/.skills(SDK 固定约定,skills.lock 即供给链
+# 账本),真实模型在隔离
+# 子循环里按其 SKILL.md 指令写 pypdf 脚本、经 workdir 绑定的 python 工具
+# 执行。由 config 包 TestLiveRealPDFSkill 驱动:
+#
+#   MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
+#   SMOKE_LIVE=1 go test ./config/ -run TestLiveRealPDFSkill -v -count=1
+#
+# 环境占位:SMOKE_MODEL_PROVIDER / SMOKE_MODEL_BASE / MINIMAX_API_KEY /
+# SKILLPACK_WORK_DIR(宿主项目根;测试注入仓库根)。
+# 中间产物保留在本目录 work/(输入 PDF、提取产物)与 pylib/(pypdf 依赖,
+# pip --target 隔离安装,不动系统 Python),均已 gitignore。
+
+secrets:
+  provider: env
+
+model:
+  provider: "${SMOKE_MODEL_PROVIDER}"
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+    base_url: "${SMOKE_MODEL_BASE}"
+
+# pdf 技能带脚本 → Risk=Dangerous,必须显式提升目录准入
+catalog:
+  max_risk: dangerous
+
+# 宿主项目工作目录(PROJECT_WORK_DIR):skills 安装到固定约定位置
+# <work_dir>/agent-kit/.skills;不配 work_dir 时默认进程 cwd。
+work_dir: "${SKILLPACK_WORK_DIR}"
+
+skillpacks:
+  sync: auto
+
+skills:
+  - use: "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
+    name: docs/pdf
+    max_steps: 12
+
+agents:
+  - name: pdf-worker
+    description: PDF 处理工人
+    prompt:
+      system: "处理 PDF 文件一律使用 docs/pdf 技能,把文件绝对路径原样传给它。"
+    capabilities:
+      include: ["cap://skill/docs/pdf"]

@@ -18,7 +18,9 @@ import (
 
 // SkillpacksConfig 是 app 级外部技能包策略。
 type SkillpacksConfig struct {
-	// Dir 是物化目录,默认 .skills(相对配置文件所在目录)。
+	// Dir 覆盖安装目录(相对值以 work_dir 为基准)。默认固定约定:
+	// <work_dir>/agent-kit/.skills——agent-kit 是 SDK,落盘产物收口在
+	// 宿主项目的 agent-kit/ 命名空间下(对齐 node_modules/.terraform 心智)。
 	Dir string `yaml:"dir"`
 	// Sync:auto(默认,缺失即下载)| require-local(缺失 fail fast,
 	// 为打包期物化预留的收紧档)。
@@ -38,16 +40,28 @@ func (sc SkillpacksConfig) options() (skill.PackOptions, error) {
 	}
 }
 
-// root 解析物化目录:相对路径以配置文件所在目录为基准。
-func (sc SkillpacksConfig) root(baseDir string) string {
-	dir := sc.Dir
-	if dir == "" {
-		dir = ".skills"
+// root 解析安装目录:默认 <work_dir>/agent-kit/.skills(固定约定);
+// dir 显式覆盖时,相对值同样以 work_dir 为基准。
+func (sc SkillpacksConfig) root(workDir string) string {
+	base := resolveWorkDir(workDir)
+	if sc.Dir == "" {
+		return filepath.Join(base, "agent-kit", ".skills")
 	}
-	if !filepath.IsAbs(dir) && baseDir != "" {
-		dir = filepath.Join(baseDir, dir)
+	if filepath.IsAbs(sc.Dir) {
+		return sc.Dir
 	}
-	return dir
+	return filepath.Join(base, sc.Dir)
+}
+
+// resolveWorkDir 解析项目工作目录:空 = 进程 cwd;相对值以 cwd 解析。
+func resolveWorkDir(workDir string) string {
+	if workDir == "" {
+		workDir = "."
+	}
+	if abs, err := filepath.Abs(workDir); err == nil {
+		return abs
+	}
+	return workDir
 }
 
 // isExternalRef 判定 use: 值是否外部链接(与内部 component 引用值域天然

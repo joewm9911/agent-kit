@@ -567,14 +567,15 @@ func TestLiveRealSkillpack(t *testing.T) {
 	// pin 到具体 commit:供给链锁定,测试可复现
 	const ref = "github.com/anthropics/skills/skills/internal-comms@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
 
-	skillsRoot := t.TempDir()
+	projectRoot, _ := filepath.Abs("..") // 宿主项目根;安装到 <root>/agent-kit/.skills
+	skillsRoot := filepath.Join(projectRoot, "agent-kit", ".skills")
 	cfg := &Config{
+		WorkDir: projectRoot,
 		Profile: Profile{Model: &ModelConfig{Provider: "minimax", Config: map[string]any{
 			"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
 		}}},
-		Catalog:    CatalogConfig{MaxRisk: "dangerous"}, // 真实包可能带脚本
-		Skills:     []*SkillEntry{{Use: ref, Declaration: skill.Declaration{Name: "docs/internal-comms"}}},
-		Skillpacks: SkillpacksConfig{Dir: skillsRoot},
+		Catalog: CatalogConfig{MaxRisk: "dangerous"}, // 真实包可能带脚本
+		Skills:  []*SkillEntry{{Use: ref, Declaration: skill.Declaration{Name: "docs/internal-comms"}}},
 		Agents: []AgentConfig{{
 			Name:         "comms",
 			Prompt:       PromptConfig{System: prompt.Value{Literal: "写内部通告用 internal-comms 技能。"}},
@@ -585,7 +586,7 @@ func TestLiveRealSkillpack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("真实技能装配失败(生态兼容缺口): %v", err)
 	}
-	if _, err := os.Stat(skillsRoot + "/skills.lock"); err != nil {
+	if _, err := os.Stat(filepath.Join(skillsRoot, "skills.lock")); err != nil {
 		t.Fatalf("skills.lock 未落盘: %v", err)
 	}
 	out := run(t, app.Agents["comms"], "live-real",
@@ -622,13 +623,13 @@ func minimalPDF(marker string) []byte {
 	return out
 }
 
-// TestLiveRealPDFSkill:Anthropic 官方 pdf 技能的端到端真实冒烟。
-// 全链路:github 拉取(pin sha)→ .skills 物化 + lock → 真实 MiniMax 在
-// 隔离子循环里按 SKILL.md 指令写 pypdf 脚本 → workdir 绑定执行 → 提取
-// 真实 PDF 里的校验码回流。**中间产物全部保留**在 data/pdf-skill-smoke/
-// (.skills 物化树、skills.lock、输入 PDF、模型产出),供人工检视;
-// 二跑命中 lock 零网络。pypdf 依赖装入本目录 pylib(pip --target,
-// 不动系统环境),经 PYTHONPATH 生效。
+// TestLiveRealPDFSkill:Anthropic 官方 pdf 技能的端到端真实冒烟,场景配置
+// 在 examples/skillpack/pdf-smoke.yaml(与其他冒烟场景同一归属)。
+// 全链路:github 拉取(pin sha)→ 安装到仓库根 .skills(固定目录)+ lock
+// → 真实 MiniMax 按 SKILL.md 指令写 pypdf 脚本 → workdir 绑定执行 →
+// 提取真实 PDF 里的校验码回流。中间产物保留:.skills(技能物化 + 账本)、
+// examples/skillpack/work(输入 PDF、提取产物)、examples/skillpack/pylib
+// (pypdf 依赖,pip --target 隔离装,不动系统 Python);二跑命中 lock 零网络。
 //
 //	MINIMAX_API_KEY=... SMOKE_LIVE=1 go test ./config/ -run TestLiveRealPDFSkill -v
 func TestLiveRealPDFSkill(t *testing.T) {
@@ -637,18 +638,22 @@ func TestLiveRealPDFSkill(t *testing.T) {
 	}
 	liveEnv(t, t.TempDir())
 
-	// 中间产物根(保留,不清理):../data/pdf-skill-smoke
-	arts, err := filepath.Abs("../data/pdf-skill-smoke")
+	scenario, err := filepath.Abs("../examples/skillpack")
 	if err != nil {
 		t.Fatal(err)
 	}
-	workDir, pylib := filepath.Join(arts, "work"), filepath.Join(arts, "pylib")
+	// 宿主项目根 = 仓库根(模拟 SDK 被项目引用);安装目录是固定约定:
+	// <PROJECT_WORK_DIR>/agent-kit/.skills
+	projectRoot, _ := filepath.Abs("..")
+	t.Setenv("SKILLPACK_WORK_DIR", projectRoot)
+	skillsRoot := filepath.Join(projectRoot, "agent-kit", ".skills")
+	workDir, pylib := filepath.Join(scenario, "work"), filepath.Join(scenario, "pylib")
 	for _, d := range []string{workDir, pylib} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// pypdf:装入产物目录(不动系统),经 PYTHONPATH 对 exec 子进程生效
+	// pypdf:装入场景 pylib(不动系统),经 PYTHONPATH 对 exec 子进程生效
 	t.Setenv("PYTHONPATH", pylib)
 	if err := exec.Command("python3", "-c", "import pypdf").Run(); err != nil {
 		t.Log("installing pypdf into", pylib)
@@ -665,30 +670,20 @@ func TestLiveRealPDFSkill(t *testing.T) {
 	extractedTxt := filepath.Join(workDir, "extracted.txt")
 	_ = os.Remove(extractedTxt) // 上次运行的产物不影响本次断言
 
-	const ref = "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
-	cfg := &Config{
-		Profile: Profile{Model: &ModelConfig{Provider: "minimax", Config: map[string]any{
-			"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
-		}}},
-		Catalog:    CatalogConfig{MaxRisk: "dangerous"}, // pdf 技能带脚本 → Dangerous,显式准入
-		Skills:     []*SkillEntry{{Use: ref, Declaration: skill.Declaration{Name: "docs/pdf", MaxSteps: 12}}},
-		Skillpacks: SkillpacksConfig{Dir: filepath.Join(arts, ".skills")},
-		Agents: []AgentConfig{{
-			Name:         "pdf-worker",
-			Prompt:       PromptConfig{System: prompt.Value{Literal: "处理 PDF 文件一律使用 docs/pdf 技能,把文件绝对路径原样传给它。"}},
-			Capabilities: CapabilitiesConfig{Include: []string{"cap://skill/docs/pdf"}},
-		}},
+	cfg, err := Load(filepath.Join(scenario, "pdf-smoke.yaml"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	app, err := Build(context.Background(), cfg, BuildOptions{Interactor: &liveInteractor{}})
 	if err != nil {
 		t.Fatalf("真实 pdf 技能装配失败: %v", err)
 	}
-	// 硬断言:vendoring 产物落盘
-	if _, err := os.Stat(filepath.Join(arts, ".skills", "skills.lock")); err != nil {
+	// 硬断言:vendoring 产物落在固定目录
+	if _, err := os.Stat(filepath.Join(skillsRoot, "skills.lock")); err != nil {
 		t.Fatalf("skills.lock 未落盘: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(arts, ".skills", "docs", "pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d", "SKILL.md")); err != nil {
-		t.Fatalf("pdf 技能未物化: %v", err)
+	if _, err := os.Stat(filepath.Join(skillsRoot, "docs", "pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d", "SKILL.md")); err != nil {
+		t.Fatalf("pdf 技能未安装到固定目录 %s: %v", skillsRoot, err)
 	}
 
 	task := fmt.Sprintf(
@@ -700,6 +695,6 @@ func TestLiveRealPDFSkill(t *testing.T) {
 	if !strings.Contains(out, marker) && !strings.Contains(string(extracted), marker) {
 		t.Fatalf("校验码未被提取(回答与 %s 均无 %s)\n回答: %s", extractedTxt, marker, truncate(out, 400))
 	}
-	t.Logf("中间产物已保留:\n  技能物化: %s\n  供给链账本: %s\n  输入 PDF: %s\n  提取产物: %s",
-		filepath.Join(arts, ".skills"), filepath.Join(arts, ".skills", "skills.lock"), inputPDF, extractedTxt)
+	t.Logf("中间产物已保留:\n  技能安装: %s(固定目录)\n  供给链账本: %s\n  输入 PDF: %s\n  提取产物: %s",
+		skillsRoot, filepath.Join(skillsRoot, "skills.lock"), inputPDF, extractedTxt)
 }

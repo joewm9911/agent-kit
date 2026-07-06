@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"gopkg.in/yaml.v3"
@@ -46,9 +45,6 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := expandParse(raw, sp, path, &cfg); err != nil {
 		return nil, err
-	}
-	if abs, err := filepath.Abs(path); err == nil {
-		cfg.baseDir = filepath.Dir(abs) // .skills 等相对路径的基准
 	}
 	return &cfg, nil
 }
@@ -170,7 +166,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	packRoot := cfg.Skillpacks.root(cfg.baseDir)
+	packRoot := cfg.Skillpacks.root(cfg.WorkDir)
 	for _, entry := range cfg.Skills {
 		skillDeps := skill.Deps{
 			Todo:    componentTodo(),

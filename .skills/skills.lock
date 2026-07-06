@@ -1,0 +1,13 @@
+# skills.lock:外部 skillpack 的供给链事实(ref → 版本 + 内容树哈希)。
+# 由装配期生成,建议提交版本库(与 go.sum 同待遇);哈希不符即 fail fast。
+packs:
+    - ref: github.com/anthropics/skills/skills/internal-comms@9d2f1ae187231d8199c64b5b762e1bdf2244733d
+      name: docs/internal-comms
+      version: 9d2f1ae187231d8199c64b5b762e1bdf2244733d
+      sha256: 77e2c706620ca99f5f0903bd0e7fe59809d614ea1aa602971e75adee6a10ec12
+      synced_at: "2026-07-06T03:39:52Z"
+    - ref: github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d
+      name: docs/pdf
+      version: 9d2f1ae187231d8199c64b5b762e1bdf2244733d
+      sha256: b8b6cddcf77c7bf3db7bf04f142e6b1d684dc9d3b5a342cfaa835eda5268028e
+      synced_at: "2026-07-06T03:40:43Z"

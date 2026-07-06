@@ -115,10 +115,6 @@ func LoadApp(path string) (*AppSpec, error) {
 	if err := expandParse(raw, sp, path, &app); err != nil {
 		return nil, err
 	}
-	if abs, err := filepath.Abs(path); err == nil {
-		app.baseDir = filepath.Dir(abs) // .skills 相对路径的基准
-	}
-
 	appDir := filepath.Dir(path)
 	spec := &AppSpec{App: app}
 	nsCache := map[string]*NamespaceSpec{} // 绝对路径 → 解析结果(多 agent 共享解析)
@@ -325,7 +321,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	if err != nil {
 		return nil, nil, err
 	}
-	packRoot := app.Skillpacks.root(app.baseDir)
+	packRoot := app.Skillpacks.root(app.WorkDir)
 
 	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
 	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。

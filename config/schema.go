@@ -293,8 +293,10 @@ type Config struct {
 
 	Observability ObservabilityConfig `yaml:"observability"`
 
-	// baseDir 是配置文件所在目录(Load 填充),.skills 等相对路径的基准。
-	baseDir string
+	// WorkDir 是宿主项目工作目录(PROJECT_WORK_DIR):agent-kit 作为 SDK
+	// 的落盘产物(.skills 等)收口在 <work_dir>/agent-kit/ 之下。
+	// 默认进程 cwd;相对值也以 cwd 解析。
+	WorkDir string `yaml:"work_dir"`
 }
 
 // AppConfig 是应用级入口(app.yaml):进程级资源与接线板 + 全局默认。
@@ -337,8 +339,8 @@ type AppConfig struct {
 
 	Observability ObservabilityConfig `yaml:"observability"`
 
-	// baseDir 是 app.yaml 所在目录(LoadApp 填充),.skills 相对路径的基准。
-	baseDir string
+	// WorkDir 是宿主项目工作目录(PROJECT_WORK_DIR),同单文件 Config.WorkDir。
+	WorkDir string `yaml:"work_dir"`
 }
 
 // AgentFile 是 agent 维度的配置文件(agents/<name>.yaml)。

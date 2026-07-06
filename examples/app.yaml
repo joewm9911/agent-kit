@@ -61,9 +61,10 @@ agents:
 #       verification_token: "${secret:FEISHU_VERIFY_TOKEN}"
 #       encrypt_key: "${secret:FEISHU_ENCRYPT_KEY}"
 
-# ---- 外部技能包:skills 列表直接引用链接,启动期下载到 .skills(vendoring)----
+# ---- 外部技能包:skills 列表直接引用链接,启动期下载安装(vendoring)----
+# 安装目录固定:<work_dir>/agent-kit/.skills(work_dir 默认进程 cwd,可配)
+# work_dir: "."
 # skillpacks:
-#   dir: .skills                 # 物化目录(默认;skills.lock 建议提交 git)
 #   sync: auto                   # auto=缺失即下载 | require-local=生产收紧
 # skills:
 #   - use: "github.com/anthropics/skills/pdf@v1.2.0"    # 一行集成,必须 pin
