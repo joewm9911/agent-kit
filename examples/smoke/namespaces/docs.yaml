@@ -1,0 +1,7 @@
+# 文档域:外部技能包的挂载点。PDF_SKILL_REF 由运行方注入——
+#   离线测试: file:<仓库内 fixture>(封闭、零网络)
+#   交互运行: github.com/anthropics/skills/skills/pdf@<sha>(真实技能)
+skills:
+  - name: pdf
+    use: "${PDF_SKILL_REF}"
+    max_steps: 12
