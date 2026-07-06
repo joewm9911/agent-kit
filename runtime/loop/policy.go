@@ -62,6 +62,10 @@ type ApprovalState struct {
 	remembered *lru[bool] // 进程内模式:session|refKey → 放行与否
 	kv         store.KV
 	ttl        time.Duration
+	// promptMu 串行化交互式弹窗:并行工具调用会同时越过弹窗前的记忆
+	// 检查排队弹窗,第一次"总是允许"救不了已排队的后续弹窗——获得此锁
+	// 后必须锁内重查记忆(见 approval.go 的 gate)。
+	promptMu sync.Mutex
 }
 
 // NewApprovalState 编译策略并构造运行态,规则非法时报错(fail fast)。
@@ -136,6 +140,10 @@ func akey(ctx context.Context, refKey string) string {
 }
 
 // recall 查询会话级决策记忆。
+// promptSerialize/promptRelease 串行化交互式弹窗(见 gate 的锁内重查)。
+func (st *ApprovalState) promptSerialize() { st.promptMu.Lock() }
+func (st *ApprovalState) promptRelease()   { st.promptMu.Unlock() }
+
 func (st *ApprovalState) recall(ctx context.Context, refKey string) (allowed, ok bool) {
 	if !st.remember {
 		return false, false

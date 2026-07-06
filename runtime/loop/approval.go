@@ -10,6 +10,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
+	"strings"
 )
 
 // ApprovalMode 决定改动性操作的放行策略。
@@ -148,6 +149,20 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 		Arguments:   argsJSON,
 	}
 
+	// 弹窗串行化 + 锁内重查:模型并行发起一批同能力调用时,全部 goroutine
+	// 会在任何弹窗被回答之前越过上面的 recall 检查——若不在锁内重查,
+	// 用户第一次"总是允许/拒绝"救不了已排队的其余弹窗(实测 11 连弹)。
+	if st != nil {
+		st.promptSerialize()
+		defer st.promptRelease()
+		if allowed, ok := st.recall(ctx, meta.Ref.Key()); ok {
+			if allowed {
+				return exec(ctx)
+			}
+			return deniedResult(ctx, meta.Ref.Name), nil
+		}
+	}
+
 	// 支持决策记忆的通道:多出"总是允许/拒绝"档
 	if di, ok := it.(DecisionInteractor); ok && st != nil {
 		d, err := di.ApproveDecision(ctx, req)
@@ -163,7 +178,7 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 		case DecisionAlwaysDeny:
 			st.memorize(ctx, meta.Ref.Key(), false)
 		}
-		return fmt.Sprintf("操作未执行:用户拒绝了 %s 的本次调用。请调整方案或询问用户意图。", meta.Ref.Name), nil
+		return deniedResult(ctx, meta.Ref.Name), nil
 	}
 
 	ok, err := it.Approve(ctx, req)
@@ -171,9 +186,44 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 		return fmt.Sprintf("操作未执行:批准流程失败(%v)。", err), nil
 	}
 	if !ok {
-		return fmt.Sprintf("操作未执行:用户拒绝了 %s 的本次调用。请调整方案或询问用户意图。", meta.Ref.Name), nil
+		return deniedResult(ctx, meta.Ref.Name), nil
 	}
 	return exec(ctx)
+}
+
+// deniedResult 生成"用户拒绝"的结果,并把拒绝记入轮状态袋——收口检查
+// (DeniedCallsCheck)据此强制终答如实区分已执行与被拒绝。
+func deniedResult(ctx context.Context, name string) string {
+	if bag := runctx.TurnState(ctx); bag != nil {
+		key := deniedCallsKey + runctx.Scope(ctx)
+		v, _ := bag.Load(key)
+		names, _ := v.([]string)
+		bag.Store(key, append(names, name))
+	}
+	return fmt.Sprintf("操作未执行:用户拒绝了 %s 的本次调用。请调整方案或询问用户意图。", name)
+}
+
+const deniedCallsKey = "loop.denied\x1f"
+
+// DeniedCallsCheck 是收口检查(经 CheckedFinish 注入):本轮存在被用户
+// 拒绝的调用时,弹回一次要求终答如实区分已执行与被拒绝的操作——实测
+// 模型会把被拒的调用也标成"已完成"(诚实性,Ring 0 兜底)。每轮最多一次。
+func DeniedCallsCheck(ctx context.Context) string {
+	bag := runctx.TurnState(ctx)
+	if bag == nil {
+		return ""
+	}
+	key := deniedCallsKey + runctx.Scope(ctx)
+	v, _ := bag.Load(key)
+	names, _ := v.([]string)
+	if len(names) == 0 {
+		return ""
+	}
+	if _, nagged := bag.Load(key + "\x1fnagged"); nagged {
+		return ""
+	}
+	bag.Store(key+"\x1fnagged", true)
+	return fmt.Sprintf("[收口检查] 本轮有 %d 个调用被用户拒绝、并未执行(%s)。最终回答必须如实区分:哪些操作真正执行成功、哪些被拒绝未执行,不得声称全部完成。", len(names), strings.Join(names, "、"))
 }
 
 type gatedTool struct {

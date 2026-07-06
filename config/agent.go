@@ -165,7 +165,12 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	// 各持各的后端,互不覆盖。todo 仅启用时构造;result 仅消化启用时构造。
 	todoOn := ac.Todo.Enabled == nil || *ac.Todo.Enabled
 	var td *todo.Todo
-	loopModel := m // 主循环用的模型(可能追加收口守卫);摘要类消费(digest/压缩)用裸 m
+	// 收口检查(Ring 0,只包主循环模型——digest/压缩的摘要 Generate 也是
+	// 纯文本收尾,包上会被误弹回;skill 子循环的临时清单随调用即弃):
+	// - DeniedCallsCheck:本轮有被用户拒绝的调用 → 终答必须如实区分,
+	//   不得声称全部完成(实测模型会把被拒调用标成已完成);
+	// - todo.FinishCheck:计划未收口 → 弹回补交(仅 todo 启用时)。
+	finishChecks := []func(context.Context) string{loop.DeniedCallsCheck}
 	if todoOn {
 		kv, ttl, err := resolveKV(ac.Todo.Store, ac.Todo.StoreConfig, ac.Stores, "todo")
 		if err != nil {
@@ -173,14 +178,10 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		}
 		td = todo.New(kv, ttl)
 		caps = append(caps, td.Capabilities()...)
-		// 计划收口守卫(Ring 0):纯文本收尾前清单仍有未收口项就弹回一次,
-		// "正文说完成、状态还 pending"的漂移在轮内抹平。只包主循环模型——
-		// digest/压缩的摘要 Generate 也是纯文本收尾,包上会被误弹回;
-		// skill 子循环的临时清单随调用即弃(ClearCurrent),无需收口。
-		loopModel = loop.CheckedFinish(m, td.FinishCheck)
+		finishChecks = append(finishChecks, td.FinishCheck)
 	}
 	// 重复调用终止器套最外:强制收束产生的最终文本不再被内层守卫弹回。
-	loopModel = loop.RepeatBreak(loopModel)
+	loopModel := loop.RepeatBreak(loop.CheckedFinish(m, finishChecks...))
 	var resultKV store.KV
 	var resultTTL time.Duration
 	if eff.digestOver() > 0 {
