@@ -26,5 +26,5 @@ skills:
     params:
       id: {type: string, desc: 客户 ID, required: true}
     steps:
-      - {name: profile, use: "tools/cdp/get_customer", args: '{"id":"{id}"}', timeout: 30s}
+      - {name: profile, use: "tools/cdp/get_customer", args: '{"id":"{id}"}', timeout: 30s}   # 纯 HTTP,30s 足够
       - {name: advice,  use: "components/crm_analyst", args: '{"profile":"{profile}"}', context: fork}

@@ -106,7 +106,7 @@ skills:
     params:
       sku:      {type: string, desc: 商品 SKU, required: true}
       question: {type: string, desc: 用户关注点}
-    step_defaults: {timeout: 45s}
+    step_defaults: {timeout: 240s}   # 分析步是子循环(多次模型调用),深推理模型下 45s 必超
     steps:
       - {name: detail,    use: "tools/shop/get_product",  needs: [], args: '{"id":"{sku}"}', retry: 1}
       - {name: inventory, use: "tools/shop/get_inventory", needs: [], args: '{"sku":"{sku}"}'}
