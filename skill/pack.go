@@ -198,7 +198,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 
 	layers := loop.PromptLayers{Loop: loop.DefaultLoopPromptNoTodo, Persona: m.Body}
 	runner, err := engine.Build(ctx, "react", &engine.Assembly{
-		Model:        mdl,
+		Model:        loop.RepeatBreak(mdl), // 重复调用终止器(与 applyGates 的断路器配套)
 		Capabilities: caps,
 		MaxSteps:     ov.MaxSteps,
 		Modifier:     layers.Modifier(),

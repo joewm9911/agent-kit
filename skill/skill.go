@@ -189,7 +189,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		layers.Plan = deps.Todo.PlanSection
 	}
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
-		Model:        m,
+		Model:        loop.RepeatBreak(m), // 重复调用终止器(与 applyGates 的断路器配套)
 		Capabilities: caps,
 		MaxSteps:     decl.MaxSteps,
 		Modifier:     layers.Modifier(),
@@ -321,8 +321,8 @@ func buildDeclModel(ctx context.Context, decl *ModelDecl, retry loop.RetryConfig
 }
 
 // applyGates 给内部工具面下沉全部 Ring 0 闸门(治理不止步于 agent 主循环):
-// 超时(最内,只计执行时间)→ 消化 → 截断 → 效果日志 → 审批(最外,批准
-// 等待不占超时)。审批模式、预算门闸、结果暂存与挂起日志经调用方 ctx 生效,
+// 超时(最内,只计执行时间)→ 重复断路 → 消化 → 截断 → 效果日志 → 审批
+// (最外,批准等待不占超时)。审批模式、预算门闸、结果暂存与挂起日志经调用方 ctx 生效,
 // 同一能力被不同策略的 agent 复用时各自独立。Build 与 BuildPack 共用此栈,
 // 内部 skill 与外部 skillpack 的治理永不分叉。
 func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, deps Deps) []capability.Capability {
@@ -330,6 +330,7 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
 	}
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
+	caps = loop.DedupCalls(caps) // 重复调用断路器(执行域按调用唯一,计数互不串)
 	caps = loop.DigestResults(caps, m, deps.DigestOver)
 	caps = loop.TruncateResults(caps, 0)
 	caps = suspend.DurableEffects(caps)

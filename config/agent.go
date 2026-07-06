@@ -179,6 +179,8 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		// skill 子循环的临时清单随调用即弃(ClearCurrent),无需收口。
 		loopModel = loop.CheckedFinish(m, td.FinishCheck)
 	}
+	// 重复调用终止器套最外:强制收束产生的最终文本不再被内层守卫弹回。
+	loopModel = loop.RepeatBreak(loopModel)
 	var resultKV store.KV
 	var resultTTL time.Duration
 	if eff.digestOver() > 0 {
@@ -260,6 +262,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
 	}
 	caps = loop.TimeoutTools(caps, eff.toolTimeout().Std())
+	caps = loop.DedupCalls(caps)                            // 重复调用断路器(同轮同参打转拦截)
 	caps = loop.DigestResults(caps, m, eff.digestOver())    // 大结果消化
 	caps = loop.TruncateResults(caps, eff.digestTruncate()) // 工具结果硬截断(Ring 0)
 	caps = suspend.DurableEffects(caps)                     // 效果日志(挂起恢复的重放不二次执行)
