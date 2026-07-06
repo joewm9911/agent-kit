@@ -78,7 +78,7 @@ func isExternalRef(use string) bool {
 // 脚本型包(检测到 runtimes)经 source 注册表构造 exec 工具,工作目录
 // 绑定包目录——config 不碰 impl,exectool 未空导入时 fail fast 指路。
 func buildSkillpack(ctx context.Context, root string, opts skill.PackOptions,
-	spec skill.PackSpec, ov skill.PackOverrides, deps skill.Deps) (capability.Capability, error) {
+	spec skill.PackSpec, ov skill.PackOverrides, deps skill.Deps, execCfg ExecConfig) (capability.Capability, error) {
 
 	pd, err := skill.EnsurePack(ctx, root, spec, opts)
 	if err != nil {
@@ -94,9 +94,12 @@ func buildSkillpack(ctx context.Context, root string, opts skill.PackOptions,
 		for _, rt := range m.Runtimes {
 			tools = append(tools, map[string]any{"name": rt, "runtime": rt})
 		}
-		src, err := source.New(ctx, "exec", "pack", map[string]any{
+		// app 级默认沙箱策略透传:pack 脚本随 exec.default_sandbox 进沙箱
+		// (require_sandbox 时无沙箱即 fail fast),workdir 仍绑包目录。
+		execConf := execCfg.injectInto(map[string]any{
 			"workdir": m.Dir, "timeout": "60s", "tools": tools,
 		})
+		src, err := source.New(ctx, "exec", "pack", execConf)
 		if err != nil {
 			return nil, fmt.Errorf("skillpack %s 含脚本(%v),需要 exec 源(空导入 impl/source/exectool): %w", spec.Use, m.Runtimes, err)
 		}

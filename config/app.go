@@ -339,7 +339,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 			mount:    mnt.Override,      // per-mount 覆盖(最高优)
 			appModel: app.Profile.Model, // 判断 component 是否需专属 model
 			nsPath:   mnt.Path, srcCache: srcCache,
-			packRoot: packRoot, packOpts: packOpts,
+			packRoot: packRoot, packOpts: packOpts, execCfg: app.Exec,
 		})
 		if err != nil {
 			return nil, nil, err

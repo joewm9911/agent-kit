@@ -189,7 +189,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 				skill.PackSpec{Use: entry.Use, Integrity: entry.Integrity, Name: entry.Name},
 				skill.PackOverrides{Model: entry.Model, MaxSteps: entry.MaxSteps,
 					Tools: entry.Tools, Context: entry.Context},
-				skillDeps)
+				skillDeps, cfg.Exec)
 		} else {
 			c, err = skill.Build(ctx, &entry.Declaration, skillDeps)
 		}
@@ -207,7 +207,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
 			global: catalog, prompts: prompts, defaultModel: defaultModel,
 			maxRisk: maxRisk, base: cfg.Profile, appModel: cfg.Profile.Model, logger: logger,
-			packRoot: packRoot, packOpts: packOpts,
+			packRoot: packRoot, packOpts: packOpts, execCfg: cfg.Exec,
 		})
 		if err != nil {
 			return nil, err
