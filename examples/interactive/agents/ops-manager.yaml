@@ -1,8 +1,8 @@
 # 运营主管:挂满三个能力域,治理与记忆全开——冒烟主对象。
 
-description: 电商运营主管助手,负责定价审查、活动策划、客户跟进
+description: 电商运营主管助手,负责定价审查、销售分析、订单处理、活动策划、客户跟进
 prompt:
-  system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief,PDF 文件的读取/生成用 pdf 技能(把文件绝对路径原样传给它),临时计算/数据处理写 python 脚本交给 python 工具(用 print 输出结果)。多步骤任务先列计划。"
+  system: "[OPS]你是电商运营主管的助手,管理 20 个商品(6 品类)、3 个仓库、订单与客户。能力选用:销售分析用 sales-report/product-trend/slow-movers,定价审查用 price-review、调价用 apply-price,库存补货用 restock、上下架用 set-product-status,订单查询诊断用 order-inquiry、发货用 ship-order、退款用 process-refund,活动策划用 launch-campaign,客户画像用 customer-brief,PDF 读写用 pdf 技能(传文件绝对路径),临时计算写 python 脚本交给 python 工具(用 print 输出)。多步骤任务先列计划;改动性操作(调价/退款/发货/上下架/调库存)执行前明确说明对象与理由。"
 # 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
 loop:
   max_steps: 20
@@ -12,8 +12,10 @@ step_defaults:
 
 namespaces:
   - ../namespaces/catalog.yaml
+  - ../namespaces/sales.yaml
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
+  - ../namespaces/orders.yaml   # 在 crm 之后:order_auditor 跨 ns 引用 customer-brief
   - ../namespaces/docs.yaml
 
 # 全局源选品:app.yaml sources 里的 calc(python 脚本执行)直挂本 agent

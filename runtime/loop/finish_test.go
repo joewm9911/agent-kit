@@ -165,3 +165,34 @@ func TestFinishGuardBareJSONTodos(t *testing.T) {
 		t.Fatalf("calls = %d, want 2", m.Calls)
 	}
 }
+
+// TestFinishGuardNarratedPlan:整轮零调用、正文叙述"状态: pending/in_progress"
+// 的计划文档(叙述式执行)被识别弹回。
+func TestFinishGuardNarratedPlan(t *testing.T) {
+	m := testmodel.New(
+		schema.AssistantMessage("### 任务计划\n1. 生成销售报表\n   - 状态: `pending`\n2. 识别亏本商品\n   - 状态: in_progress", nil),
+		schema.AssistantMessage("", []schema.ToolCall{{ID: "c1", Type: "function",
+			Function: schema.FunctionCall{Name: "todo_write", Arguments: `{"todos":[{"content":"生成销售报表","status":"pending"}]}`}}}),
+	)
+	out, err := FinishGuard(m).Generate(context.Background(), []*schema.Message{schema.UserMessage("先列计划再动手")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.ToolCalls) != 1 || m.Calls != 2 {
+		t.Fatalf("narrated plan must bounce into real calls, got %+v calls=%d", out, m.Calls)
+	}
+}
+
+// TestFinishGuardHonestyMark:弹回预算耗尽仍是伪执行 → 放行但打免责标记,
+// 编造内容不冒充真实执行。
+func TestFinishGuardHonestyMark(t *testing.T) {
+	stubborn := schema.AssistantMessage("1. 生成报表 - 状态: in_progress\n2. 识别亏本 - 状态: pending", nil)
+	m := testmodel.New(stubborn, stubborn, stubborn)
+	out, err := FinishGuard(m).Generate(context.Background(), []*schema.Message{schema.UserMessage("动手")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.Content, "[系统提示]") || m.Calls != 3 {
+		t.Fatalf("stubborn pseudo-plan must be annotated, got %q calls=%d", out.Content[:30], m.Calls)
+	}
+}

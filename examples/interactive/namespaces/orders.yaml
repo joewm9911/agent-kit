@@ -1,0 +1,77 @@
+# 订单域:查询 + 状态流转 + 退款(改动性,受审批约束)。
+# 后端强校验状态机:待支付→已支付→已发货→已完成;退款仅限
+# 已支付/已发货/已完成;非法流转返回错误(考察模型读错误自纠)。
+tools:
+  - name: oms
+    type: http
+    config:
+      timeout_sec: 20
+      tools:
+        - name: list_orders
+          description: 查询订单列表,可按状态/客户/商品过滤(返回 total 与前 limit 条,默认 20)
+          method: GET
+          url: "${OPS_API_BASE}/orders"
+          params:
+            status:   {type: string, desc: "订单状态(待支付|已支付|已发货|已完成|已取消|已退款)", in: query}
+            customer: {type: string, desc: 客户 ID(如 C3), in: query}
+            sku:      {type: string, desc: 商品 SKU, in: query}
+            limit:    {type: string, desc: 返回条数上限, in: query}
+        - name: get_order
+          description: 查询订单详情
+          method: GET
+          url: "${OPS_API_BASE}/orders/{id}"
+          params:
+            id: {type: string, desc: 订单号(如 O-1042), required: true, in: path}
+        - name: update_order_status
+          description: 推进订单状态(改动性;合法流转:待支付→已支付→已发货→已完成,待支付/已支付可取消)
+          method: POST
+          url: "${OPS_API_BASE}/orders/status"
+          risk: mutating
+          params:
+            id:     {type: string, desc: 订单号, required: true, in: body}
+            status: {type: string, desc: 目标状态, required: true, in: body}
+        - name: refund_order
+          description: 订单退款(改动性;仅限已支付/已发货/已完成的订单)
+          method: POST
+          url: "${OPS_API_BASE}/orders/refund"
+          risk: mutating
+          params:
+            id:     {type: string, desc: 订单号, required: true, in: body}
+            reason: {type: string, desc: 退款原因, required: true, in: body}
+
+components:
+  # 订单诊断:查单 → 结合客户画像与售后政策给处理意见(跨 ns 引用 crm skill)
+  - name: order_auditor
+    engine: react
+    loop: {max_steps: 6}
+    prompt: "你是订单专员。任务:{task}。用 list_orders/get_order 查数据;涉及客户时用 customer-brief 拉画像;给出诊断与处理建议,不要直接执行改动。"
+    tools:
+      - "tools/oms/list_orders"
+      - "tools/oms/get_order"
+      - "cap://skill/crm/customer-brief"
+
+skills:
+  - name: order-inquiry
+    description: 订单查询与诊断:查单、找卡单、分析客户订单情况(只读)
+    params:
+      task: {type: string, desc: 查询/诊断任务描述, required: true}
+    steps:
+      - {name: audit, use: "components/order_auditor", args: '{"task":"{task}"}', context: fork}
+
+  - name: ship-order
+    description: 订单发货(改动性:把已支付订单推进到已发货)
+    params:
+      id: {type: string, desc: 订单号, required: true}
+    steps:
+      - {name: ship, use: "tools/oms/update_order_status", args: '{"id":"{id}","status":"已发货"}'}
+
+  - name: process-refund
+    description: 处理订单退款(改动性,受审批约束):先核订单状态,再执行退款
+    params:
+      id:     {type: string, desc: 订单号, required: true}
+      reason: {type: string, desc: 退款原因, required: true}
+    steps:
+      - {name: check,  use: "tools/oms/get_order", args: '{"id":"{id}"}'}
+      - {name: refund, use: "tools/oms/refund_order", args: '{"id":"{id}","reason":"{reason}"}'}
+      - {name: brief,  use: model, args: "退款已执行:{refund}。结合订单信息「{check}」给客户一句简洁的告知话术。"}
+    output: brief

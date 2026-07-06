@@ -32,6 +32,11 @@ const finishGuardBounces = 2
 // ```json {"todos": [...]}```——实测 MiniMax 的高频变体)。
 var pseudoCallRe = regexp.MustCompile(`(?s)(functions|tools|multi_tool_use)\.[a-zA-Z_][\w.-]*\s*\(|<tool_call>|"tool_calls"\s*:|"todos"\s*:\s*\[`)
 
+// pseudoPlanRe 抓"叙述式执行":正文把任务状态写成机器状态词(状态: pending /
+// status: in_progress),通常整段是一份"看起来在执行"的计划文档,实际零调用
+// (实测变体:零工具调用的轮次输出五步计划,每步配参数 JSON 和 in_progress)。
+var pseudoPlanRe = regexp.MustCompile("(?i)(状态|status)\\s*[::]\\s*[`'\"]?(pending|in_progress)")
+
 // emptyPromises 是"承诺后续执行"的收尾话术(纯文本终局时它们必然落空)。
 var emptyPromises = []string{
 	"请稍等", "稍等片刻", "我将继续", "我会继续", "接下来我将", "接下来我会",
@@ -42,6 +47,9 @@ var emptyPromises = []string{
 func badFinal(content string) (reason string, bad bool) {
 	if pseudoCallRe.MatchString(content) {
 		return "输出里出现了文本形式的工具调用——那只是字符串,不会被执行", true
+	}
+	if pseudoPlanRe.MatchString(content) {
+		return "输出把任务状态写成了正文(pending/in_progress)——计划必须用 todo_write 真实登记,每一步执行必须发起真实的工具调用,文字叙述不会执行任何东西", true
 	}
 	for _, p := range emptyPromises {
 		if strings.Contains(content, p) {
@@ -67,6 +75,16 @@ func (g *finishGuard) Generate(ctx context.Context, msgs []*schema.Message, opts
 				"要继续执行任务,必须现在就发起真实的工具调用(tool_call);"+
 				"任务已完成就直接给出最终结果;确实无法完成就说明原因并更新计划。不要输出代码块形式的调用,不要承诺稍后。"))
 		out, err = g.inner.Generate(ctx, msgs, opts...)
+	}
+	// 弹回预算耗尽仍是伪执行形态:放行但打上显式标记——编造的"执行结果"
+	// 不允许冒充真实执行(实测退化形态:弹回后模型反而虚构 completed 与
+	// 数据;守卫是纠偏不是硬闸,但诚实性必须兜底)。
+	if err == nil && len(out.ToolCalls) == 0 {
+		if _, bad := badFinal(out.Content); bad {
+			annotated := *out
+			annotated.Content = "[系统提示] 本轮未执行任何真实的工具调用,以下内容由模型直接生成、未经业务数据验证,请谨慎采信。\n\n" + out.Content
+			return &annotated, nil
+		}
 	}
 	return out, err
 }

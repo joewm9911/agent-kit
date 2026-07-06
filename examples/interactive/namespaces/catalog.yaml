@@ -9,11 +9,13 @@ tools:
       timeout_sec: 20
       tools:
         - name: search_products
-          description: 按关键词搜索商品,返回商品列表 JSON
+          description: 搜索商品,支持关键词/品类/状态过滤,返回商品列表 JSON(含价格与成本)
           method: GET
           url: "${OPS_API_BASE}/products"
           params:
-            q: {type: string, desc: 搜索关键词, required: true, in: query}
+            q:        {type: string, desc: 关键词(名称/品类/ID 模糊匹配,可空=全部), in: query}
+            category: {type: string, desc: "品类(音频|键鼠外设|显示器|存储|网络设备|智能家居)", in: query}
+            status:   {type: string, desc: "状态(在售|下架|预售)", in: query}
         - name: get_product
           description: 按商品 ID 查询商品详情
           method: GET
@@ -34,6 +36,23 @@ tools:
           params:
             sku:   {type: string, desc: 商品 SKU, required: true, in: body}
             price: {type: string, desc: 新价格, required: true, in: body}
+        - name: set_product_status
+          description: 商品上下架(改动性操作;status 取 在售|下架|预售)
+          method: POST
+          url: "${OPS_API_BASE}/products/status"
+          risk: mutating
+          params:
+            sku:    {type: string, desc: 商品 SKU, required: true, in: body}
+            status: {type: string, desc: 目标状态, required: true, in: body}
+        - name: adjust_stock
+          description: 调整某仓库的可用库存(改动性操作;delta 为增减数量,负数=扣减)
+          method: POST
+          url: "${OPS_API_BASE}/stock"
+          risk: mutating
+          params:
+            sku:       {type: string, desc: 商品 SKU, required: true, in: body}
+            warehouse: {type: string, desc: "仓库(仓A|仓B|仓C)", required: true, in: body}
+            delta:     {type: number, desc: 增减数量, required: true, in: body}
 
 components:
   # react:价格分析师——工具子集 + 大结果消化 + 内部压缩,fork 的接收方
@@ -112,6 +131,28 @@ skills:
       price: {type: string, desc: 新价格, required: true}
     steps:
       - {name: apply, use: "tools/shop/update_price", args: '{"sku":"{sku}","price":"{price}"}'}
+
+  # 上下架:单步透传 mutating 工具
+  - name: set-product-status
+    description: 商品上下架(改动性操作,受审批策略约束)
+    params:
+      sku:    {type: string, desc: 商品 SKU, required: true}
+      status: {type: string, desc: "目标状态(在售|下架|预售)", required: true}
+    steps:
+      - {name: set, use: "tools/shop/set_product_status", args: '{"sku":"{sku}","status":"{status}"}'}
+
+  # 补货:查库存后调整,两步编排
+  - name: restock
+    description: 给指定仓库补货(改动性操作):先核当前库存,再执行调整
+    params:
+      sku:       {type: string, desc: 商品 SKU, required: true}
+      warehouse: {type: string, desc: 仓库, required: true}
+      qty:       {type: string, desc: 补货数量, required: true}
+    steps:
+      - {name: before, use: "tools/shop/get_inventory", args: '{"sku":"{sku}"}'}
+      - {name: adjust, use: "tools/shop/adjust_stock", args: '{"sku":"{sku}","warehouse":"{warehouse}","delta":{qty}}'}
+      - {name: brief,  use: model, args: "补货完成:{adjust}。一句话汇报补货前后变化(补货前:见库存明细的对应仓库)。"}
+    output: brief
 
   # rewoo 导出
   - name: bulk-audit

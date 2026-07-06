@@ -1,0 +1,61 @@
+# 销售域:销售数据查询与分析。工具两个(单品序列/全店汇总)+ 分析师
+# 组件 + 三个导出 skill(报表/单品诊断/滞销扫描)。
+tools:
+  - name: sales
+    type: http
+    config:
+      timeout_sec: 20
+      tools:
+        - name: get_sales
+          description: 查询单个商品近 N 天的每日销量与销售额序列(days 默认 30)
+          method: GET
+          url: "${OPS_API_BASE}/sales/{sku}"
+          params:
+            sku:  {type: string, desc: 商品 SKU, required: true, in: path}
+            days: {type: string, desc: 查询天数(1-30), in: query}
+        - name: sales_summary
+          description: 全店/品类销售汇总:每个商品近 N 天总销量、销售额、环比趋势(trend_pct 为负=下滑)
+          method: GET
+          url: "${OPS_API_BASE}/sales-summary"
+          params:
+            days:     {type: string, desc: 统计天数(1-30), in: query}
+            category: {type: string, desc: 品类(可空=全店), in: query}
+
+components:
+  # 销售分析师:拿汇总找异常,再对可疑单品下钻日序列
+  - name: sales_analyst
+    engine: react
+    loop: {max_steps: 8, compaction: {max_messages: 24, keep_recent: 8}}
+    digest: {over: 3000}
+    prompt: "你是销售分析师。任务:{task}。先用 sales_summary 看全局(注意 trend_pct 负值=下滑、units 为 0=滞销),对可疑商品用 get_sales 下钻每日序列,给出量化结论。"
+    tools:
+      - "tools/sales/get_sales"
+      - "tools/sales/sales_summary"
+
+skills:
+  - name: sales-report
+    description: 生成销售报表:全店或指定品类近 N 天的销量/销售额/趋势分析
+    params:
+      scope: {type: string, desc: 范围描述(如"全店"或品类名), required: true}
+      days:  {type: string, desc: 统计天数}
+    steps:
+      - {name: analysis, use: "components/sales_analyst",
+         args: '{"task":"生成 {scope} 近 {days} 天的销售报表:总量、头部与尾部商品、上升与下滑趋势"}', context: fork}
+      - {name: report, use: model,
+         args: "把分析「{analysis}」整理成结构化报表:总览/头部商品/风险商品/建议。"}
+    output: report
+
+  - name: product-trend
+    description: 诊断单个商品的销售趋势(上升/下滑/滞销)并给出动作建议
+    params:
+      sku: {type: string, desc: 商品 SKU, required: true}
+    steps:
+      - {name: series, use: "tools/sales/get_sales", args: '{"sku":"{sku}","days":"30"}'}
+      - {name: verdict, use: model,
+         args: "基于销售数据「{series}」判断该商品趋势(上升/平稳/下滑/滞销),量化说明,并给一条动作建议。"}
+
+  - name: slow-movers
+    description: 扫描滞销与下滑商品,输出候选清单(清仓/促销/调价对象)
+    steps:
+      - {name: scan, use: "components/sales_analyst",
+         args: '{"task":"找出滞销(近30天销量为0或接近0)与明显下滑(trend_pct 显著为负)的商品,输出候选清单及严重程度"}'}

@@ -4,12 +4,21 @@
 //	MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
 //	go run ./examples/interactive
 //
-// 试试:
+// 业务数据(backend.go,确定性生成):20 商品 × 6 品类 × 3 仓库 × 30 天
+// 销售序列 × 80 订单 × 10 客户,埋有异常(热销缺货 P103、下滑积压 P108、
+// 亏本在售 P115、滞销 P117、卡单 O-1042、退款申请 O-1063…)。改动性操作
+// (调价/退款/发货/补货/上下架)真实生效,改完再查能看到变化。
+//
+// 试试(由浅入深):
 //
 //	> 用 quick-product-qa 查降噪耳机价格
 //	> 给 P100 做完整定价审查
-//	> 我们在卖哪些产品?汇总整理生成一份 PDF 汇报(pdf 技能;需 python3 + pypdf)
-//	> 用 python 算一下 P100 提价 8% 后毛利率是多少,顺便打印 platform 看跑在哪
+//	> 音频品类近 30 天卖得怎么样?出一份销售报表
+//	> 订单 O-1042 什么情况?卡在哪一步,该怎么处理
+//	> 客户 C3 要求给订单 O-1063 退款,查一下订单和客户等级,按售后政策处理
+//	> 扫一遍全店:哪些商品在亏本卖?哪些滞销?哪些热销但库存撑不住?
+//	  逐个给出处理方案(调价/清仓/补货),先列计划再执行,改动前跟我确认
+//	> 把上面的分析结果汇总生成一份 PDF 周报(pdf 技能;宿主直跑需 pypdf)
 //
 // 脚本执行与沙箱:app.yaml 的 exec: 块是 app 级默认沙箱策略,覆盖计算域的
 // python 工具与 pdf 技能包的脚本。本 runner 启动时检测 docker:
@@ -31,8 +40,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -52,27 +59,6 @@ import (
 	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
-// mockBackend 是内置业务后端(商品/库存/价格/客户),与冒烟测试同形。
-func mockBackend() *httptest.Server {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/products", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `[{"id":"P100","name":"降噪耳机","price":129},{"id":"P200","name":"机械键盘","price":399}]`)
-	})
-	mux.HandleFunc("/products/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"id":"P100","name":"降噪耳机","price":129,"cost":80}`)
-	})
-	mux.HandleFunc("/inventory/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, `{"sku":"P100","warehouses":%q}`, strings.Repeat("仓A:120;仓B:88;", 400))
-	})
-	mux.HandleFunc("/price", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"ok":true}`)
-	})
-	mux.HandleFunc("/customers/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"id":"C1","tier":"VIP","note":"多次咨询降噪耳机"}`)
-	})
-	return httptest.NewServer(mux)
-}
-
 // setDefault 只在未设置时注入默认值(外部已导出的环境优先)。
 func setDefault(key, val string) {
 	if os.Getenv(key) == "" {
@@ -84,7 +70,7 @@ func main() {
 	if os.Getenv("MINIMAX_API_KEY") == "" {
 		log.Fatal("需要 MINIMAX_API_KEY(keychain: security find-generic-password -a agent-kit -s minimax-api-key -w)")
 	}
-	srv := mockBackend()
+	srv := newBackendData().serve()
 	defer srv.Close()
 
 	setDefault("OPS_MODEL_BASE", "https://api.minimaxi.com/v1")
