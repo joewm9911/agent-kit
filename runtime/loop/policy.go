@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 // ApprovalRule 是一条参数级审批规则。静态 Risk 分级回答不了"同一个
@@ -46,18 +48,26 @@ type compiledRule struct {
 
 // ApprovalState 是 agent 级的审批运行态:模式 + 编译后的策略 + 决策
 // 记忆。由 agent 在每次运行装入 ctx,对主循环与 skill 内部统一生效。
+//
+// 决策记忆两种模式(装配层注入,消费方不感知):kv == nil 用进程内有界
+// LRU(单副本默认);kv != nil 落 store.KV,"总是允许/拒绝"的决定跨副本
+// 生效——同一会话打到另一副本不再重复询问。键按 (agent, session, 能力)
+// 隔离。
 type ApprovalState struct {
 	Mode ApprovalMode
 
 	rules      []compiledRule
 	remember   bool
 	mu         sync.Mutex
-	remembered *lru[bool] // session|refKey → 放行与否(有界,最久未用淘汰)
+	remembered *lru[bool] // 进程内模式:session|refKey → 放行与否
+	kv         store.KV
+	ttl        time.Duration
 }
 
 // NewApprovalState 编译策略并构造运行态,规则非法时报错(fail fast)。
-func NewApprovalState(mode ApprovalMode, policy ApprovalPolicy) (*ApprovalState, error) {
-	st := &ApprovalState{Mode: mode, remember: policy.Remember, remembered: newLRU[bool](4096)}
+// kv 为 nil 时决策记忆留在进程内,非 nil 落外置后端(跨副本一致)。
+func NewApprovalState(mode ApprovalMode, policy ApprovalPolicy, kv store.KV, ttl time.Duration) (*ApprovalState, error) {
+	st := &ApprovalState{Mode: mode, remember: policy.Remember, remembered: newLRU[bool](4096), kv: kv, ttl: ttl}
 	for i, r := range policy.Rules {
 		cr := compiledRule{args: r.Args}
 		switch r.Action {
@@ -120,25 +130,48 @@ func matchValue(val, pat string) bool {
 	return false
 }
 
+// akey 是决策记忆键:按 (agent, session, 能力) 隔离。
+func akey(ctx context.Context, refKey string) string {
+	return "approval\x1f" + runctx.Agent(ctx) + "\x1f" + runctx.Session(ctx) + "\x1f" + refKey
+}
+
 // recall 查询会话级决策记忆。
-func (st *ApprovalState) recall(session, refKey string) (allowed, ok bool) {
+func (st *ApprovalState) recall(ctx context.Context, refKey string) (allowed, ok bool) {
 	if !st.remember {
 		return false, false
 	}
+	if st.kv != nil {
+		raw, ok, err := st.kv.Get(ctx, akey(ctx, refKey))
+		if err != nil || !ok {
+			return false, false
+		}
+		return raw[0] == '1', true
+	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	allowed, ok = st.remembered.get(session + "|" + refKey)
+	allowed, ok = st.remembered.get(akey(ctx, refKey))
 	return allowed, ok
 }
 
-// memorize 记住一次"总是允许/拒绝"的决定(会话级)。
-func (st *ApprovalState) memorize(session, refKey string, allowed bool) {
+// memorize 记住一次"总是允许/拒绝"的决定(会话级)。KV 故障时静默降级
+// 为不记忆(失败模式安全:多问一次,不会放行未批准的操作)。
+func (st *ApprovalState) memorize(ctx context.Context, refKey string, allowed bool) {
 	if !st.remember {
+		return
+	}
+	if st.kv != nil {
+		v := []byte("0")
+		if allowed {
+			v = []byte("1")
+		}
+		_ = st.kv.Update(ctx, akey(ctx, refKey), func([]byte, bool) ([]byte, error) {
+			return v, nil
+		}, st.ttl)
 		return
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.remembered.put(session+"|"+refKey, allowed)
+	st.remembered.put(akey(ctx, refKey), allowed)
 }
 
 type keyApprovalState struct{}

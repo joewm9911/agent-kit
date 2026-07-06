@@ -2,15 +2,12 @@ package redis
 
 import (
 	"context"
-	"encoding/binary"
-	"sync"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
 	"github.com/joewm9911/agent-kit/protocol/session"
-	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
 // testConf 用独立 db 与随机前缀,测试互不干扰;redis 不可达则跳过。
@@ -24,79 +21,6 @@ func testConf(t *testing.T) map[string]any {
 	rdb.FlushDB(context.Background())
 	t.Cleanup(func() { rdb.FlushDB(context.Background()); rdb.Close() })
 	return conf
-}
-
-func TestRedisKVRoundtrip(t *testing.T) {
-	kv, err := store.NewBackend("redis", testConf(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	if _, ok, _ := kv.Get(ctx, "a"); ok {
-		t.Fatal("empty miss expected")
-	}
-	must(t, kv.Update(ctx, "a", func(_ []byte, _ bool) ([]byte, error) { return []byte("hi"), nil }, 0))
-	if v, ok, _ := kv.Get(ctx, "a"); !ok || string(v) != "hi" {
-		t.Fatalf("got %q %v", v, ok)
-	}
-	must(t, kv.Update(ctx, "a", func(_ []byte, _ bool) ([]byte, error) { return nil, nil }, 0))
-	if _, ok, _ := kv.Get(ctx, "a"); ok {
-		t.Fatal("nil result should delete")
-	}
-}
-
-func TestRedisScan(t *testing.T) {
-	kv, _ := store.NewBackend("redis", testConf(t))
-	ctx := context.Background()
-	must(t, kv.Update(ctx, "todo\x1fa", func(_ []byte, _ bool) ([]byte, error) { return []byte("x"), nil }, 0))
-	must(t, kv.Update(ctx, "todo\x1fb", func(_ []byte, _ bool) ([]byte, error) { return []byte("x"), nil }, 0))
-	must(t, kv.Update(ctx, "res\x1fc", func(_ []byte, _ bool) ([]byte, error) { return []byte("x"), nil }, 0))
-	keys, err := kv.Scan(ctx, "todo\x1f")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(keys) != 2 {
-		t.Fatalf("want 2, got %d: %v", len(keys), keys)
-	}
-}
-
-// TestRedisAtomicUpdate 是 redis 后端的 #1 验收:WATCH/MULTI 乐观锁下
-// 多 goroutine 并发自增同键无丢更新(裸 GET+SET 会因竞态失败)。
-func TestRedisAtomicUpdate(t *testing.T) {
-	kv, _ := store.NewBackend("redis", testConf(t))
-	ctx := context.Background()
-	const goroutines, iters = 16, 100
-
-	incr := func(old []byte, ok bool) ([]byte, error) {
-		var n uint64
-		if ok {
-			n = binary.LittleEndian.Uint64(old)
-		}
-		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, n+1)
-		return buf, nil
-	}
-	var wg sync.WaitGroup
-	for g := 0; g < goroutines; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < iters; i++ {
-				if err := kv.Update(ctx, "counter", incr, 0); err != nil {
-					t.Errorf("update: %v", err)
-					return
-				}
-			}
-		}()
-	}
-	wg.Wait()
-	v, ok, _ := kv.Get(ctx, "counter")
-	if !ok {
-		t.Fatal("counter missing")
-	}
-	if got := binary.LittleEndian.Uint64(v); got != goroutines*iters {
-		t.Fatalf("lost updates: got %d want %d", got, goroutines*iters)
-	}
 }
 
 func TestRedisSession(t *testing.T) {

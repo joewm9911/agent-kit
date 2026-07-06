@@ -228,9 +228,27 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	if mode == "" {
 		mode = loop.ApprovalInteractive
 	}
-	approval, err := loop.NewApprovalState(mode, ac.Approval.ApprovalPolicy)
+	// budget/approval 运行态后端:不配 store 留进程内(单副本默认),
+	// 配了(如 redis)则账目/决策记忆跨副本一致。
+	var approvalKV store.KV
+	var approvalTTL time.Duration
+	if ac.Approval.Store != "" {
+		var err error
+		if approvalKV, approvalTTL, err = resolveKV(ac.Approval.Store, ac.Approval.StoreConfig, ac.Stores, "approval"); err != nil {
+			return nil, err
+		}
+	}
+	approval, err := loop.NewApprovalState(mode, ac.Approval.ApprovalPolicy, approvalKV, approvalTTL)
 	if err != nil {
 		return nil, err
+	}
+	var budgetKV store.KV
+	var budgetTTL time.Duration
+	if ac.Budget.Store != "" {
+		var err error
+		if budgetKV, budgetTTL, err = resolveKV(ac.Budget.Store, ac.Budget.StoreConfig, ac.Stores, "budget"); err != nil {
+			return nil, err
+		}
 	}
 	if eff.digestOver() > 0 {
 		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
@@ -340,7 +358,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
 		Store: sessStore, Window: ac.Session.Window, Compaction: comp,
 		Structured: enforcer, Interactor: interactor,
-		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget),
+		Approval: approval, Budget: loop.NewBudgetGate(ac.Budget.BudgetConfig, budgetKV, budgetTTL),
 		RecordTools: record,
 		ResultKV:    resultKV, ResultTTL: resultTTL,
 	}), nil

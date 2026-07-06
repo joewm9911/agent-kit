@@ -15,7 +15,7 @@ import (
 
 func TestBudgetHardStop(t *testing.T) {
 	m := BudgetModel(testmodel.New())
-	gate := NewBudgetGate(BudgetConfig{MaxModelCalls: 2})
+	gate := NewBudgetGate(BudgetConfig{MaxModelCalls: 2}, nil, 0)
 	ctx := WithBudget(runctx.With(context.Background(), "a", "s1"), gate)
 	for i := 0; i < 2; i++ {
 		if _, err := m.Generate(ctx, []*schema.Message{schema.UserMessage("q")}); err != nil {
@@ -27,7 +27,7 @@ func TestBudgetHardStop(t *testing.T) {
 	if !errors.As(err, &exhausted) {
 		t.Fatalf("expect ErrBudgetExhausted, got %v", err)
 	}
-	if calls, _ := gate.Spend("s1"); calls != 2 {
+	if calls, _ := gate.Spend(ctx); calls != 2 {
 		t.Fatalf("spend = %d", calls)
 	}
 	// 预算按会话隔离:另一个会话不受影响

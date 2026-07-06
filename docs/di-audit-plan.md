@@ -36,7 +36,7 @@
 |---|---|---|---|---|
 | **P1** | `builtin.todoKV`+`SetStore`、`loop.resultKV`+`SetResultBackend` | 配置解析出的后端被推进**进程级可变全局单例**,消费方读全局而非持有 | 🔴 高(含正确性 bug) | **本方案修复** |
 | **P2** | `todoKV = store.NewInMemory()`、`resultKV = store.NewInMemory()` | 消费方(builtin/loop)**硬编码具体默认实现** | 🟡 中(P1 症状) | 随 P1 一并消除 |
-| P3 | `callbacks.AppendGlobalHandlers`(config.Build/BuildApp、observe.Install) | 可观测 handler 挂到 eino **进程级全局**,跨 app/跨 agent 共享、测试里累积 | 🟡 中(eino 施加) | **已修**:`InstallTrajectory` 按 path 幂等(`observe.Install` 原有 Once);根治(per-invocation callback)另议 |
+| P3 | `callbacks.AppendGlobalHandlers`(config.Build/BuildApp、observe.Install) | 可观测 handler 挂到 eino **进程级全局**,跨 app/跨 agent 共享、测试里累积 | 🟡 中(eino 施加) | **已修**(两轮):库内全局删除,幂等账本上移装配层 config/observe.go,按配置值去重 |
 | P4 | 各处 `slog.Default()` 兜底(serving/source/config/observe/channel) | 未注入 logger 时够全局默认 logger;注入不一致 | 🟢 低(约定俗成) | **已复查**:均为构造边界兜底,logger 统一注入,合规 |
 | ✅ 非问题 | source/store/session/memory/model/channel/prompt/engine/exec/vectorstore 的 `init` 注册表 | 全局 map 但**写在 init、只读于 New()**,是插件扩展机制(对齐 `database/sql`) | — | 保持 |
 

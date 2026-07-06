@@ -14,7 +14,8 @@ import (
 
 	"github.com/joewm9911/agent-kit/core/runctx"
 	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
-	_ "github.com/joewm9911/agent-kit/impl/session/redis" // store.KV + session redis
+	_ "github.com/joewm9911/agent-kit/impl/session/redis"
+	_ "github.com/joewm9911/agent-kit/impl/store/redis" // store.KV redis(todo/result/suspend/budget/approval)
 	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 )
@@ -87,18 +88,23 @@ func loadStressApp(t *testing.T, rconf map[string]any, ix *stressInteractor) *Ap
 		if as.Name != "ops-manager" {
 			continue
 		}
-		// 四类存储全落 redis(session/todo/result/memory),验证 redis provider
-		// 对四种 store 类型的分布式一致性。
+		// 六类状态全落 redis(session/todo/result/memory/budget/approval),
+		// 验证 redis 后端对全部有状态模块的分布式一致性。
 		as.Stores = []StoreInstance{
 			{Name: "sessions", Kind: "session", Type: "redis", Config: rconf},
 			{Name: "plans", Kind: "todo", Type: "redis", Config: rconf},
 			{Name: "cache", Kind: "result", Type: "redis", Config: rconf},
 			{Name: "ltm", Kind: "memory", Type: "redis", Config: rconf},
+			{Name: "gov-budget", Kind: "budget", Type: "redis", Config: rconf},
+			{Name: "gov-approval", Kind: "approval", Type: "redis", Config: rconf},
 		}
 		as.Session.Store = "cap://store/session/sessions"
 		as.Session.StoreConfig = nil
 		as.Todo.Store = "cap://store/todo/plans"
 		as.Digest.Store = "cap://store/result/cache"
+		// 治理运行态同样落 redis:预算账目与审批决策记忆跨副本一致。
+		as.Budget.Store = "cap://store/budget/gov-budget"
+		as.Approval.Store = "cap://store/approval/gov-approval"
 		// 压低阈值:多轮对话必然越过,强制走上下文压缩(window 40 容得下)。
 		// compaction 现属执行画像 loop.compaction。
 		as.Loop.Compaction = &loop.CompactionConfig{MaxMessages: 6, KeepRecent: 2}

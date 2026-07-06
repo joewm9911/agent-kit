@@ -48,7 +48,7 @@ type PromptsConfig struct {
 // store 指过去;跨 agent 共享=在 app 层声明一次,各 agent 引用同名实例。
 type StoreInstance struct {
 	Name   string         `yaml:"name"`
-	Kind   string         `yaml:"kind"` // session | memory | todo | result
+	Kind   string         `yaml:"kind"` // session | memory | todo | result | suspend | budget | approval
 	Type   string         `yaml:"type"` // inmemory | file | redis | ...(各自后端注册表)
 	Config map[string]any `yaml:"config"`
 	TTL    loop.Duration  `yaml:"ttl"` // 保留时长(todo/result),0=不过期
@@ -154,15 +154,34 @@ type CapabilitiesConfig struct {
 }
 
 // ApprovalConfig 是审批治理模块:模式 + 参数级策略(规则 + 决策记忆);
-// mode 之外的 remember/rules 内联自 loop.ApprovalPolicy。
+// mode 之外的 remember/rules 内联自 loop.ApprovalPolicy。store 槽指定
+// 决策记忆后端(cap://store/approval/<name> 或裸 type):不配留进程内,
+// 配 redis 则"总是允许/拒绝"跨副本生效。
 type ApprovalConfig struct {
 	Mode                string           `yaml:"mode"` // interactive(默认) | auto | deny
 	loop.ApprovalPolicy `yaml:",inline"` // remember, rules
+	Store               string           `yaml:"store"`
+	StoreConfig         map[string]any   `yaml:"store_config"`
 }
 
 // isZero 报告 ApprovalConfig 是否未声明(用于 app→agent 整块降级)。
 func (a ApprovalConfig) isZero() bool {
-	return a.Mode == "" && !a.Remember && len(a.Rules) == 0
+	return a.Mode == "" && !a.Remember && len(a.Rules) == 0 && a.Store == "" && a.StoreConfig == nil
+}
+
+// BudgetConfig 是预算治理模块:上限(内联自 loop.BudgetConfig)+ 账目
+// 后端。store 槽(cap://store/budget/<name> 或裸 type)不配时账目留在
+// 进程内(单副本);配 redis 则同一会话跨副本共用一份账目,预算是真正
+// 的分布式硬上限。
+type BudgetConfig struct {
+	loop.BudgetConfig `yaml:",inline"` // max_model_calls, max_tokens
+	Store             string           `yaml:"store"`
+	StoreConfig       map[string]any   `yaml:"store_config"`
+}
+
+// isZero 报告 BudgetConfig 是否未声明(用于 app→agent 整块降级)。
+func (b BudgetConfig) isZero() bool {
+	return b.MaxModelCalls == 0 && b.MaxTokens == 0 && b.Store == "" && b.StoreConfig == nil
 }
 
 // AgentConfig 声明一个 agent(唯一主循环是 ReAct)。执行画像(model/loop/
@@ -193,7 +212,7 @@ type AgentConfig struct {
 	// 治理边界(Ring 0,agent 独占、不被 namespace 覆盖):审批 + 预算 +
 	// 结构化输出,三块各自顶层。
 	Approval         ApprovalConfig        `yaml:"approval"`
-	Budget           loop.BudgetConfig     `yaml:"budget"`
+	Budget           BudgetConfig          `yaml:"budget"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
 }
 
@@ -296,7 +315,7 @@ type AppConfig struct {
 	Memory           MemoryConfig          `yaml:"memory"`
 	Todo             TodoConfig            `yaml:"todo"`
 	Approval         ApprovalConfig        `yaml:"approval"`
-	Budget           loop.BudgetConfig     `yaml:"budget"`
+	Budget           BudgetConfig          `yaml:"budget"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
 
 	// Agents 是 agent 文件路径列表,相对 app.yaml 所在目录。

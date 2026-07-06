@@ -91,7 +91,7 @@ func TestSkillInternalBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gate := loop.NewBudgetGate(loop.BudgetConfig{MaxModelCalls: 2})
+	gate := loop.NewBudgetGate(loop.BudgetConfig{MaxModelCalls: 2}, nil, 0)
 	ctx := loop.WithBudget(runctx.With(context.Background(), "host", "sess-1"), gate)
 	ctx = loop.WithApprovalMode(ctx, loop.ApprovalAuto)
 
@@ -100,7 +100,7 @@ func TestSkillInternalBudget(t *testing.T) {
 	if !errors.As(err, &exhausted) {
 		t.Fatalf("skill internal calls should hit host session budget, got %v", err)
 	}
-	if calls, _ := gate.Spend("sess-1"); calls != 2 {
+	if calls, _ := gate.Spend(ctx); calls != 2 {
 		t.Fatalf("spend = %d, want 2 (internal calls counted)", calls)
 	}
 }

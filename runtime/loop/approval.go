@@ -130,7 +130,7 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 			return fmt.Sprintf("操作被拒绝:%s 的本次调用命中审批策略的 deny 规则。请调整参数或换路径。", meta.Ref.Name), nil
 		}
 		// 决策记忆:用户此前对该能力选择过"总是允许/拒绝"
-		if allowed, ok := st.recall(runctx.Session(ctx), meta.Ref.Key()); ok {
+		if allowed, ok := st.recall(ctx, meta.Ref.Key()); ok {
 			if allowed {
 				return exec(ctx)
 			}
@@ -156,12 +156,12 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 		}
 		switch d {
 		case DecisionAlwaysAllow:
-			st.memorize(runctx.Session(ctx), meta.Ref.Key(), true)
+			st.memorize(ctx, meta.Ref.Key(), true)
 			return exec(ctx)
 		case DecisionAllow:
 			return exec(ctx)
 		case DecisionAlwaysDeny:
-			st.memorize(runctx.Session(ctx), meta.Ref.Key(), false)
+			st.memorize(ctx, meta.Ref.Key(), false)
 		}
 		return fmt.Sprintf("操作未执行:用户拒绝了 %s 的本次调用。请调整方案或询问用户意图。", meta.Ref.Name), nil
 	}

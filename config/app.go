@@ -59,7 +59,7 @@ func inheritAppDefaults(app *AppConfig, ac *AgentConfig) {
 	if ac.Approval.isZero() {
 		ac.Approval = app.Approval
 	}
-	if ac.Budget == (loop.BudgetConfig{}) {
+	if ac.Budget.isZero() {
 		ac.Budget = app.Budget
 	}
 	if ac.StructuredOutput == (loop.StructuredConfig{}) {

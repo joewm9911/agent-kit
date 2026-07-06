@@ -29,7 +29,7 @@ func TestApprovalPolicyRules(t *testing.T) {
 			{Ref: "cap://tool/im/send_message", Args: map[string]string{"to": "team-*"}, Action: "allow"},
 			{Ref: "cap://tool/im/send_message", Args: map[string]string{"to": "boss"}, Action: "deny"},
 		},
-	})
+	}, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestApprovalPolicyRules(t *testing.T) {
 func TestApprovalPolicyBadAction(t *testing.T) {
 	_, err := NewApprovalState(ApprovalInteractive, ApprovalPolicy{
 		Rules: []ApprovalRule{{Ref: "*", Action: "yolo"}},
-	})
+	}, nil, 0)
 	if err == nil || !strings.Contains(err.Error(), "bad action") {
 		t.Fatalf("expect action validation error, got %v", err)
 	}
@@ -85,7 +85,7 @@ func TestApprovalDecisionMemory(t *testing.T) {
 	var executed int32
 	gated := GateApprovalCtx([]capability.Capability{mutCap("send_message", &executed)})
 
-	st, err := NewApprovalState(ApprovalInteractive, ApprovalPolicy{Remember: true})
+	st, err := NewApprovalState(ApprovalInteractive, ApprovalPolicy{Remember: true}, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestApprovalAlwaysDenyMemory(t *testing.T) {
 	var executed int32
 	gated := GateApprovalCtx([]capability.Capability{mutCap("send_message", &executed)})
 
-	st, _ := NewApprovalState(ApprovalInteractive, ApprovalPolicy{Remember: true})
+	st, _ := NewApprovalState(ApprovalInteractive, ApprovalPolicy{Remember: true}, nil, 0)
 	it := &decisionStub{decision: DecisionAlwaysDeny}
 	ctx := WithApprovalState(runctx.WithInteractor(runctx.With(context.Background(), "a", "s1"), it), st)
 
