@@ -44,11 +44,12 @@
 | skill | 确定性编排图(steps 固定,无大脑) | graph/workflow | `skill` |
 | component | 单引擎执行单元 | react/plan-execute/... | `component` |
 | MCP tool | 远端固定 schema 工具 | 远端 | `tool` |
-| **skillpack** | **指令包 + 可选脚本,模型自主发挥** | **本框架 react 循环** | **`skillpack`** |
+| **skillpack** | **指令包 + 可选脚本,模型自主发挥** | **本框架 react 循环** | **`skill`(已拍板:与内部一致)** |
 
-kind 独立(不复用 `skill`):两者承诺不同(模型自主 vs 路径强保证),审批
-规则、目录准入、观测口径都要能按 kind 区分;`cap://skillpack/<ns>/<name>@
-<version>` 一眼可辨供给来源。
+kind 与内部 skill 统一(已拍板,推翻初版建议):对消费方"skill 就是
+skill"——agent 的 include 选品、审批规则作者不必关心来源;溯源是属性,
+在 `Tags`(`ref:<来源> sha:<内容哈希>`)与 lock 文件里;风险治理靠 Risk
+分级(脚本包自动 Dangerous 过准入),不靠 kind。
 
 SKILL.md 渐进披露 → agent-kit 落点:
 
@@ -249,7 +250,7 @@ injection 不能穿透宿主)、权限边界(默认零工具)、预算边界(计
 | 决策 | 选项 | 建议 |
 |---|---|---|
 | 打包期 CLI | 已拍板:**延后**,v1 只做启动期下载安装(库函数留口) | — |
-| cap kind | a) 新 `skillpack`;b) 复用 `skill` | **a**:承诺不同,治理/观测需按 kind 区分 |
+| cap kind | 已拍板:**复用 `skill`**,与内部一致(溯源在 Tags,治理靠 Risk) | — |
 | lock 提交策略 | a) 建议提交 git(评审可见);b) 只进镜像 | **a**,与 go.sum 同待遇 |
 | 启动期默认策略 | a) auto(开发友好);b) require-local | **a** 为默认,文档明确生产镜像配 b |
 | git 拉取 | a) codeload zip(零依赖);b) git 二进制 | **a**;私有仓走内部 https/file: |

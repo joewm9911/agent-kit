@@ -249,7 +249,7 @@ func TestBuildPackInstructionOnly(t *testing.T) {
 	}
 	// L1:kind/ns/名字/描述进目录
 	meta := cap0.Meta()
-	if meta.Ref.Kind != "skillpack" || meta.Ref.Domain != "pack" || meta.Ref.Name != "report-writer" {
+	if meta.Ref.Kind != "skill" || meta.Ref.Domain != "pack" || meta.Ref.Name != "report-writer" {
 		t.Fatalf("meta: %+v", meta.Ref)
 	}
 	// 调用:L2 正文注入子循环 system 层,宿主只拿最终结果

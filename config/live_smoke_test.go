@@ -472,7 +472,7 @@ func TestLiveSmoke(t *testing.T) {
 			Agents: []AgentConfig{{
 				Name:         "reporter",
 				Prompt:       PromptConfig{System: prompt.Value{Literal: "需要数据时调用 report-calc 技能。"}},
-				Capabilities: CapabilitiesConfig{Include: []string{"cap://skillpack/pack/report-calc"}},
+				Capabilities: CapabilitiesConfig{Include: []string{"cap://skill/pack/report-calc"}},
 			}},
 		}
 		packApp, err := Build(ctxBg, cfg, BuildOptions{Interactor: ix})
@@ -576,7 +576,7 @@ func TestLiveRealSkillpack(t *testing.T) {
 		Agents: []AgentConfig{{
 			Name:         "comms",
 			Prompt:       PromptConfig{System: prompt.Value{Literal: "写内部通告用 internal-comms 技能。"}},
-			Capabilities: CapabilitiesConfig{Include: []string{"cap://skillpack/docs/internal-comms"}},
+			Capabilities: CapabilitiesConfig{Include: []string{"cap://skill/docs/internal-comms"}},
 		}},
 	}
 	app, err := Build(context.Background(), cfg, BuildOptions{Interactor: &liveInteractor{}})

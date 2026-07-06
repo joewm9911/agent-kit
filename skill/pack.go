@@ -1,5 +1,5 @@
-// pack.go:skillpack——外部 SKILL.md 技能包在框架内的执行形态(第四种能力:
-// 模型自主、指令驱动;与确定性编排的 skill 并列,kind=skillpack)。
+// pack.go:skillpack——外部 SKILL.md 技能包在框架内的执行形态(模型自主、
+// 指令驱动;与确定性编排同为 kind=skill,消费方无差别选品,溯源看 Tags)。
 //
 // 渐进披露映射(docs/skillpack-design.md §2):
 //
@@ -139,7 +139,9 @@ func parseSkillMD(path string) (name, desc string, allowed []string, body string
 }
 
 // BuildPack 把技能包装配为能力:白名单选品 → Ring 0 闸门(与 Build 同源)
-// → react 子循环 → capability(kind=skillpack)。
+// → react 子循环 → capability。kind 与内部 skill 一致(=skill):对消费方
+// (选品/审批规则)"skill 就是 skill",来源是属性不是类型——溯源在 Tags
+// (ref:/sha:),风险治理靠 Risk 分级(脚本包 Dangerous)。
 // extra 是装配层追加的工具(脚本型包的 exec 工具,工作目录已绑定包目录),
 // 不经白名单过滤——它们是包自己的执行原语,不是宿主能力。
 func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps, extra ...capability.Capability) (capability.Capability, error) {
@@ -206,7 +208,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	}
 
 	meta := capability.Meta{
-		Ref:         capability.Ref{Kind: "skillpack", Domain: m.NS, Name: m.Name, Version: m.Version},
+		Ref:         capability.Ref{Kind: "skill", Domain: m.NS, Name: m.Name, Version: m.Version},
 		Description: m.Description,
 		Params:      capability.SingleParam("input", "任务描述(自然语言)"),
 		Risk:        risk,

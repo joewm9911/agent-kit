@@ -57,7 +57,7 @@ func TestBuildWithExternalSkillEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	caps, err := app.Catalog.Select([]string{"cap://skillpack/pack/report-writer"}, nil)
+	caps, err := app.Catalog.Select([]string{"cap://skill/pack/report-writer"}, nil)
 	if err != nil || len(caps) != 1 {
 		t.Fatalf("skillpack not in catalog: %v %v", caps, err)
 	}
@@ -126,7 +126,7 @@ func TestNamespaceExternalSkill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if caps, err := global.Select([]string{"cap://skillpack/docs/writer"}, nil); err != nil || len(caps) != 1 {
+	if caps, err := global.Select([]string{"cap://skill/docs/writer"}, nil); err != nil || len(caps) != 1 {
 		t.Fatalf("namespace skillpack missing: %v %v", caps, err)
 	}
 
@@ -168,12 +168,12 @@ func TestScriptPackAdmission(t *testing.T) {
 	}
 	// 默认准入(mutating):Dangerous 包被拒收,选品必失败
 	app := build("")
-	if caps, _ := app.Catalog.Select([]string{"cap://skillpack/pack/report-writer"}, nil); len(caps) != 0 {
+	if caps, _ := app.Catalog.Select([]string{"cap://skill/pack/report-writer"}, nil); len(caps) != 0 {
 		t.Fatal("dangerous pack must be rejected by default admission")
 	}
 	// 显式提升:入目录
 	app = build("dangerous")
-	if caps, _ := app.Catalog.Select([]string{"cap://skillpack/pack/report-writer"}, nil); len(caps) != 1 {
+	if caps, _ := app.Catalog.Select([]string{"cap://skill/pack/report-writer"}, nil); len(caps) != 1 {
 		t.Fatal("dangerous pack should be admitted with max_risk: dangerous")
 	}
 }
