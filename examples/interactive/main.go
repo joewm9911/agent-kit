@@ -42,17 +42,21 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "github.com/joewm9911/agent-kit/impl/exec/docker" // 注册 docker 沙箱(exec.default_sandbox: docker)
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
 	_ "github.com/joewm9911/agent-kit/impl/model/zhipu"
+	_ "github.com/joewm9911/agent-kit/impl/session/redis"   // session 分布式后端
 	_ "github.com/joewm9911/agent-kit/impl/source/exectool" // pdf 技能与计算域的脚本执行
 	_ "github.com/joewm9911/agent-kit/impl/source/httptool"
 	_ "github.com/joewm9911/agent-kit/impl/source/vector"
+	_ "github.com/joewm9911/agent-kit/impl/store/redis" // todo 等 KV 分布式后端
 	_ "github.com/joewm9911/agent-kit/std"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -96,6 +100,21 @@ func main() {
 	setDefault("OPS_API_BASE", srv.URL)
 	setDefault("OPS_DATA_DIR", "./data/interactive") // 技能装 <此目录>/agent-kit/.skills
 	setDefault("PDF_SKILL_REF", "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d")
+
+	// 存储注入:redis 可达 → session/todo 走 redis(分布式形态,跨进程
+	// 共享、重启续聊);否则 file(离线可跑)。横幅明示,不静默。
+	setDefault("OPS_REDIS_ADDR", "127.0.0.1:6379")
+	storeNote := ""
+	if conn, err := net.DialTimeout("tcp", os.Getenv("OPS_REDIS_ADDR"), 500*time.Millisecond); err == nil {
+		conn.Close()
+		setDefault("OPS_SESSION_STORE", "redis")
+		setDefault("OPS_TODO_STORE", "redis")
+	} else {
+		setDefault("OPS_SESSION_STORE", "file")
+		setDefault("OPS_TODO_STORE", "file")
+	}
+	storeNote = fmt.Sprintf("session=%s todo=%s(redis: %s)",
+		os.Getenv("OPS_SESSION_STORE"), os.Getenv("OPS_TODO_STORE"), os.Getenv("OPS_REDIS_ADDR"))
 
 	// 沙箱注入:有 docker 就默认全部脚本进容器;没有则宿主直跑并告警
 	// (装配不静默——启动横幅明示脚本跑在哪)。生产应写死 default_sandbox
@@ -150,6 +169,7 @@ func main() {
 	}
 	fmt.Printf("ops-manager ready(模型: %s/%s;业务后端: 内置 mock;会话: %s;技能安装: %s)\n", provider, modelName, sessionID, skillsDir)
 	fmt.Printf("脚本沙箱:%s\n", sandboxNote)
+	fmt.Printf("存储:%s\n", storeNote)
 	fmt.Println("提示:宿主直跑时 pdf 技能需要 python3 + pypdf(pip install pypdf);输入 exit 退出。")
 	fmt.Println("挂载能力:")
 	if mounted := app.AgentMounts["ops-manager"]; mounted != nil {

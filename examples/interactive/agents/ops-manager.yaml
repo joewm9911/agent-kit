@@ -43,10 +43,15 @@ capabilities:
 # 碰撞;此处用 file/inmemory 保持冒烟离线可跑。
 #   kind=session → 会话短期记忆   kind=memory → 长期记忆(向量库换 qdrant)
 #   kind=todo    → 计划清单        kind=result → digest 大结果暂存
+# sessions/plans 的 type 由 runner 检测注入:本机 redis 可达 → redis
+# (分布式形态,跨进程/多副本共享),否则 file/file(离线可跑)。
+# 混合 config 是刻意的:file 只读 dir,redis 只读 addr/prefix,互不干扰。
 stores:
-  - {name: sessions, kind: session, type: file, config: {dir: "${OPS_DATA_DIR}/ops-sessions"}}
+  - {name: sessions, kind: session, type: "${OPS_SESSION_STORE}",
+     config: {dir: "${OPS_DATA_DIR}/ops-sessions", addr: "${OPS_REDIS_ADDR}", prefix: "ops:"}}
   - {name: ltm,      kind: memory,  type: inmemory}   # 分布式向量后端换 type: qdrant
-  - {name: plans,    kind: todo,    type: inmemory}
+  - {name: plans,    kind: todo,    type: "${OPS_TODO_STORE}",
+     config: {dir: "${OPS_DATA_DIR}/ops-plans", addr: "${OPS_REDIS_ADDR}", prefix: "ops:"}}
   - {name: cache,    kind: result,  type: inmemory}
 
 # ---- 四大模块各自独立,store 槽引用上面的具名实例 ----
