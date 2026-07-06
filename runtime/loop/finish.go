@@ -1,0 +1,81 @@
+package loop
+
+import (
+	"context"
+	"regexp"
+	"strings"
+
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+)
+
+// FinishGuard 是"收口守卫"(Ring 0):拦截两类把回合带进死胡同的最终文本,
+// 注入纠正指令弹回模型重试(有界),不靠模型自觉。
+//
+//  1. 伪工具调用:模型把调用写成文本/代码块(functions.todo_write({...})、
+//     <tool_call> 标记等)而没有发起真实 tool_call——react 循环会把它当
+//     最终回答收尾,任务原地中断;
+//  2. 空头承诺:纯文本以"请稍等/我将继续执行"收尾——文本即终点,
+//     不存在"稍后",回合结束后没有任何东西会继续执行。
+//
+// 弹回是同一次 Generate 内的重试(每次调用最多 maxBounces 次),经内层
+// Budget/Retry 计费与重试;仍不合格则原样放行(守卫是纠偏,不是硬闸)。
+// 只作用于 Generate:流式路径直出用户,不适合弹回。
+func FinishGuard(m model.ToolCallingChatModel) model.ToolCallingChatModel {
+	return &finishGuard{inner: m}
+}
+
+const finishGuardBounces = 2
+
+var pseudoCallRe = regexp.MustCompile(`(?s)(functions|tools|multi_tool_use)\.[a-zA-Z_][\w.-]*\s*\(|<tool_call>|"tool_calls"\s*:`)
+
+// emptyPromises 是"承诺后续执行"的收尾话术(纯文本终局时它们必然落空)。
+var emptyPromises = []string{
+	"请稍等", "稍等片刻", "我将继续", "我会继续", "接下来我将", "接下来我会",
+	"正在为您处理", "马上为您", "请等待",
+}
+
+// badFinal 判定一条无 tool_calls 的最终文本是否该弹回。
+func badFinal(content string) (reason string, bad bool) {
+	if pseudoCallRe.MatchString(content) {
+		return "输出里出现了文本形式的工具调用——那只是字符串,不会被执行", true
+	}
+	for _, p := range emptyPromises {
+		if strings.Contains(content, p) {
+			return "输出以「" + p + "」收尾——回合结束后不存在任何'稍后',这句承诺必然落空", true
+		}
+	}
+	return "", false
+}
+
+type finishGuard struct {
+	inner model.ToolCallingChatModel
+}
+
+func (g *finishGuard) Generate(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	out, err := g.inner.Generate(ctx, msgs, opts...)
+	for bounce := 0; err == nil && len(out.ToolCalls) == 0 && bounce < finishGuardBounces; bounce++ {
+		reason, bad := badFinal(out.Content)
+		if !bad {
+			break
+		}
+		msgs = append(msgs, out, schema.SystemMessage(
+			"[收口检查] 上一条输出无效:"+reason+"。"+
+				"要继续执行任务,必须现在就发起真实的工具调用(tool_call);"+
+				"任务已完成就直接给出最终结果;确实无法完成就说明原因并更新计划。不要输出代码块形式的调用,不要承诺稍后。"))
+		out, err = g.inner.Generate(ctx, msgs, opts...)
+	}
+	return out, err
+}
+
+func (g *finishGuard) Stream(ctx context.Context, msgs []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return g.inner.Stream(ctx, msgs, opts...)
+}
+
+func (g *finishGuard) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	inner, err := g.inner.WithTools(tools)
+	if err != nil {
+		return nil, err
+	}
+	return &finishGuard{inner: inner}, nil
+}

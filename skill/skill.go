@@ -317,7 +317,7 @@ func buildDeclModel(ctx context.Context, decl *ModelDecl, retry loop.RetryConfig
 	if err != nil {
 		return nil, fmt.Errorf("build model: %w", err)
 	}
-	return loop.BudgetModel(loop.RetryModel(m, retry)), nil
+	return loop.FinishGuard(loop.BudgetModel(loop.RetryModel(m, retry))), nil
 }
 
 // applyGates 给内部工具面下沉全部 Ring 0 闸门(治理不止步于 agent 主循环):

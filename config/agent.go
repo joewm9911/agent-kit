@@ -44,7 +44,7 @@ func agentModel(ctx context.Context, own *ModelConfig,
 	if err != nil {
 		return nil, err
 	}
-	return loop.BudgetModel(loop.RetryModel(m, retry)), nil
+	return loop.FinishGuard(loop.BudgetModel(loop.RetryModel(m, retry))), nil
 }
 
 // buildAgent 用已选品的能力面与已解析的模型装配 agent。

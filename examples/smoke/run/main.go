@@ -35,6 +35,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/config"
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
+	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
@@ -88,6 +89,13 @@ func main() {
 	spec, err := config.LoadApp(appPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	// 冒烟树的压缩阈值是为测试强制触发调的(12/4),交互长任务里会中途
+	// 压掉工作上下文导致模型丢失工具调用惯性;交互模式放宽。
+	for _, as := range spec.Agents {
+		if as.Name == "ops-manager" {
+			as.Loop.Compaction = &loop.CompactionConfig{MaxMessages: 40, KeepRecent: 10}
+		}
 	}
 	app, err := config.BuildApp(context.Background(), spec, config.BuildOptions{Interactor: cli.NewCLI()})
 	if err != nil {

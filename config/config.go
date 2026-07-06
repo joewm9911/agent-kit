@@ -156,7 +156,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		if defaultModel, err = model.Build(ctx, cfg.Profile.Model.Provider, cfg.Profile.Model.Config); err != nil {
 			return nil, fmt.Errorf("model: %w", err)
 		}
-		defaultModel = loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry()))
+		defaultModel = loop.FinishGuard(loop.BudgetModel(loop.RetryModel(defaultModel, cfg.Profile.retry())))
 	}
 
 	// 4. skills:装配后入目录,供 agent 选品。条目二选一:内部声明走
