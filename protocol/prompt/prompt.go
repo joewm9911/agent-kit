@@ -115,30 +115,29 @@ func (r *Resolver) Resolve(ctx context.Context, refStr string) (*Template, error
 	return t, nil
 }
 
-// Value 是配置中的提示词字段:字面量字符串或 {ref: cap://...}。
-// 实现 yaml 自定义解析,两种写法都兼容。
+// RefPrefix 是提示词引用的识别前缀:以它开头的标量按引用解析
+// (与 store/retriever 槽的"裸 type 或 cap://"同一识别模式)。
+const RefPrefix = "cap://prompt"
+
+// Value 是配置中的提示词字段:一律标量——cap://prompt 前缀 = 引用
+// (装配期经提示词源解析锁版本),其余 = 字面量。
 type Value struct {
 	Literal string
 	Ref     string
 }
 
-// UnmarshalYAML 支持标量(字面量)与 {ref: ...} 两种写法。
+// UnmarshalYAML 只接受标量;旧的 {ref: ...} 映射写法直接报错并给出
+// 新写法(fail fast 即迁移指南)。
 func (v *Value) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
-	if err := unmarshal(&s); err == nil {
+	if err := unmarshal(&s); err != nil {
+		return fmt.Errorf(`prompt value: 只接受标量——引用写 "cap://prompt/<source>/<name>",字面量直接写文本({ref: ...} 映射写法已移除)`)
+	}
+	if strings.HasPrefix(s, RefPrefix) {
+		v.Ref = s
+	} else {
 		v.Literal = s
-		return nil
 	}
-	var m struct {
-		Ref string `yaml:"ref"`
-	}
-	if err := unmarshal(&m); err != nil {
-		return err
-	}
-	if m.Ref == "" {
-		return fmt.Errorf("prompt value: expect string literal or {ref: cap://prompt...}")
-	}
-	v.Ref = m.Ref
 	return nil
 }
 

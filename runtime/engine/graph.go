@@ -61,24 +61,33 @@ type StepArgs struct {
 	Binds map[string]string `yaml:"-"`
 }
 
-// UnmarshalYAML 解析两种写法;映射形态缺 ref、或模板变量名叫 ref 都
-// 在这里挡住(fail fast,不再有键被静默丢弃)。
+// UnmarshalYAML 解析两种写法:标量(cap://prompt 前缀 = 模板引用,
+// 其余 = 字面量模板)或映射({use: cap://prompt/..., <占位符>: <绑定>})。
+// 映射缺 use、或模板变量名叫 use 都在这里挡住(fail fast,不再有键被
+// 静默丢弃);旧的 ref 键报错并给出新写法。
 func (a *StepArgs) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
 	if err := unmarshal(&s); err == nil {
-		a.Literal = s
+		if strings.HasPrefix(s, prompt.RefPrefix) {
+			a.Ref = s
+		} else {
+			a.Literal = s
+		}
 		return nil
 	}
 	var m map[string]any
 	if err := unmarshal(&m); err != nil {
-		return fmt.Errorf("step args: 需要标量(字面量模板)或映射({ref: ..., <占位符>: <绑定>}):%w", err)
+		return fmt.Errorf("step args: 需要标量(字面量模板或 cap://prompt 引用)或映射({use: ..., <占位符>: <绑定>}):%w", err)
 	}
-	ref, _ := m["ref"].(string)
-	if ref == "" {
-		return fmt.Errorf("step args: 映射形态必须带 ref 键(字面量请用标量写法)")
+	if _, legacy := m["ref"]; legacy {
+		return fmt.Errorf(`step args: ref 键已改名 use(与步骤级 use 同义):args: {use: "cap://prompt/...", ...}`)
 	}
-	a.Ref = ref
-	delete(m, "ref")
+	use, _ := m["use"].(string)
+	if use == "" {
+		return fmt.Errorf("step args: 映射形态必须带 use 键(模板引用;无绑定时直接用标量写法)")
+	}
+	a.Ref = use
+	delete(m, "use")
 	if len(m) > 0 {
 		a.Binds = make(map[string]string, len(m))
 		for k, v := range m {

@@ -51,7 +51,7 @@ type Declaration struct {
 	Prompt prompt.Value `yaml:"prompt"`
 	// Engine 是执行引擎:react(默认)| plan-execute | 已注册的自定义模板。
 	Engine string `yaml:"engine"`
-	// EngineConfig 透传引擎专属配置;*_prompt 键支持字面量或 {ref: ...}。
+	// EngineConfig 透传引擎专属配置;*_prompt 键为标量(cap://prompt 前缀=引用)。
 	EngineConfig map[string]any `yaml:"engine_config"`
 	// Capabilities 是内部工具面(最小权限子集),CapRef 模式。
 	Capabilities struct {
@@ -285,8 +285,9 @@ func checkExactRefs(include []string, selected []capability.Capability) error {
 	return nil
 }
 
-// resolveEnginePrompts 把 engine_config 中 *_prompt 键解析为文本
-// (支持字面量与 {ref: cap://prompt...}),其余键原样透传给引擎。
+// resolveEnginePrompts 把 engine_config 中 *_prompt 键解析为文本:
+// 一律标量,cap://prompt 前缀 = 引用(装配期解析锁版本),其余字面量;
+// 其余键原样透传给引擎。
 func resolveEnginePrompts(ctx context.Context, conf map[string]any, r prompt.Source) (map[string]string, map[string]any, error) {
 	prompts := map[string]string{}
 	rest := map[string]any{}
@@ -296,25 +297,22 @@ func resolveEnginePrompts(ctx context.Context, conf map[string]any, r prompt.Sou
 			continue
 		}
 		key := strings.TrimSuffix(k, "_prompt")
-		switch val := v.(type) {
-		case string:
-			prompts[key] = val
-		case map[string]any:
-			refStr, _ := val["ref"].(string)
-			if refStr == "" {
-				return nil, nil, fmt.Errorf("engine_config.%s: expect string or {ref: ...}", k)
-			}
-			if r == nil {
-				return nil, nil, fmt.Errorf("engine_config.%s: prompt ref used but no prompt sources configured", k)
-			}
-			tpl, err := r.Resolve(ctx, refStr)
-			if err != nil {
-				return nil, nil, err
-			}
-			prompts[key] = tpl.Text
-		default:
-			return nil, nil, fmt.Errorf("engine_config.%s: unsupported value type", k)
+		val, ok := v.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf(`engine_config.%s: 只接受标量——引用写 "cap://prompt/..."({ref: ...} 写法已移除)`, k)
 		}
+		if !strings.HasPrefix(val, prompt.RefPrefix) {
+			prompts[key] = val
+			continue
+		}
+		if r == nil {
+			return nil, nil, fmt.Errorf("engine_config.%s: prompt ref used but no prompt sources configured", k)
+		}
+		tpl, err := r.Resolve(ctx, val)
+		if err != nil {
+			return nil, nil, err
+		}
+		prompts[key] = tpl.Text
 	}
 	return prompts, rest, nil
 }

@@ -14,7 +14,7 @@ tools:
 
 components:
   - name: competitor_report         # 内部是 plan-execute 循环,对外不可见
-    prompt: {ref: "cap://prompt/pp/competitor-brief"}
+    prompt: "cap://prompt/pp/competitor-brief"
     engine: plan-execute
     engine_config:
       max_rounds: 3

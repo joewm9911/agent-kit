@@ -4,15 +4,15 @@
 
 description: 会查天气、能写竞品报告、可以记住用户偏好的助手
 prompt:
-  system: {ref: "cap://prompt/pp/assistant-persona"}   # L2 persona;L1 loop 用内置规约
+  system: "cap://prompt/pp/assistant-persona"   # L2 persona;L1 loop 用内置规约
 # ---- 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源)----
 # loop:迭代上限 + 上下文压缩(compaction 归 loop,主 loop 与 component 共用)。
 # 压缩阈值触发(token 维度优先用供应商真实用量校准);摘要内容策略可配
-# (prompt 支持字面量或 {ref:});要求 session.window >= keep_recent+2(装配期校验)。
+# (prompt 为标量,cap://prompt/ 前缀=引用);要求 session.window >= keep_recent+2(装配期校验)。
 loop:
   max_steps: 30
   compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
-  #   compaction: {prompt: {ref: "cap://prompt/pp/ops-summarize"}}   # 领域保留清单
+  #   compaction: {prompt: "cap://prompt/pp/ops-summarize"}   # 领域保留清单
 
 # model:能力不可自指,agent 可给自己或给某 namespace(per-mount)指定;缺省回落 app。
 # model: {provider: openai, config: {model: gpt-4o, api_key: "${OPENAI_API_KEY}"}}

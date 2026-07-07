@@ -140,7 +140,7 @@ func (t TodoConfig) isZero() bool {
 }
 
 // PromptConfig 是提示词分层模块:L1 框架规约 + L2 业务 persona,均支持
-// 字面量或 {ref: cap://prompt/...} 引用。
+// 标量:字面量或 cap://prompt/ 前缀引用。
 type PromptConfig struct {
 	System prompt.Value `yaml:"system"` // L2 业务 persona
 	Loop   prompt.Value `yaml:"loop"`   // L1 框架规约覆盖(默认内置)

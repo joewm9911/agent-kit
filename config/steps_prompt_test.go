@@ -62,7 +62,7 @@ steps:
   - name: b
     use: model
     args:
-      ref: "cap://prompt/pp/mask"
+      use: "cap://prompt/pp/mask"
       analysis: "{a}"
       tone: formal
 `
@@ -77,13 +77,28 @@ steps:
 		t.Fatalf("mapping form: %+v", st.Steps[1].Args)
 	}
 
-	// 缺 ref 的映射:解析期报错
+	// 缺 use 的映射:解析期报错
 	var bad struct {
 		Steps []engine.Step `yaml:"steps"`
 	}
 	if err := yaml.Unmarshal([]byte("steps:\n  - name: x\n    use: model\n    args: {analysis: \"{a}\"}\n"), &bad); err == nil ||
-		!strings.Contains(err.Error(), "ref") {
-		t.Fatalf("mapping without ref must fail, got %v", err)
+		!strings.Contains(err.Error(), "use") {
+		t.Fatalf("mapping without use must fail, got %v", err)
+	}
+	// 旧 ref 键:报错并指路新写法
+	if err := yaml.Unmarshal([]byte("steps:\n  - name: x\n    use: model\n    args: {ref: \"cap://prompt/pp/x\"}\n"), &bad); err == nil ||
+		!strings.Contains(err.Error(), "改名 use") {
+		t.Fatalf("legacy ref key must fail with hint, got %v", err)
+	}
+	// 标量 cap://prompt 前缀:识别为引用
+	var sc struct {
+		Steps []engine.Step `yaml:"steps"`
+	}
+	if err := yaml.Unmarshal([]byte("steps:\n  - {name: x, use: model, args: \"cap://prompt/pp/mask\"}\n"), &sc); err != nil {
+		t.Fatal(err)
+	}
+	if sc.Steps[0].Args.Ref != "cap://prompt/pp/mask" || sc.Steps[0].Args.Literal != "" {
+		t.Fatalf("scalar ref prefix not detected: %+v", sc.Steps[0].Args)
 	}
 
 	// 装配:绑定代入模板,剩余占位符留给运行时

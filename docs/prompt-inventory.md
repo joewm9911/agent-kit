@@ -41,7 +41,7 @@
 
 ## D. 引擎内置提示词(编排族的角色 system)
 
-全部经 `engine_config` 的 `*_prompt` 键覆盖(支持字面量或 {ref: cap://prompt/...},装配期锁版本)。
+全部经 `engine_config` 的 `*_prompt` 键覆盖(标量,cap://prompt/ 前缀=引用,装配期锁版本)。
 
 | 引擎/键 | 位置 | 内容(关键句) |
 |---|---|---|
