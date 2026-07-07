@@ -200,7 +200,7 @@ type Outbound struct {
 }
 ```
 
-装饰器示例(第三方实现 TiDA 式卡片,框架零参与):
+装饰器示例(第三方实现富样式卡片,框架零参与):
 
 ```go
 serving.RegisterDecorator("my-card", func(ctx context.Context,
@@ -293,7 +293,7 @@ answer/question 同样生效(第三方可能已经自行送达,框架不越权),
 | 1 | runctx 事件/接收器类型 + observe.ProgressEvents 发射 + 单测 | 假 sink 断言事件序列 |
 | 2 | Outbound 语义字段 + Native 透传(feishu)+ Binding.Decorator + 注册表/配置接线 | 单测 + 真机(装饰器画一张带 header 的卡) |
 | 3 | dispatcher 内置订阅者(节流把 Progress 填进 processing 更新)+ Binding.OnProgress + placeholder 配置 | 真机长处理看过程生长;第三方订阅示例 |
-| 4 | 工具函数库(表格转列表等)+ 使用文档 + interactive 示例装饰器 | 真机完整 TiDA 式卡片 |
+| 4 | 工具函数库(表格转列表等)+ 使用文档 + interactive 示例装饰器 | 真机完整富样式卡片 |
 
 ## 7. 风险与开放问题
 
