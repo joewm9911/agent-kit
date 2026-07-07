@@ -213,7 +213,10 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	// 工具面挂载仍只由 memory.tools 决定。
 	scope := memory.ScopeConfig{Write: ac.Memory.Scope.Write, Read: ac.Memory.Scope.Read}
 	var kv memory.Store
-	if ac.Memory.Tools || kvK > 0 {
+	if ac.Memory.ToolsLegacy != nil {
+		return nil, fmt.Errorf("agent %s: memory.tools 已改名 expose_tools(避免与工具列表语义的 tools 冲突)", ac.Name)
+	}
+	if ac.Memory.ExposeTools || kvK > 0 {
 		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "memory")
 		if err != nil {
 			return nil, err
@@ -230,7 +233,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 				return nil, fmt.Errorf("long_term seed: %w", err)
 			}
 		}
-		if ac.Memory.Tools {
+		if ac.Memory.ExposeTools {
 			caps = append(caps, memory.AsCapabilities(kv, scope)...)
 		}
 	}

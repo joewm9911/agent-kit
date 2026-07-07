@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,8 +49,9 @@ type PackManifest struct {
 	// (工作目录=包目录),包风险经 exec 工具传播为 Dangerous。
 	Runtimes []string
 	// 以下来自 frontmatter,与 eino ADK Skill middleware 协议对齐:
-	// Context 取 ""(隔离,默认)| fork(隔离,eino 语义)|
-	// fork_with_context(带调用方对话快照);Agent/Model 按名指定执行
+	// Context 已归一为全库统一词表:""/fresh(隔离,默认)| fork(带
+	// 调用方对话快照)。第三方包的旧值在解析处兼容映射(fork→fresh、
+	// fork_with_context→fork)并记 warn。Agent/Model 按名指定执行
 	// agent 或模型,经 Deps.AgentHub/ModelHub 解析。
 	Context string
 	Agent   string
@@ -72,10 +74,24 @@ func LoadManifest(pd PackDir) (*PackManifest, error) {
 		return nil, fmt.Errorf("skillpack %s: %w", pd.Ref, err)
 	}
 	_ = name // 目录/最终名已由 EnsurePack 定(含覆盖);frontmatter name 仅作缺省来源
+	// context 词表归一:统一为 fresh(隔离)| fork(快照)。eino 协议的
+	// 旧值是第三方包文件,保留兼容映射(fork=隔离→fresh、
+	// fork_with_context=快照→fork)并 warn;本地配置无兼容负担。
 	switch front.Context {
-	case "", "fork", "fork_with_context":
+	case "", "fresh":
+		front.Context = "fresh"
+	case "fork_with_context":
+		slog.Warn("skillpack frontmatter context 旧值已映射", slog.String("pack", pd.Ref),
+			slog.String("old", "fork_with_context"), slog.String("new", "fork(带快照)"))
+		front.Context = "fork"
+	case "fork":
+		// 歧义值:eino 旧语义=隔离,新词表=快照——按包文件的原语义映射为
+		// fresh,避免第三方包行为静默改变。
+		slog.Warn("skillpack frontmatter context 旧值已映射", slog.String("pack", pd.Ref),
+			slog.String("old", "fork(eino 语义=隔离)"), slog.String("new", "fresh(隔离)"))
+		front.Context = "fresh"
 	default:
-		return nil, fmt.Errorf("skillpack %s: frontmatter context 只支持 fork|fork_with_context,got %q", pd.Ref, front.Context)
+		return nil, fmt.Errorf("skillpack %s: frontmatter context 只支持 fresh|fork(旧值 fork/fork_with_context 自动映射),got %q", pd.Ref, front.Context)
 	}
 	if front.Agent != "" && front.Model != "" {
 		return nil, fmt.Errorf("skillpack %s: frontmatter agent 与 model 互斥(agent 模式下模型由该 agent 自身决定)", pd.Ref)
@@ -186,7 +202,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	// 快照 fork 判定:本地覆盖(agent-kit 语义,fork=快照)优先;否则
 	// frontmatter 公共协议语义——fork_with_context=快照,fork=隔离(即默认
 	// 子循环,无需动作)。
-	snapshotFork := ov.Context == "fork" || (ov.Context == "" && m.Context == "fork_with_context")
+	snapshotFork := ov.Context == "fork" || (ov.Context == "" && m.Context == "fork") // 词表已归一:fork = 带快照
 
 	// frontmatter agent: 委托执行——技能内容交给指定的已装配 agent,
 	// 工具面/治理/模型都是该 agent 自己的,本包不再建子循环。

@@ -397,9 +397,16 @@ func writeFrontPack(t *testing.T, front string) *PackManifest {
 // TestManifestFrontMatterCompat 验证 eino/agentskills 协议字段:context/
 // agent/model 解析;非法 context 与 agent+model 同设拒绝。
 func TestManifestFrontMatterCompat(t *testing.T) {
+	// 旧值兼容映射:fork_with_context(快照)→ fork;fork(eino 隔离)→ fresh
 	m := writeFrontPack(t, "context: fork_with_context\nmodel: fast")
-	if m.Context != "fork_with_context" || m.Model != "fast" || m.Agent != "" {
+	if m.Context != "fork" || m.Model != "fast" || m.Agent != "" {
 		t.Fatalf("manifest front: %+v", m)
+	}
+	if m2 := writeFrontPack(t, "context: fork"); m2.Context != "fresh" {
+		t.Fatalf("legacy fork should map to fresh(隔离), got %q", m2.Context)
+	}
+	if m3 := writeFrontPack(t, "context: fresh"); m3.Context != "fresh" {
+		t.Fatalf("fresh: %+v", m3)
 	}
 
 	dir := t.TempDir()

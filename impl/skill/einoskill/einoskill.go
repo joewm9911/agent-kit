@@ -71,9 +71,21 @@ func toFrontMatter(m *skill.PackManifest) adkskill.FrontMatter {
 	return adkskill.FrontMatter{
 		Name:        m.NS + "/" + m.Name,
 		Description: m.Description,
-		Context:     adkskill.ContextMode(m.Context),
+		Context:     einoContext(m.Context),
 		Agent:       m.Agent,
 		Model:       m.Model,
+	}
+}
+
+// einoContext 把归一后的框架词表(fresh=隔离 | fork=快照)翻译回 eino
+// 协议词表(fork=隔离 | fork_with_context=快照)——本包是 eino 协议
+// 适配器,对外必须说协议的词。
+func einoContext(c string) adkskill.ContextMode {
+	switch c {
+	case "fork":
+		return adkskill.ContextMode("fork_with_context")
+	default: // ""/fresh → 隔离
+		return adkskill.ContextMode("fork")
 	}
 }
 

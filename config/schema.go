@@ -96,8 +96,10 @@ type SessionRecall struct {
 type MemoryConfig struct {
 	Store       string         `yaml:"store"`        // cap://store/memory/<name> 或裸 type
 	StoreConfig map[string]any `yaml:"store_config"` // 裸 type 时的就地配置
-	// Tools 挂载 memory_save/search 工具(长期记忆的读写入口)。
-	Tools bool `yaml:"tools"`
+	// ExposeTools 挂载 memory_save/search 工具(长期记忆的读写入口)。
+	// 原名 tools 与"工具列表"惯用词冲突,已改名(旧键装配期报错)。
+	ExposeTools bool  `yaml:"expose_tools"`
+	ToolsLegacy *bool `yaml:"tools"` // 已废弃:改 expose_tools(报错指路)
 	// Scope 是多用户隔离的作用域策略:write 对话写入落点(user 默认 |
 	// shared | session),read 召回覆盖(缺省 [user, shared])。
 	Scope MemoryScope `yaml:"scope"`
@@ -111,7 +113,7 @@ type MemoryConfig struct {
 
 // isZero 报告 MemoryConfig 是否未声明(用于 app→agent 整块降级)。
 func (m MemoryConfig) isZero() bool {
-	return m.Store == "" && m.StoreConfig == nil && !m.Tools &&
+	return m.Store == "" && m.StoreConfig == nil && !m.ExposeTools && m.ToolsLegacy == nil &&
 		m.Scope.Write == "" && m.Scope.Read == nil && m.Recall.TopK == 0 && m.Seed == nil
 }
 

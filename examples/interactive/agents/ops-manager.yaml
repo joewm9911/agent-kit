@@ -65,7 +65,7 @@ session:                                     # ① 会话短期记忆
 
 memory:                                      # ② 长期记忆
   store: cap://store/memory/ltm              #    memory_save/search 后端
-  tools: true                                #    挂 memory_save/search 工具
+  expose_tools: true                         #    挂 memory_save/search 工具
   recall: {top_k: 3}                         #    长期记忆召回
 
 todo:                                        # ③ 计划清单

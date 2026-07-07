@@ -41,7 +41,7 @@ session:                  # ① 会话短期记忆
   recall: {top_k: 3}      # 窗外会话召回(retriever 缺省 bigram,可注册替换)
 
 memory:                   # ② 长期记忆(独立模块;向量后端换 store: cap://store/memory/<name>)
-  tools: true             # 挂 memory_save / memory_search(大脑自主)
+  expose_tools: true      # 挂 memory_save / memory_search(大脑自主)
   recall: {top_k: 3}      # 长期记忆召回(策略由 KV 后端决定)
   # 作用域(多用户隔离):默认写用户桶、读用户桶+共享池;用户身份由 serving
   # 的 {user} / 飞书 open_id 提供,缺身份时用户记忆写入 fail fast。
