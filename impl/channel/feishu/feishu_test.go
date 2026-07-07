@@ -61,7 +61,7 @@ func newTestFeishu(t *testing.T) (*Feishu, *fakeOpenAPI) {
 	api := &fakeOpenAPI{}
 	srv := httptest.NewServer(api.handler())
 	t.Cleanup(srv.Close)
-	f, err := New("f1", Config{AppID: "a", AppSecret: "s", BaseURL: srv.URL})
+	f, err := New("f1", Config{AppID: "a", AppSecret: "s", BaseURL: srv.URL, Mode: "webhook"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -49,7 +49,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/joewm9911/agent-kit/impl/exec/docker" // 注册 docker 沙箱(exec.default_sandbox: docker)
+	_ "github.com/joewm9911/agent-kit/impl/channel/feishu" // 飞书通道(检测到凭据即接入)
+	_ "github.com/joewm9911/agent-kit/impl/exec/docker"    // 注册 docker 沙箱(exec.default_sandbox: docker)
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
 	_ "github.com/joewm9911/agent-kit/impl/model/zhipu"
 	_ "github.com/joewm9911/agent-kit/impl/session/redis"   // session 分布式后端
@@ -143,6 +144,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// 飞书接入:检测到应用凭据即追加飞书通道(长连接,无需公网地址),
+	// ops-manager 直接在飞书单聊/群聊/话题里对话;审批与 ask_user 的
+	// 答复都来自 IM 里的下一条消息。无凭据保持纯 CLI REPL。
+	feishuOn := os.Getenv("FEISHU_APP_ID") != "" && os.Getenv("FEISHU_APP_SECRET") != ""
+	if feishuOn {
+		setDefault("OPS_SERVING_ADDR", ":8082")
+		spec.App.Serving.Addr = os.Getenv("OPS_SERVING_ADDR")
+		spec.App.Channels = append(spec.App.Channels, config.ChannelConfig{
+			Name: "feishu", Type: "feishu", Agent: "ops-manager",
+			SessionMapping: "chat", ReplyMode: "text",
+			Config: map[string]any{
+				"app_id":     os.Getenv("FEISHU_APP_ID"),
+				"app_secret": os.Getenv("FEISHU_APP_SECRET"),
+			},
+		})
+	}
+
 	app, err := config.BuildApp(context.Background(), spec, config.BuildOptions{Interactor: cli.NewCLI()})
 	if err != nil {
 		log.Fatal(err)
@@ -201,6 +220,13 @@ func main() {
 	}
 	// 内建能力不入目录,随 agent 装配自动挂载,横幅明示避免误判"没加载"
 	fmt.Println("内建能力:todo_write/todo_read(计划)、ask_user(追问)、memory_save/memory_search(长期记忆)、read_result(大结果取回)")
+
+	// 飞书模式:Gateway 常驻,对话全部发生在飞书里(单聊直接说,群聊 @
+	// 机器人,话题内自动按话题隔离会话);审批/追问也在 IM 里回复。
+	if app.Server != nil {
+		fmt.Printf("飞书接入:长连接模式,去单聊/群聊里找机器人对话(网关 %s,Ctrl-C 退出)\n", os.Getenv("OPS_SERVING_ADDR"))
+		log.Fatal(app.Server.Run(context.Background()))
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	ctx := context.Background()

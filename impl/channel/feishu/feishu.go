@@ -1,7 +1,7 @@
 // Package feishu 是飞书(Lark)的 Channel 适配器:
-//   - 事件接收两种模式:webhook 订阅(url 验证、encrypt_key 解密、
-//     verification_token 校验)或长连接(mode: long_conn,机器人主动连
-//     飞书,无需公网地址);
+//   - 事件接收两种模式:长连接(默认,机器人主动连飞书,无需公网
+//     地址)或 webhook 订阅(mode: webhook,url 验证、encrypt_key
+//     解密、verification_token 校验);
 //   - 文本/富文本卡片回复,卡片支持更新(伪流式),话题内回复;
 //   - tenant_access_token 自动获取与缓存。
 //
@@ -49,8 +49,9 @@ type Config struct {
 	EncryptKey        string `json:"encrypt_key"` // 空 = 明文事件
 	BaseURL           string `json:"base_url"`    // 默认 https://open.feishu.cn
 	Path              string `json:"path"`        // webhook 路径,默认 /webhook/feishu/<name>
-	// Mode 是事件接收模式:webhook(默认)| long_conn(长连接,机器人
-	// 主动连飞书收事件,无需公网地址;开放平台侧订阅方式须选"长连接")。
+	// Mode 是事件接收模式:long_conn(默认,机器人主动连飞书收事件,
+	// 无需公网地址;开放平台侧订阅方式须选"长连接")| webhook(飞书
+	// 回调开发者服务器,需公网可达,订阅方式选"发送至开发者服务器")。
 	Mode string `json:"mode"`
 	// TriggerP2P / TriggerGroup:all | mention | none,默认 p2p=all,group=mention。
 	TriggerP2P   string `json:"trigger_p2p"`
@@ -85,10 +86,13 @@ func New(name string, cfg Config) (*Feishu, error) {
 	if cfg.TriggerGroup == "" {
 		cfg.TriggerGroup = "mention"
 	}
+	if cfg.Mode == "" {
+		cfg.Mode = "long_conn"
+	}
 	switch cfg.Mode {
-	case "", "webhook", "long_conn":
+	case "webhook", "long_conn":
 	default:
-		return nil, fmt.Errorf("feishu %q: unknown mode %q(webhook | long_conn)", name, cfg.Mode)
+		return nil, fmt.Errorf("feishu %q: unknown mode %q(long_conn | webhook)", name, cfg.Mode)
 	}
 	return &Feishu{name: name, cfg: cfg, hc: &http.Client{Timeout: 15 * time.Second}}, nil
 }

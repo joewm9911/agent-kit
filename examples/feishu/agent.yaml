@@ -5,6 +5,7 @@
 #   FEISHU_APP_SECRET=$(security find-generic-password -a agent-kit -s feishu-app-secret -w) \
 #   go run ..
 # 开放平台侧:事件订阅方式选「使用长连接接收事件」,订阅 im.message.receive_v1。
+# (长连接是默认模式;webhook 部署才需要公网地址与 mode: webhook)
 
 secrets:
   provider: env
@@ -32,5 +33,5 @@ channels:
     config:
       app_id: "${FEISHU_APP_ID}"
       app_secret: "${FEISHU_APP_SECRET}"
-      mode: long_conn
+      # mode 默认 long_conn(无需公网地址);webhook 订阅显式 mode: webhook
       trigger_group: mention
