@@ -237,11 +237,16 @@ func checkAcyclic(steps []compiledStep) error {
 var tplRef = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_\-]+)\}`)
 
 // builtinVars 是 $ 前缀的保留变量:由框架在运行时直接注入,不经过
-// 主脑转写。$input = 用户本轮输入原文(runctx.Input),穿透任意嵌套
-// 深度。注意:$input 是不可信文本,把它引进哪个步骤等于在那里显式
-// 开一个注入面——显式声明的价值正在于开了口子的地方看得见。
+// 主脑转写,穿透任意嵌套深度。
+//
+//	$input    用户本轮输入原文(runctx.Input)。不可信文本,把它引进
+//	          哪个步骤等于在那里显式开一个注入面——显式声明的价值
+//	          正在于开了口子的地方看得见。
+//	$user_id  终端用户身份(runctx.User;IM = 飞书 open_id,HTTP =
+//	          请求 user 字段)。按用户取数/记账/审计的编排用它。
 var builtinVars = map[string]bool{
-	"$input": true,
+	"$input":   true,
+	"$user_id": true,
 }
 
 // checkTemplateRefs 校验数据流与控制流一致:args 模板引用的每个占位
@@ -300,7 +305,8 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 		}
 	}
 	// 保留变量最后注入:框架直取,调用方传入的同名键不能顶掉它。
-	vars["$input"] = runctx.Input(ctx)
+	vars["$input"] = runctx.Input(ctx)  // 用户本轮原始输入
+	vars["$user_id"] = runctx.User(ctx) // 终端用户身份(飞书 open_id / HTTP user 字段)
 	var missing []string
 	for name, d := range p.params {
 		if _, ok := vars[name]; !ok && d.Required {

@@ -454,3 +454,37 @@ func TestGraphRejectsUnresolvedArgsRef(t *testing.T) {
 		t.Fatalf("unresolved ref must fail compile, got %v", err)
 	}
 }
+
+// TestGraphBuiltinUserID:{$user_id} 内置变量注入终端用户身份;
+// 未知 $ 变量装配期拒绝。
+func TestGraphBuiltinUserID(t *testing.T) {
+	echo := capability.New(capability.Meta{
+		Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "echo"},
+	}, func(_ context.Context, args string) (string, error) { return args, nil })
+	resolve := func(string) (capability.Capability, error) { return echo, nil }
+
+	c, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "g",
+		Steps: []Step{{Name: "s", Use: "tools/d/echo",
+			Args: prompt.Value{Literal: `{"who":"{$user_id}","q":"{$input}"}`}}},
+	}, "ns", resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := runctx.WithUser(context.Background(), "ou_42")
+	ctx = runctx.WithInput(ctx, "查库存")
+	out, err := capability.Invoke(ctx, c, `{}`)
+	if err != nil || !strings.Contains(out, "ou_42") || !strings.Contains(out, "查库存") {
+		t.Fatalf("builtin vars not injected: %v %q", err, out)
+	}
+
+	// 未知 $ 变量:装配期拒绝
+	_, err = BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "g2",
+		Steps: []Step{{Name: "s", Use: "tools/d/echo",
+			Args: prompt.Value{Literal: "{$nope}"}}},
+	}, "ns", resolve)
+	if err == nil || !strings.Contains(err.Error(), "$nope") {
+		t.Fatalf("unknown builtin must fail assembly, got %v", err)
+	}
+}
