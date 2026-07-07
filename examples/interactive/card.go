@@ -30,6 +30,10 @@ var cardStyle = map[string]struct{ title, color string }{
 	channel.KindError:      {"处理失败", "red"},
 }
 
+// progressVisible 是过程区直接可见的行数上限;更早的步骤收进
+// 「历史步骤」折叠面板(飞书卡片无滚动条组件,折叠是唯一收纳形态)。
+const progressVisible = 2
+
 func opsCard(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel.Outbound {
 	style, ok := cardStyle[out.Kind]
 	if !ok {
@@ -37,15 +41,24 @@ func opsCard(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel
 	}
 	var elements []any
 	if len(out.Progress) > 0 {
-		elements = append(elements,
-			map[string]any{
-				"tag":      "collapsible_panel",
-				"expanded": out.Kind == channel.KindProcessing, // 处理中展开,收口后收起
-				"header":   map[string]any{"title": map[string]any{"tag": "markdown", "content": "**执行过程**"}},
-				"elements": []any{map[string]any{"tag": "markdown", "content": strings.Join(out.Progress, "\n")}},
-			},
-			map[string]any{"tag": "hr"},
-		)
+		if out.Kind == channel.KindProcessing {
+			// 处理中:最新 ≤2 行直接可见,更早的收进折叠面板
+			recent := out.Progress
+			if len(recent) > progressVisible {
+				older := recent[:len(recent)-progressVisible]
+				recent = recent[len(recent)-progressVisible:]
+				elements = append(elements, panel(
+					fmt.Sprintf("历史步骤(%d)", len(older)), older, false))
+			}
+			elements = append(elements, map[string]any{
+				"tag": "markdown", "content": strings.Join(recent, "\n"),
+			}, map[string]any{"tag": "hr"})
+		} else {
+			// 收口态:全过程收进可展开的折叠面板,历史永远可查
+			elements = append(elements, panel(
+				fmt.Sprintf("执行过程(%d 步)", len(out.Progress)), out.Progress, false),
+				map[string]any{"tag": "hr"})
+		}
 	}
 	elements = append(elements, map[string]any{
 		"tag": "markdown", "content": tablesToList(out.Text),
@@ -64,6 +77,23 @@ func opsCard(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel
 		"elements": elements,
 	}
 	return out
+}
+
+// panel 构造可展开的折叠面板(带展开箭头——没有 icon 的面板在客户端
+// 上没有可点开的视觉标识,收起后像内容消失)。
+func panel(title string, lines []string, expanded bool) map[string]any {
+	return map[string]any{
+		"tag":      "collapsible_panel",
+		"expanded": expanded,
+		"header": map[string]any{
+			"title":               map[string]any{"tag": "markdown", "content": "**" + title + "**"},
+			"vertical_align":      "center",
+			"icon":                map[string]any{"tag": "standard_icon", "token": "down-small-ccm_outlined", "size": "16px 16px"},
+			"icon_position":       "follow_text",
+			"icon_expanded_angle": -180,
+		},
+		"elements": []any{map[string]any{"tag": "markdown", "content": strings.Join(lines, "\n")}},
+	}
 }
 
 // tablesToList 把 markdown 表格转成飞书卡片能渲染的分组列表(飞书

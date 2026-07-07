@@ -44,15 +44,27 @@ func TestOpsCardShape(t *testing.T) {
 	if els[0].(map[string]any)["tag"] != "collapsible_panel" {
 		t.Fatalf("first element should be progress panel: %+v", els[0])
 	}
-	// 处理中:面板展开、灰头
+	// 处理中(≤2 行):最新步骤直接可见,无折叠面板
 	p := opsCard(context.Background(), channel.ConvRef{}, channel.Outbound{
 		Kind: channel.KindProcessing, Text: "⏳ 处理中...", Progress: []string{"⚙ 查库存 执行中"},
 	})
 	if p.Native["header"].(map[string]any)["template"] != "grey" {
 		t.Fatal("processing header should be grey")
 	}
-	if p.Native["elements"].([]any)[0].(map[string]any)["expanded"] != true {
-		t.Fatal("processing panel should be expanded")
+	if p.Native["elements"].([]any)[0].(map[string]any)["tag"] != "markdown" {
+		t.Fatal("recent steps should be plain markdown, not panel")
+	}
+	// 处理中(>2 行):最新 2 行可见,更早的进「历史步骤」折叠面板
+	p4 := opsCard(context.Background(), channel.ConvRef{}, channel.Outbound{
+		Kind: channel.KindProcessing, Text: "⏳",
+		Progress: []string{"✓ a (1s)", "✓ b (1s)", "✓ c (1s)", "⚙ d 执行中"},
+	})
+	els4 := p4.Native["elements"].([]any)
+	if els4[0].(map[string]any)["tag"] != "collapsible_panel" {
+		t.Fatal("older steps should fold into history panel")
+	}
+	if visible := els4[1].(map[string]any)["content"].(string); !strings.Contains(visible, "⚙ d 执行中") || strings.Contains(visible, "✓ a") {
+		t.Fatalf("visible area should hold only the latest 2 lines: %q", visible)
 	}
 	// 杂项通知不接管
 	if n := opsCard(context.Background(), channel.ConvRef{}, channel.Outbound{Text: "通知"}); n.Native != nil {
