@@ -18,8 +18,9 @@ import (
 //	  model: MiniMax-M2.7           # 可省略,默认 M2.7
 //	  # base_url: https://api.minimax.io/v1   # 海外平台的 key 用这个
 //
-// 注意:M 系是推理模型,content 内联 <think> 块——引擎侧 JSON 解析已
-// 适配(engine.ExtractJSON 剥 think 块);旧款 MiniMax-Text-01 无 think
+// 注意:M 系是推理模型,content 内联 <think> 块——适配层在返回前剥除
+// 开头的 think 块(思考不回填上下文的厂商通用实践,见 thinkstrip.go);
+// 观测轨迹在内层模型的回调处仍是原文。旧款 MiniMax-Text-01 无 think
 // 形态但能力较弱(真机对照见 docs/prompt-inventory.md P4 节)。
 func init() {
 	model.Register("minimax", func(ctx context.Context, conf map[string]any) (einomodel.ToolCallingChatModel, error) {
@@ -37,10 +38,14 @@ func init() {
 		if cfg.Model == "" {
 			cfg.Model = "MiniMax-M2.7"
 		}
-		return openai.NewChatModel(ctx, &openai.ChatModelConfig{
+		cm, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 			APIKey:  cfg.APIKey,
 			BaseURL: cfg.BaseURL,
 			Model:   cfg.Model,
 		})
+		if err != nil {
+			return nil, err
+		}
+		return &thinkStripModel{inner: cm}, nil
 	})
 }
