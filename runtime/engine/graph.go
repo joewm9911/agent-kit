@@ -34,13 +34,16 @@ import (
 type Step struct {
 	Name string `yaml:"name"`
 	Use  string `yaml:"use"`
-	// Args 是入参模板,可引用 {参数名} 与 {步骤名}(依赖步骤的输出);
-	// model 步骤的 args 即提示词。两种写法:标量 = 字面量模板;映射 =
-	// {ref: cap://prompt/..., <占位符>: <绑定值>, ...}——ref 经装配层
-	// 解析锁版本,ref 之外的键是使用点绑定(键=模板占位符,值可含
-	// {步骤}/{参数}/{$input};键在模板中不存在则装配期报错)。引擎只见
-	// 解析后的字面量。为空时透传 skill 的原始入参 JSON。
+	// Args 是步骤入参(实参):标量 = 字面量模板;映射 = 逐键的参数
+	// 绑定(工具/component 步骤:装配层拼为 JSON 对象;model 步骤:
+	// 绑定进 prompt 模板占位符,键不存在则装配期报错)。值可含
+	// {步骤}/{参数}/{$input}。为空时透传 skill 的原始入参 JSON。
+	// 引擎只见装配后的字面量。
 	Args StepArgs `yaml:"args"`
+	// Prompt 是 model 步骤的提示词(标量:字面量或 cap://prompt/ 前缀
+	// 引用,装配层解析锁版本并连同 args 绑定收敛为字面量)。仅
+	// use: model 可用,提示词与参数由此彻底拆分。
+	Prompt prompt.Value `yaml:"prompt"`
 	// Needs 是依赖的步骤名,缺省为上一声明步骤(首步缺省无依赖)。
 	Needs []string `yaml:"needs"`
 	// Timeout 是本步骤单次执行的超时,超时视为步骤失败(中断整图)。
@@ -53,46 +56,39 @@ type Step struct {
 	Context string `yaml:"context"`
 }
 
-// StepArgs 是步骤入参:内嵌 prompt.Value(Literal/Ref)+ ref 形态的
-// 使用点绑定。yaml 标量 → 字面量;映射 → ref 必填、其余键为绑定。
+// StepArgs 是步骤入参(实参):标量模板或参数映射。提示词不在这里
+// ——model 步骤的提示词写 Step.Prompt(args 只放参数)。
 type StepArgs struct {
-	prompt.Value `yaml:"-"`
-	// Binds 是 ref 模板的使用点绑定(装配层消费:替换占位后即清空)。
-	Binds map[string]string `yaml:"-"`
+	Literal string            // 标量模板(装配后引擎消费的唯一形态)
+	Fields  map[string]string // 参数映射(装配层消费:拼 JSON 或绑定进 prompt)
 }
 
-// UnmarshalYAML 解析两种写法:标量(cap://prompt 前缀 = 模板引用,
-// 其余 = 字面量模板)或映射({use: cap://prompt/..., <占位符>: <绑定>})。
-// 映射缺 use、或模板变量名叫 use 都在这里挡住(fail fast,不再有键被
-// 静默丢弃);旧的 ref 键报错并给出新写法。
+// IsZero 报告是否未声明。
+func (a StepArgs) IsZero() bool { return a.Literal == "" && a.Fields == nil }
+
+// UnmarshalYAML:标量 = 字面量模板;映射 = 参数绑定。提示词引用误写
+// 在 args 里(cap://prompt 前缀标量、或 use/ref 键)一律报错指路 prompt:。
 func (a *StepArgs) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
 	if err := unmarshal(&s); err == nil {
 		if strings.HasPrefix(s, prompt.RefPrefix) {
-			a.Ref = s
-		} else {
-			a.Literal = s
+			return fmt.Errorf(`step args: 提示词引用写在 prompt: 键(args 只放参数):prompt: %q`, s)
 		}
+		a.Literal = s
 		return nil
 	}
 	var m map[string]any
 	if err := unmarshal(&m); err != nil {
-		return fmt.Errorf("step args: 需要标量(字面量模板或 cap://prompt 引用)或映射({use: ..., <占位符>: <绑定>}):%w", err)
+		return fmt.Errorf("step args: 需要标量(字面量模板)或映射(参数绑定):%w", err)
 	}
-	if _, legacy := m["ref"]; legacy {
-		return fmt.Errorf(`step args: ref 键已改名 use(与步骤级 use 同义):args: {use: "cap://prompt/...", ...}`)
-	}
-	use, _ := m["use"].(string)
-	if use == "" {
-		return fmt.Errorf("step args: 映射形态必须带 use 键(模板引用;无绑定时直接用标量写法)")
-	}
-	a.Ref = use
-	delete(m, "use")
-	if len(m) > 0 {
-		a.Binds = make(map[string]string, len(m))
-		for k, v := range m {
-			a.Binds[k] = fmt.Sprint(v)
+	for _, k := range []string{"ref", "use"} {
+		if _, legacy := m[k]; legacy {
+			return fmt.Errorf(`step args: 模板引用已移至 prompt: 键(args 只放参数):prompt: "cap://prompt/...",args 写纯绑定映射`)
 		}
+	}
+	a.Fields = make(map[string]string, len(m))
+	for k, v := range m {
+		a.Fields[k] = fmt.Sprint(v)
 	}
 	return nil
 }
@@ -183,8 +179,11 @@ func compileGraph(decl *GraphDeclaration, resolve StepResolver) (*graphPlan, err
 		if _, dup := index[s.Name]; dup {
 			return nil, fmt.Errorf("duplicate step name %q", s.Name)
 		}
-		if s.Args.Ref != "" {
-			return nil, fmt.Errorf("step %q: args ref %q 未解析(装配层需先经 prompt 源解析)", s.Name, s.Args.Ref)
+		if !s.Prompt.IsZero() {
+			return nil, fmt.Errorf("step %q: prompt 未消费(装配层需先解析并收敛为字面量)", s.Name)
+		}
+		if s.Args.Fields != nil {
+			return nil, fmt.Errorf("step %q: args 参数映射未消费(装配层需先转换)", s.Name)
 		}
 		if _, clash := decl.Params[s.Name]; clash {
 			return nil, fmt.Errorf("step %q collides with a param name (template refs would be ambiguous)", s.Name)

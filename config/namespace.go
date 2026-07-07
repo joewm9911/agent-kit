@@ -12,6 +12,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -340,29 +341,49 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	return nil
 }
 
-// resolveStepArgs 在装配期解析步骤 args 的 prompt 引用({ref: cap://prompt/...}
-// → 平台模板体,版本已锁),引擎只见字面量;字面量步骤原样透传。
-// 解析后的模板体照常参与运行时的 {var} 渲染(两层同一套占位语法)。
+// resolveStepArgs 在装配期把每个步骤的 prompt/args 收敛为引擎消费的
+// 字面量模板(fail fast 全在这里,引擎零策略):
+//   - model 步骤:prompt 必填(cap://prompt/ 前缀经提示词源解析锁版本),
+//     args 参数映射绑定进模板占位符(键不存在报错),收敛为字面量;
+//   - 工具/component 步骤:不得有 prompt;args 参数映射逐值保位拼为
+//     JSON 对象模板(值里的 {占位} 留给运行时渲染)。
 func resolveStepArgs(ctx context.Context, steps []engine.Step, prompts *prompt.Resolver) ([]engine.Step, error) {
 	out := make([]engine.Step, len(steps))
 	for i, s := range steps {
-		if s.Args.Ref != "" {
-			tpl, err := s.Args.Value.Resolve(ctx, prompts)
+		if s.Use == "model" {
+			if s.Prompt.IsZero() {
+				return nil, fmt.Errorf(`step %q: use: model 需要 prompt:(提示词;args 只放参数绑定)`, s.Name)
+			}
+			if s.Args.Literal != "" {
+				return nil, fmt.Errorf(`step %q: model 步骤的提示词写 prompt:,args 只接受参数映射`, s.Name)
+			}
+			tpl, err := s.Prompt.Resolve(ctx, prompts)
 			if err != nil {
-				return nil, fmt.Errorf("step %q: args %w", s.Name, err)
+				return nil, fmt.Errorf("step %q: prompt %w", s.Name, err)
 			}
 			text := tpl.Text
-			// 使用点绑定:键必须是模板里存在的占位符(写了就必须有效,
-			// 不允许静默丢弃);值本身可含 {步骤}/{参数}/{$input},留给
-			// 运行时渲染。
-			for k, v := range s.Args.Binds {
+			// 参数绑定:键必须是模板里存在的占位符(写了就必须有效);
+			// 值里的 {步骤}/{参数}/{$input} 留给运行时渲染。
+			for k, v := range s.Args.Fields {
 				ph := "{" + k + "}"
 				if !strings.Contains(text, ph) {
-					return nil, fmt.Errorf("step %q: 绑定键 %q 在模板 %s 中没有对应占位符 {%s}", s.Name, k, s.Args.Ref, k)
+					return nil, fmt.Errorf("step %q: 参数 %q 在 prompt 模板中没有对应占位符 {%s}", s.Name, k, k)
 				}
 				text = strings.ReplaceAll(text, ph, v)
 			}
-			s.Args = engine.StepArgs{Value: prompt.Value{Literal: text}}
+			s.Prompt = prompt.Value{}
+			s.Args = engine.StepArgs{Literal: text}
+		} else {
+			if !s.Prompt.IsZero() {
+				return nil, fmt.Errorf(`step %q: prompt 只用于 use: model 步骤(工具/component 的入参写 args)`, s.Name)
+			}
+			if s.Args.Fields != nil {
+				b, err := json.Marshal(s.Args.Fields)
+				if err != nil {
+					return nil, fmt.Errorf("step %q: args: %w", s.Name, err)
+				}
+				s.Args = engine.StepArgs{Literal: string(b)}
+			}
 		}
 		out[i] = s
 	}

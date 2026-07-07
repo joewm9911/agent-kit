@@ -220,7 +220,7 @@ agents: [agents/a.yaml]
 model: {provider: marker, config: {resp: ns-model}}
 skills:
   - name: x
-    steps: [{name: s, use: "model", args: "hi"}]
+    steps: [{name: s, use: "model", prompt: "hi"}]
 `,
 	})
 	spec, err := LoadApp(appPath)

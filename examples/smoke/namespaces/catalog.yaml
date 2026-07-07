@@ -70,7 +70,7 @@ components:
       id: {type: string, desc: 商品 ID, required: true}
     steps:
       - {name: detail, use: "tools/shop/get_product", args: '{"id":"{id}"}', retry: 1}
-      - {name: verdict, use: model, args: "审计商品数据「{detail}」,给出一句合规结论。"}
+      - {name: verdict, use: model, prompt: "审计商品数据「{detail}」,给出一句合规结论。"}
 
   # graph(编排族 component):问答管道,供 skill 以 use: 整体委托
   - name: qa_flow
@@ -94,7 +94,7 @@ skills:
       - {name: analysis,  use: "components/price_analyst", needs: [detail, inventory],
          args: '{"sku":"{sku}","question":"{$input}","detail":"{detail}"}', context: fork}
       - {name: brief, use: model, needs: [analysis],
-         args: "把分析结论「{analysis}」压成一句话汇报。"}
+         prompt: "把分析结论「{analysis}」压成一句话汇报。"}
     output: brief
 
   # use: 入口引用:skill 退化为纯接口,执行委托给私有 graph

@@ -73,5 +73,5 @@ skills:
     steps:
       - {name: check,  use: "tools/oms/get_order", args: '{"id":"{id}"}'}
       - {name: refund, use: "tools/oms/refund_order", args: '{"id":"{id}","reason":"{reason}"}'}
-      - {name: brief,  use: model, args: "退款已执行:{refund}。结合订单信息「{check}」给客户一句简洁的告知话术。"}
+      - {name: brief,  use: model, prompt: "退款已执行:{refund}。结合订单信息「{check}」给客户一句简洁的告知话术。"}
     output: brief

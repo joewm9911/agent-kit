@@ -56,8 +56,8 @@ func TestGraphStepFork(t *testing.T) {
 	sk, err := engine.BuildGraph(context.Background(), &engine.GraphDeclaration{
 		Name: "probe",
 		Steps: []engine.Step{
-			{Name: "fresh", Use: "c", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"a"}`}}},
-			{Name: "forked", Use: "c", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"b"}`}}, Context: "fork"},
+			{Name: "fresh", Use: "c", Args: engine.StepArgs{Literal: `{"q":"a"}`}},
+			{Name: "forked", Use: "c", Args: engine.StepArgs{Literal: `{"q":"b"}`}, Context: "fork"},
 		},
 	}, "ns", resolve)
 	if err != nil {
