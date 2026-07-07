@@ -11,11 +11,18 @@ import (
 	"sync"
 )
 
-// ConvRef 定位一个 IM 会话。
+// ConvRef 定位一个 IM 会话(以及本次入站的回复路由信息)。
 type ConvRef struct {
 	Channel string // channel 实例名
 	Chat    string // 群/单聊 ID
 	User    string // 发言用户 ID
+	// Thread 是话题/子讨论 ID(飞书话题的 thread_id 等):非空表示消息
+	// 来自话题内——回复应发回同一话题,会话映射按话题细分(见
+	// Dispatcher.sessionKey)。无话题概念的通道保持空。
+	Thread string
+	// Anchor 是触发本轮的入站消息 ID:话题内回复需要以话题中某条消息
+	// 为锚(飞书走 reply 接口回话题)。无话题语义时可为空。
+	Anchor string
 }
 
 // Inbound 是收到的一条用户消息。

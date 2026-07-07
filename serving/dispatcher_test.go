@@ -112,3 +112,27 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not met within deadline")
 }
+
+// TestSessionKeyThread 验证话题会话映射:话题消息按 thread 细分,
+// chat_user 在话题之上再叠加用户隔离;无话题行为不变。
+func TestSessionKeyThread(t *testing.T) {
+	d := NewDispatcher(nil)
+	plain := channel.ConvRef{Channel: "feishu", Chat: "oc_1", User: "u1"}
+	topic := channel.ConvRef{Channel: "feishu", Chat: "oc_1", User: "u1", Thread: "omt_9", Anchor: "om_5"}
+
+	if got := d.sessionKey(Binding{}, plain); got != "feishu-oc_1" {
+		t.Fatalf("plain chat key = %q", got)
+	}
+	if got := d.sessionKey(Binding{}, topic); got != "feishu-oc_1-omt_9" {
+		t.Fatalf("topic key = %q", got)
+	}
+	if got := d.sessionKey(Binding{SessionMapping: "chat_user"}, topic); got != "feishu-oc_1-omt_9-u1" {
+		t.Fatalf("topic+user key = %q", got)
+	}
+	// 同群不同话题必须是不同会话
+	other := topic
+	other.Thread = "omt_10"
+	if d.sessionKey(Binding{}, topic) == d.sessionKey(Binding{}, other) {
+		t.Fatal("different threads must map to different sessions")
+	}
+}

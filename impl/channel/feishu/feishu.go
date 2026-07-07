@@ -106,6 +106,7 @@ type eventBody struct {
 			MessageID   string            `json:"message_id"`
 			ChatID      string            `json:"chat_id"`
 			ChatType    string            `json:"chat_type"` // p2p | group
+			ThreadID    string            `json:"thread_id"` // 话题消息才有
 			MessageType string            `json:"message_type"`
 			Content     string            `json:"content"`
 			Mentions    []json.RawMessage `json:"mentions"`
@@ -158,12 +159,17 @@ func (f *Feishu) Start(_ context.Context, mux *http.ServeMux, h channel.InboundH
 		if text == "" {
 			return
 		}
+		conv := channel.ConvRef{
+			Channel: f.name,
+			Chat:    body.Event.Message.ChatID,
+			User:    body.Event.Sender.SenderID.OpenID,
+		}
+		if body.Event.Message.ThreadID != "" { // 话题消息:回复回话题,会话按话题细分
+			conv.Thread = body.Event.Message.ThreadID
+			conv.Anchor = body.Event.Message.MessageID
+		}
 		go h(context.Background(), channel.Inbound{
-			Conv: channel.ConvRef{
-				Channel: f.name,
-				Chat:    body.Event.Message.ChatID,
-				User:    body.Event.Sender.SenderID.OpenID,
-			},
+			Conv:    conv,
 			Text:    text,
 			EventID: body.Header.EventID,
 		})
@@ -236,14 +242,21 @@ func (f *Feishu) decode(raw []byte) (*eventBody, error) {
 // ---- 发送:OpenAPI ----
 
 // Send 发送消息:Markdown=true 用可更新的交互卡片,否则纯文本。
+// 话题消息(conv.Thread 非空)以入站消息为锚走 reply 接口、
+// reply_in_thread 落回同一话题,不散到主聊天流。
 func (f *Feishu) Send(ctx context.Context, conv channel.ConvRef, msg channel.Outbound) (string, error) {
 	msgType, content := encode(msg)
-	payload := map[string]string{"receive_id": conv.Chat, "msg_type": msgType, "content": content}
 	var resp struct {
 		Data struct {
 			MessageID string `json:"message_id"`
 		} `json:"data"`
 	}
+	if conv.Thread != "" && conv.Anchor != "" {
+		err := f.call(ctx, http.MethodPost, "/open-apis/im/v1/messages/"+conv.Anchor+"/reply",
+			map[string]any{"msg_type": msgType, "content": content, "reply_in_thread": true}, &resp)
+		return resp.Data.MessageID, err
+	}
+	payload := map[string]string{"receive_id": conv.Chat, "msg_type": msgType, "content": content}
 	err := f.call(ctx, http.MethodPost, "/open-apis/im/v1/messages?receive_id_type=chat_id", payload, &resp)
 	return resp.Data.MessageID, err
 }

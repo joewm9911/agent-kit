@@ -278,8 +278,14 @@ func steerText(s string) (string, bool) {
 	return "", false
 }
 
+// sessionKey 派生会话 key:话题消息按话题细分(同一群里每个话题是
+// 独立会话,话题即上下文);SessionMapping 在话题维度之上再叠加
+// 用户隔离(chat_user)。
 func (d *Dispatcher) sessionKey(b Binding, conv channel.ConvRef) string {
 	key := fmt.Sprintf("%s-%s", conv.Channel, conv.Chat)
+	if conv.Thread != "" {
+		key += "-" + conv.Thread
+	}
 	if b.SessionMapping == "chat_user" {
 		key += "-" + conv.User
 	}
