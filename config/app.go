@@ -357,10 +357,12 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
 	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。
 	mounted := source.NewCatalog(maxRisk, nil)
+	nsExports := newComponentExports() // 导出 component 注册表(本 agent 挂载序列共享)
 	for _, mnt := range as.Mounts {
 		nsCopy := mnt.NamespaceConfig // 按 agent 实例化,不共享装配产物
 		err := buildNamespace(ctx, &nsCopy, nsDeps{
-			global: mounted, prompts: prompts, defaultModel: defaultModel,
+			exports: nsExports,
+			global:  mounted, prompts: prompts, defaultModel: defaultModel,
 			maxRisk:  maxRisk,
 			base:     agentProfile,      // app.merge(agent);ns 自己在 buildNamespace 内并入
 			mount:    mnt.Override,      // per-mount 覆盖(最高优)

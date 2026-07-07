@@ -380,8 +380,12 @@ type NamespaceFile struct {
 //	编排族(steps):engine = graph(DAG,可并行)| workflow(纯顺序,
 //	  禁 needs)。两族字段互斥。
 type ComponentConfig struct {
-	Name   string       `yaml:"name"`
-	Engine string       `yaml:"engine"`
+	Name   string `yaml:"name"`
+	Engine string `yaml:"engine"`
+	// Export 把该 component 导出给其他 namespace(经 imports 声明后以
+	// cap://component/<ns>/<name> 全称引用)。默认私有;导出的 component
+	// 不进目录、不可挂 agent 工具面——模型可选的能力必须走 skill。
+	Export bool         `yaml:"export"`
 	Prompt prompt.Value `yaml:"prompt"`
 	// Tools 是循环族的工具面引用:tools/<source>/<name|*>(本 ns 工具)、
 	// components/<name>(本 ns 执行单元)、cap://skill 引用(跨 ns)。
@@ -434,8 +438,13 @@ type NamespaceSkill struct {
 // digest/steps;不含 model)内嵌自 Profile——该 ns 下 component 的画像默认,
 // 覆盖 agent、被 component 覆盖。
 type NamespaceConfig struct {
-	Name       string `yaml:"name"`
-	Profile    `yaml:",inline"`
+	Name    string `yaml:"name"`
+	Profile `yaml:",inline"`
+	// Imports 声明依赖的 namespace(其导出 component 经
+	// cap://component/<ns>/<name> 可见)。可见性按装配/挂载顺序:被
+	// 依赖的 ns 必须先声明/先挂载,否则装配期报错——与 cap://skill
+	// 的"按关联顺序可见"同一规则。
+	Imports    []string          `yaml:"imports"`
 	Tools      []SourceConfig    `yaml:"tools"`
 	Components []ComponentConfig `yaml:"components"`
 	Skills     []NamespaceSkill  `yaml:"skills"`

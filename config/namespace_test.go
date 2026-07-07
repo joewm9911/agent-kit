@@ -302,3 +302,104 @@ func TestWindowMustFitSummaryView(t *testing.T) {
 		t.Fatalf("expect window/keep validation error, got %v", err)
 	}
 }
+
+// TestComponentExportImport 覆盖跨 ns 导出 component 的完整矩阵:
+// 显式 export + 显式 imports + cap://component 全称引用可用;
+// 未导出/未 import/顺序颠倒/自依赖均装配期报错;导出 component 不进目录。
+func TestComponentExportImport(t *testing.T) {
+	setupTestSource()
+	m := testmodel.New(schema.AssistantMessage("ok", nil))
+
+	common := func() *NamespaceConfig {
+		return &NamespaceConfig{
+			Name:  "common",
+			Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+			Components: []ComponentConfig{
+				{Name: "shared-fmt", Export: true, Engine: "workflow",
+					Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
+					Steps: []engine.Step{
+						{Name: "run", Use: "tools/svc/search", Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+					}},
+				{Name: "private-fmt", Engine: "workflow", // 未导出
+					Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
+					Steps: []engine.Step{
+						{Name: "run", Use: "tools/svc/search", Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+					}},
+			},
+		}
+	}
+	sales := func(step engine.Step) *NamespaceConfig {
+		return &NamespaceConfig{
+			Name:    "sales",
+			Imports: []string{"common"},
+			Skills: []NamespaceSkill{{
+				Name: "report", Description: "d",
+				Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
+				Steps:  []engine.Step{step},
+			}},
+		}
+	}
+
+	// 正路:export + import + 全称引用
+	global := source.NewCatalog(capability.RiskMutating, nil)
+	exp := newComponentExports()
+	deps := func() nsDeps {
+		return nsDeps{global: global, defaultModel: m, maxRisk: capability.RiskMutating, exports: exp}
+	}
+	if err := buildNamespace(context.Background(), common(), deps()); err != nil {
+		t.Fatal(err)
+	}
+	ok := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
+		Args: prompt.Value{Literal: `{"q":"{q}"}`}})
+	if err := buildNamespace(context.Background(), ok, deps()); err != nil {
+		t.Fatal(err)
+	}
+	sk, err := global.Get("cap://skill/sales/report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := capability.Invoke(context.Background(), sk, `{"q":"pay"}`)
+	if err != nil || !strings.Contains(out, "pay") {
+		t.Fatalf("cross-ns component invoke: %v %q", err, out)
+	}
+	// 导出 component 不进目录(目录里只有 skill)
+	if _, err := global.Get("cap://component/common/shared-fmt"); err == nil {
+		t.Fatal("exported component must not enter the catalog")
+	}
+
+	// 未导出:引用报错且指明 export
+	bad := sales(engine.Step{Name: "fmt", Use: "cap://component/common/private-fmt",
+		Args: prompt.Value{Literal: `{"q":"x"}`}})
+	if err := buildNamespace(context.Background(), bad, deps()); err == nil || !strings.Contains(err.Error(), "export") {
+		t.Fatalf("unexported ref must fail with export hint, got %v", err)
+	}
+
+	// 未声明 imports:即使已导出也拒绝
+	noImp := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
+		Args: prompt.Value{Literal: `{"q":"x"}`}})
+	noImp.Imports = nil
+	if err := buildNamespace(context.Background(), noImp, deps()); err == nil || !strings.Contains(err.Error(), "imports") {
+		t.Fatalf("missing imports must fail, got %v", err)
+	}
+
+	// 顺序:import 尚未装配的 ns → 报错提示顺序
+	fresh := newComponentExports()
+	early := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
+		Args: prompt.Value{Literal: `{"q":"x"}`}})
+	err = buildNamespace(context.Background(), early,
+		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
+			maxRisk: capability.RiskMutating, exports: fresh})
+	if err == nil || !strings.Contains(err.Error(), "顺序") {
+		t.Fatalf("out-of-order import must fail, got %v", err)
+	}
+
+	// 自依赖
+	self := common()
+	self.Imports = []string{"common"}
+	if err := buildNamespace(context.Background(), self,
+		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
+			maxRisk: capability.RiskMutating, exports: newComponentExports()}); err == nil ||
+		!strings.Contains(err.Error(), "自己") {
+		t.Fatalf("self import must fail, got %v", err)
+	}
+}

@@ -29,6 +29,32 @@ import (
 )
 
 // nsDeps 是命名空间装配的环境。
+// componentExports 是一次装配序列内的导出 component 注册表:
+// 单文件形态跨全部 namespaces,多文件形态按 agent 的挂载集合——
+// 与 cap://skill 的解析域同尺度。可见性按装配顺序(先装配先可见)。
+type componentExports struct {
+	built map[string]bool                  // 已装配完成的 ns(imports 顺序校验)
+	comps map[string]capability.Capability // "<ns>/<name>" → 导出 component
+}
+
+func newComponentExports() *componentExports {
+	return &componentExports{built: map[string]bool{}, comps: map[string]capability.Capability{}}
+}
+
+func (e *componentExports) add(ns, name string, c capability.Capability) error {
+	key := ns + "/" + name
+	if _, dup := e.comps[key]; dup {
+		return fmt.Errorf("exported component %q 重复(同名 namespace 装配了两次?)", key)
+	}
+	e.comps[key] = c
+	return nil
+}
+
+func (e *componentExports) lookup(ns, name string) (capability.Capability, bool) {
+	c, ok := e.comps[ns+"/"+name]
+	return c, ok
+}
+
 type nsDeps struct {
 	global       *source.Catalog // skills 的落点,亦是跨 ns cap://skill 引用的解析域
 	packRoot     string          // 外部 skillpack 的物化目录(.skills)
@@ -46,6 +72,9 @@ type nsDeps struct {
 	// mount 是 agent 给本 namespace 的 per-mount 覆盖画像(最高优;
 	// 单文件路径为空 Profile)。
 	mount Profile
+	// exports 是导出 component 注册表(装配序列级,调用方创建;nil 时
+	// buildNamespace 自建空表——imports 引用将查无)。
+	exports *componentExports
 	// appModel 是 app 层 model(判断 component 解析出的 model 是否为
 	// app 默认:相同则复用共享 DefaultModel,不同则为其构建专属模型)。
 	appModel *ModelConfig
@@ -90,6 +119,21 @@ func (c *sourceCache) put(key string, caps []capability.Capability) {
 // 只有 skills 进 deps.global(单文件路径 = 全局目录;多文件路径 =
 // 每 agent 的挂载目录)。
 func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error {
+	if deps.exports == nil {
+		deps.exports = newComponentExports()
+	}
+	// imports 顺序校验:被依赖的 ns 必须已装配(与 cap://skill 的
+	// "按声明/挂载顺序可见"同一规则);顺带排除自依赖。
+	imports := map[string]bool{}
+	for _, imp := range ns.Imports {
+		if imp == ns.Name {
+			return fmt.Errorf("namespace %s: 不能 import 自己", ns.Name)
+		}
+		if !deps.exports.built[imp] {
+			return fmt.Errorf("namespace %s: import %q 未在此前装配——imports 依赖按装配/挂载顺序可见,把 %q 提前声明/挂载", ns.Name, imp, imp)
+		}
+		imports[imp] = true
+	}
 	if ns.Name == "" {
 		return fmt.Errorf("namespace: name is required")
 	}
@@ -162,11 +206,16 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 
 		// 编排族:steps 声明 → 私有的无脑图(graph/workflow)
 		if len(cc.Steps) > 0 {
-			c, err := buildGraphComponent(ctx, ns.Name, cc, local, comps, deps, eff)
+			c, err := buildGraphComponent(ctx, ns.Name, cc, local, comps, imports, deps, eff)
 			if err != nil {
 				return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
 			}
 			comps[cc.Name] = c
+			if cc.Export {
+				if err := deps.exports.add(ns.Name, cc.Name, c); err != nil {
+					return fmt.Errorf("namespace %s: %w", ns.Name, err)
+				}
+			}
 			continue
 		}
 
@@ -178,7 +227,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		case "graph", "workflow":
 			return fmt.Errorf("namespace %s: component %s: engine %s 需要 steps 声明(编排族)", ns.Name, cc.Name, cc.Engine)
 		}
-		caps, err := resolveToolFace(ns.Name, cc.Tools, local, comps, deps.global)
+		caps, err := resolveToolFace(ns.Name, cc.Tools, local, comps, imports, deps.exports, deps.global)
 		if err != nil {
 			return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
 		}
@@ -212,6 +261,11 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
 		}
 		comps[cc.Name] = c
+		if cc.Export {
+			if err := deps.exports.add(ns.Name, cc.Name, c); err != nil {
+				return fmt.Errorf("namespace %s: %w", ns.Name, err)
+			}
+		}
 	}
 
 	// 3. skills:编排引用 → 编译为 DAG → 进 deps.global。
@@ -247,7 +301,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			}
 			steps = []engine.Step{{Name: "main", Use: sc.Use}}
 		}
-		resolver := stepResolver(ns.Name, local, comps, deps.global, deps.defaultModel)
+		resolver := stepResolver(ns.Name, local, comps, imports, deps.exports, deps.global, deps.defaultModel)
 		steps, err := resolveStepArgs(ctx, steps, deps.prompts)
 		if err != nil {
 			return fmt.Errorf("namespace %s: skill %s: %w", ns.Name, sc.Name, err)
@@ -264,6 +318,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			return fmt.Errorf("namespace %s: skill %s: %w", ns.Name, sc.Name, err)
 		}
 	}
+	deps.exports.built[ns.Name] = true
 	return nil
 }
 
@@ -316,7 +371,8 @@ func applyStepDefaults(steps []engine.Step, sdTimeout loop.Duration, sdRetry int
 // 执行器,产物只进本 ns 的 comps 表(私有,不进目录)。skill 与它的
 // 区别只剩可见性——skill 是导出的图,这里是私有的图。
 func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig,
-	local *source.Catalog, comps map[string]capability.Capability, deps nsDeps, eff Profile) (capability.Capability, error) {
+	local *source.Catalog, comps map[string]capability.Capability, imports map[string]bool,
+	deps nsDeps, eff Profile) (capability.Capability, error) {
 
 	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.Loop.MaxSteps != nil || cc.Todo {
 		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps/todo 互斥(编排族没有大脑,计划就是 steps 本身)")
@@ -334,7 +390,7 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 	default:
 		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", cc.Engine)
 	}
-	resolver := stepResolver(nsName, local, comps, deps.global, deps.defaultModel)
+	resolver := stepResolver(nsName, local, comps, imports, deps.exports, deps.global, deps.defaultModel)
 	steps, err := resolveStepArgs(ctx, cc.Steps, deps.prompts)
 	if err != nil {
 		return nil, err
@@ -354,7 +410,8 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 //
 // tools/ 通配可返回多个能力,其余恰返回一个;命中 0 个报错。
 func resolveRef(nsName, ref string, local, global *source.Catalog,
-	comps map[string]capability.Capability, m model.ToolCallingChatModel, wildcardOK bool) ([]capability.Capability, error) {
+	comps map[string]capability.Capability, imports map[string]bool, exports *componentExports,
+	m model.ToolCallingChatModel, wildcardOK bool) ([]capability.Capability, error) {
 
 	switch {
 	case ref == "model":
@@ -385,6 +442,26 @@ func resolveRef(nsName, ref string, local, global *source.Catalog,
 			return nil, fmt.Errorf("component %q not declared (yet) in namespace %s", name, nsName)
 		}
 		return []capability.Capability{c}, nil
+	case strings.HasPrefix(ref, "cap://component/"):
+		// 跨 ns 导出 component:必须显式 imports + 对方显式 export,
+		// 全称引用(不落本地短名空间,来源在使用点一眼可见)。
+		rest := strings.TrimPrefix(ref, "cap://component/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("bad reference %q: want cap://component/<ns>/<name>", ref)
+		}
+		depNS, depName := parts[0], parts[1]
+		if !imports[depNS] {
+			return nil, fmt.Errorf("%s: namespace %s 未声明 imports: [%s](依赖必须显式)", ref, nsName, depNS)
+		}
+		if exports == nil {
+			return nil, fmt.Errorf("%s: 无导出注册表(装配序列未启用 imports)", ref)
+		}
+		c, ok := exports.lookup(depNS, depName)
+		if !ok {
+			return nil, fmt.Errorf("%s: namespace %s 没有导出 component %q(需在对方声明 export: true)", ref, depNS, depName)
+		}
+		return []capability.Capability{c}, nil
 	case strings.HasPrefix(ref, "cap://"):
 		c, err := crossNamespaceSkill(ref, global)
 		if err != nil {
@@ -392,17 +469,18 @@ func resolveRef(nsName, ref string, local, global *source.Catalog,
 		}
 		return []capability.Capability{c}, nil
 	default:
-		return nil, fmt.Errorf("bad reference %q: want tools/<source>/<name>, components/<name>, model or cap://skill...", ref)
+		return nil, fmt.Errorf("bad reference %q: want tools/<source>/<name>, components/<name>, model, cap://skill... or cap://component/<ns>/<name>", ref)
 	}
 }
 
 // resolveToolFace 解析 component 的工具面引用(允许 tools/ 通配,批量展开)。
 func resolveToolFace(nsName string, refs []string, local *source.Catalog,
-	comps map[string]capability.Capability, global *source.Catalog) ([]capability.Capability, error) {
+	comps map[string]capability.Capability, imports map[string]bool, exports *componentExports,
+	global *source.Catalog) ([]capability.Capability, error) {
 
 	var out []capability.Capability
 	for _, ref := range refs {
-		caps, err := resolveRef(nsName, ref, local, global, comps, nil, true)
+		caps, err := resolveRef(nsName, ref, local, global, comps, imports, exports, nil, true)
 		if err != nil {
 			return nil, err
 		}
@@ -413,10 +491,11 @@ func resolveToolFace(nsName string, refs []string, local *source.Catalog,
 
 // stepResolver 返回编排步骤的引用解析器(装配期调用):要求精确单一命中。
 func stepResolver(nsName string, local *source.Catalog, comps map[string]capability.Capability,
+	imports map[string]bool, exports *componentExports,
 	global *source.Catalog, m model.ToolCallingChatModel) engine.StepResolver {
 
 	return func(use string) (capability.Capability, error) {
-		caps, err := resolveRef(nsName, use, local, global, comps, m, false)
+		caps, err := resolveRef(nsName, use, local, global, comps, imports, exports, m, false)
 		if err != nil {
 			return nil, err
 		}

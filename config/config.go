@@ -213,9 +213,11 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 
 	// 5b. namespaces:三层结构装配(tools → components → skills),
 	// 只有 skills 进全局目录;声明顺序决定跨 ns 引用的可见性。
+	nsExports := newComponentExports() // 导出 component 注册表(本装配序列共享)
 	for i := range cfg.Namespaces {
 		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
-			global: catalog, prompts: prompts, defaultModel: defaultModel,
+			exports: nsExports,
+			global:  catalog, prompts: prompts, defaultModel: defaultModel,
 			maxRisk: maxRisk, base: cfg.Profile, appModel: cfg.Profile.Model, logger: logger,
 			packRoot: packRoot, packOpts: packOpts, execCfg: cfg.Exec, hubs: hubs,
 		})
