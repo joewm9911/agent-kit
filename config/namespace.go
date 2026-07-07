@@ -248,6 +248,10 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			steps = []engine.Step{{Name: "main", Use: sc.Use}}
 		}
 		resolver := stepResolver(ns.Name, local, comps, deps.global, deps.defaultModel)
+		steps, err := resolveStepArgs(ctx, steps, deps.prompts)
+		if err != nil {
+			return fmt.Errorf("namespace %s: skill %s: %w", ns.Name, sc.Name, err)
+		}
 		c, err := engine.BuildGraph(ctx, &engine.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
 			Params: sc.Params, Output: sc.Output,
@@ -261,6 +265,24 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 	}
 	return nil
+}
+
+// resolveStepArgs 在装配期解析步骤 args 的 prompt 引用({ref: cap://prompt/...}
+// → 平台模板体,版本已锁),引擎只见字面量;字面量步骤原样透传。
+// 解析后的模板体照常参与运行时的 {var} 渲染(两层同一套占位语法)。
+func resolveStepArgs(ctx context.Context, steps []engine.Step, prompts *prompt.Resolver) ([]engine.Step, error) {
+	out := make([]engine.Step, len(steps))
+	for i, s := range steps {
+		if s.Args.Ref != "" {
+			tpl, err := s.Args.Resolve(ctx, prompts)
+			if err != nil {
+				return nil, fmt.Errorf("step %q: args %w", s.Name, err)
+			}
+			s.Args = prompt.Value{Literal: tpl.Text}
+		}
+		out[i] = s
+	}
+	return out, nil
 }
 
 // applyStepDefaults 应用步骤参数的 override 链:步骤显式声明 →
@@ -313,10 +335,14 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", cc.Engine)
 	}
 	resolver := stepResolver(nsName, local, comps, deps.global, deps.defaultModel)
+	steps, err := resolveStepArgs(ctx, cc.Steps, deps.prompts)
+	if err != nil {
+		return nil, err
+	}
 	return engine.BuildGraph(ctx, &engine.GraphDeclaration{
 		Kind: "component",
 		Name: cc.Name, Params: cc.Params,
-		Steps:  applyStepDefaults(cc.Steps, 0, 0, eff.stepTimeout(), eff.stepRetry()),
+		Steps:  applyStepDefaults(steps, 0, 0, eff.stepTimeout(), eff.stepRetry()),
 		Output: cc.Output,
 	}, nsName, resolver)
 }

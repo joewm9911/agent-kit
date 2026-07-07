@@ -64,9 +64,9 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 				"request": {Type: "string", Required: true},
 			},
 			Steps: []engine.Step{
-				{Name: "auth", Use: "tools/svc/auth", Args: `{"token":"{token}"}`},
-				{Name: "plan", Use: "components/planner", Args: `{"request":"{request}"}`},
-				{Name: "run", Use: "tools/svc/submit", Args: `{"plan":"{plan}"}`},
+				{Name: "auth", Use: "tools/svc/auth", Args: prompt.Value{Literal: `{"token":"{token}"}`}},
+				{Name: "plan", Use: "components/planner", Args: prompt.Value{Literal: `{"request":"{request}"}`}},
+				{Name: "run", Use: "tools/svc/submit", Args: prompt.Value{Literal: `{"plan":"{plan}"}`}},
 			},
 		}},
 	}
@@ -145,8 +145,8 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 				Engine: "workflow",
 				Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
 				Steps: []engine.Step{
-					{Name: "data", Use: "tools/svc/search", Args: `{"q":"{q}"}`},
-					{Name: "say", Use: "model", Args: "总结:{data}"},
+					{Name: "data", Use: "tools/svc/search", Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+					{Name: "say", Use: "model", Args: prompt.Value{Literal: "总结:{data}"}},
 				},
 			},
 			{
@@ -155,9 +155,9 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 				Engine: "graph",
 				Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 				Steps: []engine.Step{
-					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: `{"q":"{q}"}`},
-					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: `{"q":"{q}"}`},
-					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: `{"q":"{a}+{b}"}`},
+					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: prompt.Value{Literal: `{"q":"{a}+{b}"}`}},
 				},
 			},
 		},

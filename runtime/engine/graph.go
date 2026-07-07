@@ -22,6 +22,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
 )
 
 // Step 是编排图上的一个节点。use 只做引用(能力声明与能力使用分离):
@@ -33,9 +34,11 @@ import (
 type Step struct {
 	Name string `yaml:"name"`
 	Use  string `yaml:"use"`
-	// Args 是入参模板,可引用 {参数名} 与 {步骤名}(依赖步骤的输出)。
-	// 为空时透传 skill 的原始入参 JSON。
-	Args string `yaml:"args"`
+	// Args 是入参模板,可引用 {参数名} 与 {步骤名}(依赖步骤的输出);
+	// model 步骤的 args 即提示词。支持字面量或 {ref: cap://prompt/...}
+	// (装配层解析并锁版本,引擎只见解析后的字面量)。为空时透传 skill
+	// 的原始入参 JSON。
+	Args prompt.Value `yaml:"args"`
 	// Needs 是依赖的步骤名,缺省为上一声明步骤(首步缺省无依赖)。
 	Needs []string `yaml:"needs"`
 	// Timeout 是本步骤单次执行的超时,超时视为步骤失败(中断整图)。
@@ -133,6 +136,9 @@ func compileGraph(decl *GraphDeclaration, resolve StepResolver) (*graphPlan, err
 		}
 		if _, dup := index[s.Name]; dup {
 			return nil, fmt.Errorf("duplicate step name %q", s.Name)
+		}
+		if s.Args.Ref != "" {
+			return nil, fmt.Errorf("step %q: args ref %q 未解析(装配层需先经 prompt 源解析)", s.Name, s.Args.Ref)
 		}
 		if _, clash := decl.Params[s.Name]; clash {
 			return nil, fmt.Errorf("step %q collides with a param name (template refs would be ambiguous)", s.Name)
@@ -260,7 +266,7 @@ func checkTemplateRefs(decl *GraphDeclaration, steps []compiledStep, index map[s
 	}
 
 	for i, s := range steps {
-		for _, m := range tplRef.FindAllStringSubmatch(s.step.Args, -1) {
+		for _, m := range tplRef.FindAllStringSubmatch(s.step.Args.Literal, -1) {
 			ref := m[1]
 			if strings.HasPrefix(ref, "$") {
 				if !builtinVars[ref] {
@@ -330,9 +336,9 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 		}
 		s := &p.steps[i]
 		mu.Lock()
-		args := renderVars(s.step.Args, vars)
+		args := renderVars(s.step.Args.Literal, vars)
 		mu.Unlock()
-		if s.step.Args == "" {
+		if s.step.Args.IsZero() {
 			args = argsJSON // 空模板透传原始入参(passthrough 场景)
 		}
 		out, err := runStep(ctx, s, args)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
+	"github.com/joewm9911/agent-kit/protocol/prompt"
 )
 
 // testCap 构造一个记录输入并返回 transform(输入) 的能力。
@@ -47,9 +48,9 @@ func TestGraphSerialDefaultChain(t *testing.T) {
 		Name:   "chain",
 		Params: map[string]capability.ParamDecl{"input": {Type: "string", Required: true}},
 		Steps: []Step{
-			{Name: "s1", Use: "a", Args: "{input}"},
-			{Name: "s2", Use: "b", Args: "{s1}"},
-			{Name: "s3", Use: "c", Args: "{s2}"},
+			{Name: "s1", Use: "a", Args: prompt.Value{Literal: "{input}"}},
+			{Name: "s2", Use: "b", Args: prompt.Value{Literal: "{s1}"}},
+			{Name: "s3", Use: "c", Args: prompt.Value{Literal: "{s2}"}},
 		},
 	}, "ns", resolverFor(caps))
 	if err != nil {
@@ -95,10 +96,10 @@ func TestGraphParallelAndJoin(t *testing.T) {
 		Name:   "fanout",
 		Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 		Steps: []Step{
-			{Name: "root", Use: "l", Needs: []string{}, Args: "{q}"},
-			{Name: "left", Use: "l", Needs: []string{"root"}, Args: "{q}"},
-			{Name: "right", Use: "r", Needs: []string{"root"}, Args: "{q}"},
-			{Name: "join", Use: "j", Needs: []string{"left", "right"}, Args: "{left}+{right}"},
+			{Name: "root", Use: "l", Needs: []string{}, Args: prompt.Value{Literal: "{q}"}},
+			{Name: "left", Use: "l", Needs: []string{"root"}, Args: prompt.Value{Literal: "{q}"}},
+			{Name: "right", Use: "r", Needs: []string{"root"}, Args: prompt.Value{Literal: "{q}"}},
+			{Name: "join", Use: "j", Needs: []string{"left", "right"}, Args: prompt.Value{Literal: "{left}+{right}"}},
 		},
 	}, "ns", resolverFor(caps))
 	if err != nil {
@@ -149,7 +150,7 @@ func TestGraphTemplateOutsideClosureRejected(t *testing.T) {
 		Steps: []Step{
 			{Name: "s1", Use: "a"},
 			{Name: "s2", Use: "a", Needs: []string{"s1"}},
-			{Name: "s3", Use: "a", Needs: []string{"s1"}, Args: "{s2}"},
+			{Name: "s3", Use: "a", Needs: []string{"s1"}, Args: prompt.Value{Literal: "{s2}"}},
 		},
 	}, "ns", resolverFor(caps))
 	if err == nil || !strings.Contains(err.Error(), "needs closure") {
@@ -161,7 +162,7 @@ func TestGraphUnknownPlaceholderRejected(t *testing.T) {
 	caps := map[string]capability.Capability{"a": testCap("a", func(_ context.Context, s string) (string, error) { return s, nil })}
 	_, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:  "typo",
-		Steps: []Step{{Name: "s1", Use: "a", Args: "{tokn}"}},
+		Steps: []Step{{Name: "s1", Use: "a", Args: prompt.Value{Literal: "{tokn}"}}},
 	}, "ns", resolverFor(caps))
 	if err == nil || !strings.Contains(err.Error(), "unknown placeholder") {
 		t.Fatalf("expect placeholder error, got %v", err)
@@ -253,7 +254,7 @@ func TestGraphMissingRequiredParam(t *testing.T) {
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "strict",
 		Params: map[string]capability.ParamDecl{"token": {Type: "string", Required: true}},
-		Steps:  []Step{{Name: "s1", Use: "a", Args: "{token}"}},
+		Steps:  []Step{{Name: "s1", Use: "a", Args: prompt.Value{Literal: "{token}"}}},
 	}, "ns", resolverFor(caps))
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +274,7 @@ func TestGraphStateIsolationAcrossInvokes(t *testing.T) {
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:   "iso",
 		Params: map[string]capability.ParamDecl{"v": {Type: "string"}},
-		Steps:  []Step{{Name: "s1", Use: "e", Args: "{v}"}},
+		Steps:  []Step{{Name: "s1", Use: "e", Args: prompt.Value{Literal: "{v}"}}},
 	}, "ns", resolverFor(caps))
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +331,7 @@ func TestGraphJSONEscapeInStringContext(t *testing.T) {
 		Name: "esc",
 		Steps: []Step{
 			{Name: "raw", Use: "q"},
-			{Name: "next", Use: "p", Args: `{"text":"{raw}"}`}, // 字符串上下文 → 转义
+			{Name: "next", Use: "p", Args: prompt.Value{Literal: `{"text":"{raw}"}`}}, // 字符串上下文 → 转义
 		},
 	}, "ns", resolverFor(caps))
 	if err != nil {
@@ -351,7 +352,7 @@ func TestGraphJSONEscapeInStringContext(t *testing.T) {
 		Name: "plain",
 		Steps: []Step{
 			{Name: "raw", Use: "q"},
-			{Name: "say", Use: "e", Args: "总结:{raw}"},
+			{Name: "say", Use: "e", Args: prompt.Value{Literal: "总结:{raw}"}},
 		},
 	}, "ns", resolverFor(caps2))
 	if err != nil {
@@ -368,7 +369,7 @@ func TestGraphBuiltinInputVar(t *testing.T) {
 	caps := map[string]capability.Capability{"e": echo}
 	sk, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:  "raw",
-		Steps: []Step{{Name: "s1", Use: "e", Args: `{"q":"{$input}"}`}},
+		Steps: []Step{{Name: "s1", Use: "e", Args: prompt.Value{Literal: `{"q":"{$input}"}`}}},
 	}, "ns", resolverFor(caps))
 	if err != nil {
 		t.Fatal(err)
@@ -398,7 +399,7 @@ func TestGraphUnknownBuiltinVarRejected(t *testing.T) {
 	caps := map[string]capability.Capability{"a": testCap("a", func(_ context.Context, s string) (string, error) { return s, nil })}
 	_, err := BuildGraph(context.Background(), &GraphDeclaration{
 		Name:  "typo",
-		Steps: []Step{{Name: "s1", Use: "a", Args: "{$history}"}},
+		Steps: []Step{{Name: "s1", Use: "a", Args: prompt.Value{Literal: "{$history}"}}},
 	}, "ns", resolverFor(caps))
 	if err == nil || !strings.Contains(err.Error(), "unknown builtin variable") {
 		t.Fatalf("expect builtin var error, got %v", err)
@@ -435,5 +436,21 @@ func TestGraphPassthroughEmptyArgs(t *testing.T) {
 	out, err := capability.Invoke(context.Background(), sk, `{"any":"thing"}`)
 	if err != nil || out != `got:{"any":"thing"}` {
 		t.Fatalf("got %q %v", out, err)
+	}
+}
+
+// TestGraphRejectsUnresolvedArgsRef:未经装配层解析的 args 引用到达
+// 引擎必须编译期报错(引擎只见字面量,ref 残留 = 装配缺口)。
+func TestGraphRejectsUnresolvedArgsRef(t *testing.T) {
+	_, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "g",
+		Steps: []Step{{Name: "s", Use: "model",
+			Args: prompt.Value{Ref: "cap://prompt/pp/x"}}},
+	}, "ns", func(string) (capability.Capability, error) {
+		return capability.New(capability.Meta{Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "m"}},
+			func(context.Context, string) (string, error) { return "", nil }), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "未解析") {
+		t.Fatalf("unresolved ref must fail compile, got %v", err)
 	}
 }
