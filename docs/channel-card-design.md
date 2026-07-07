@@ -1,177 +1,211 @@
-# IM 富卡片方案:语义化回复 + 通道模板渲染 + 第三方定制
+# IM 通道扩展方案 v2:执行进度流 + 出站装饰链
 
-> 状态:设计稿(2026-07)。目标形态参照:标题头 + 可折叠"执行过程"面板 +
-> 正文区 + 底部元信息(TiDA Lens 式);要求方案通用——语义与样式分离,
-> 飞书只是第一个渲染后端,钉钉/Slack 适配器接同一套语义。
+> 状态:设计稿 v2(2026-07)。v1(模板渲染为中心)已被本版收编:模板
+> 渲染降格为"内置装饰器之一"。v2 的立场:**框架给机制(事件流 + 装饰
+> 链),呈现策略交给第三方**——TiDA Lens 式富卡片只是这套机制上的一个
+> 默认实现。
 
-## 1. 背景与问题
+## 0. 两个诉求与设计立场
 
-card 模式(占位卡片→原地更新)已落地,但卡片本身是写死的最小形态:
+1. **底层支持 processing 过程流,第三方可订阅**,如何呈现(更新卡片/
+   发进度条/写日志/推别处)由订阅方决定;
+2. **飞书发消息前支持对内容做装饰**——原始内容出站前可被第三方改写/
+   包装(加标题头/折叠面板/品牌尾注/表格降级)。
 
-| 现状 | 问题 |
+立场:两者都是**机制 vs 策略**的切分。框架保证事件如实产生、装饰点
+如实存在(Ring 0,代码保证);产生什么样的用户体验是策略,归第三方
+(或内置默认策略)。
+
+## 1. 总体架构
+
+```
+                    ┌────────────── 执行域(runtime)──────────────┐
+ 用户消息 ─▶ dispatcher ─▶ agent.Run ─▶ engine ─▶ 模型/工具/技能
+                    │                        │
+                    │              eino callbacks 切面(observe)
+                    │                        │ 结构化进度事件
+                    │                        ▼
+                    │              runctx.ProgressSink(ctx 注入)
+                    │                        │
+                    │        ┌───────────────┼────────────────┐
+                    │   内置订阅者        第三方订阅者      (登记:SSE 透出)
+                    │  (卡片过程更新)  (Binding.OnProgress)
+                    │
+                    └─▶ 终稿 Outbound ─▶ 语义装饰链(通道无关)
+                                              │
+                                        channel.Send/Update
+                                              │
+                                  feishu encode() ─▶ 载荷装饰链(卡片 JSON)
+                                              │
+                                          飞书 OpenAPI
+```
+
+## 2. 执行进度流
+
+### 2.1 归属决策:不放 channel,新起一小套
+
+进度事件是**执行域**的事实(工具开始/结束、技能子循环、评审重试),
+不是 IM 概念——CLI 进度行、HTTP SSE、轨迹落盘消费的是同一股流。放进
+channel 契约会把每个 IM 适配器都耦合上执行语义,还把非 IM 消费者排除
+在外。按分层归位:
+
+| 层 | 职责 |
 |---|---|
-| 占位文案「⏳ 处理中...」硬编码在 dispatcher | 业务无法换文案/样式 |
-| 卡片 = 单 markdown 元素,无标题头/无结构 | 与目标形态差距大;处理中和终稿视觉无区分 |
-| 处理过程对用户完全黑盒 | 长处理(技能子循环 30s+)只有一句"处理中" |
-| markdown 组件不渲染表格(飞书限制,真机已证) | 模型输出的表格原样吐管道符 |
-| `Outbound{Text, Markdown}` 二元契约 | 任何富样式都没有表达位 |
+| core/runctx | 定义事件与接收器类型(零依赖,谁都能 import) |
+| runtime/observe | 发射:eino callbacks 切面已看见每次模型/工具调用,新增一个 handler 把它们转成结构化事件、发给 ctx 里的 sink(engine 零改动) |
+| serving | 订阅接线:dispatcher 在 card 模式装内置订阅者;Binding 暴露第三方订阅点 |
+| 第三方 | 任意消费:自己更新卡片、推外部系统、忽略 |
 
-## 2. 真机探测结论(测试群实测)
-
-| 组件 | API | 渲染 | 结论 |
-|---|---|---|---|
-| header(标题 + 主题色模板) | ✅ code 0 | 待确认(探针A) | 处理中/完成态可用不同色区分 |
-| collapsible_panel(折叠面板) | ✅ code 0 | 待确认(探针B) | "执行过程"的载体 |
-| note(底部灰字元信息) | ✅ code 0 | 待确认(探针C) | 耗时/调用次数/会话号 |
-| markdown 表格语法 | — | ❌ 管道符原样显示 | 必须降级处理 |
-| table 组件 | ✅ code 0 | ⚠️ 旧客户端显示"请升级客户端" | 不能作为默认路径 |
-| PATCH 更新(update_multi) | ✅ 已在用 | ✅ | 全部状态流转的基础 |
-
-## 3. 设计:三层分工(对照分层规范)
-
-原则:**协议层表达语义,适配层拥有样式,编排层驱动状态**。任何一层不
-越界——dispatcher 不知道"蓝色标题头",feishu 适配器不知道"轮次挂起"。
-
-### 3.1 protocol/channel:语义化 Outbound(通道无关)
+### 2.2 事件模型(core/runctx)
 
 ```go
-// Outbound 是要发出的一条消息(语义面,不含任何通道样式)。
-type Outbound struct {
-    Text     string
-    Markdown bool
-
-    // Kind 是消息的生命周期语义,通道适配器据此选择呈现模板:
-    //   ""(默认,普通消息)| processing(处理中占位)|
-    //   answer(终稿)| question(向用户提问/审批)| error(失败)
-    Kind string
-
-    // Progress 是执行过程记录(每行一步,如「✓ quick-product-qa (7.8s)」)。
-    // 支持富呈现的通道渲染为可折叠面板;不支持的通道忽略或附在正文后。
-    Progress []string
-
-    // Meta 是底部元信息(耗时/调用次数等),通道渲染为 note/脚注,可忽略。
-    Meta string
-
-    // Native 是通道原生载荷逃生舱:非 nil 时适配器直接透传(飞书 = 完整
-    // 卡片 JSON),以上语义字段全部失效。第三方要完全接管卡片时用。
-    Native map[string]any
+// ProgressEvent 是一次执行步骤的进度事实(结构化,非展示文案)。
+type ProgressEvent struct {
+    Seq    int           // 轮内序号(订阅方排序/去重用)
+    Kind   string        // tool | skill | model
+    Name   string        // 能力名/模型名
+    Status string        // start | done | error
+    Dur    time.Duration // done/error 时的耗时
+    Detail string        // 参数摘要 / 错误摘要(截断,防大 payload)
 }
+
+// ProgressSink 接收进度事件。实现方必须快速返回(慢消费自行异步);
+// 发射侧 recover 保护,订阅者 panic 不得中断执行。
+type ProgressSink func(ctx context.Context, ev ProgressEvent)
+
+func WithProgress(ctx context.Context, sink ProgressSink) context.Context
+func Progress(ctx context.Context) ProgressSink // 无则 nil,发射点跳过
 ```
 
 要点:
-- 新字段全部**可选**,零值行为与现状完全一致(既有通道/测试零改动);
-- `Kind` 是语义枚举不是样式名——"processing 长什么样"由适配器配置决定;
-- `Native` 是逃生舱而非主路径:用它意味着放弃跨通道可移植性,自担
-  schema 兼容(文档标注)。
+- **事件是事实不是文案**:「⚙ 调用 X」还是「Step 2/5」是订阅方的事;
+- **不装 sink 零开销**:发射点判 nil 即返回,现有路径不变;
+- **同步回调 + 快返回契约**:不引入 channel/goroutine 的生命周期问题,
+  节流、缓冲、批量都是订阅方的职责(dispatcher 的内置订阅者自己节流)。
 
-### 3.2 impl/channel/feishu:模板渲染器 + 卡片配置
+### 2.3 发射点(runtime/observe)
 
-`encode()` 升级为按 Kind 查模板渲染:
+复用既有 callbacks 切面(observe.Progress 已在同一位置做文本进度行):
+新增 `observe.ProgressEvents()` handler,App 装配期挂一次,运行期从
+ctx 取 sink 发射。v1 只发射 tool/skill/model 三档(与现有进度行同粒
+度);评审重试、compaction 事件登记为扩展(同一事件模型,加 Kind 即可)。
+
+### 2.4 订阅面(三层,由近及远)
+
+| 订阅方式 | 形态 | 适用 |
+|---|---|---|
+| 内置订阅者 | dispatcher card 模式自动装:节流 ≥2s,把过程行写进占位卡的折叠面板 | 默认体验,零配置 |
+| Binding.OnProgress | `func(ctx, conv ConvRef, ev ProgressEvent)`,装了它内置订阅者让位 | 第三方完全接管 IM 呈现(自己 Send/Update,想画什么画什么) |
+| 通用 ctx 注入 | 任何直接调 agent.Run 的宿主自己 `runctx.WithProgress` | CLI、HTTP 服务、测试 |
+
+登记不做:SSE/webhook 向进程外推流(出现真实诉求再开,事件模型不变)。
+
+## 3. 出站装饰链
+
+### 3.1 两级装饰:语义级(通道无关)与载荷级(通道专属)
+
+**语义装饰**——改的是 `channel.Outbound`(文本/语义字段),不知道飞书:
+
+```go
+// serving.Binding 增加:
+// Decorators 依次应用于每条出站消息(含占位卡/终稿/问句),返回改写
+// 后的消息。典型:追加品牌尾注、注入元信息、敏感词过滤。
+Decorators []func(ctx context.Context, out channel.Outbound) channel.Outbound
+```
+
+**载荷装饰**——改的是飞书卡片 JSON(encode 之后、POST 之前),第三方
+拿到完整卡片结构,可以加 header/折叠面板/note/按钮/任意组件:
+
+```go
+// impl/channel/feishu:
+// CardDecorator 在卡片 JSON 构建后、发送前依次应用。card 是可变的
+// 飞书卡片结构(elements/header/config...);返回 nil 表示放弃装饰。
+type CardDecorator func(ctx context.Context, conv channel.ConvRef, card map[string]any) map[string]any
+
+// 注册表模式(init 自注册、运行期只读,与 model/source 同源):
+func RegisterCardDecorator(name string, d CardDecorator)
+```
 
 ```yaml
 channels:
   - name: ops-feishu
     type: feishu
     config:
-      app_id: ...
-      # 卡片模板:按 Kind 配置,缺省有内置默认(向后兼容现状)
-      cards:
-        processing:
-          header: {title: "运营助手", template: "grey"}   # 灰头 = 进行中
-          body: "⏳ {{text}}"                              # 文案可替换
-        answer:
-          header: {title: "运营助手", template: "blue"}    # 蓝头 = 完成
-          progress_panel: true      # Progress 渲染为折叠面板(默认收起)
-          progress_title: "执行过程"
-          note: true                # Meta 渲染为底部 note
-        question:
-          header: {title: "需要你确认", template: "orange"}
-        error:
-          header: {title: "处理失败", template: "red"}
+      card_decorators: [table-fallback, brand-header]  # 按名引用,顺序即应用序
 ```
 
-渲染结构(answer 完整形态,即目标截图的结构):
+第三方 Go 侧 `init()` 里 `feishu.RegisterCardDecorator("brand-header", fn)`,
+YAML 按名挂载——代码提供能力、配置决定启用,装配期查名 fail fast。
 
+### 3.2 内置装饰器(默认策略,全部可卸载)
+
+| 名 | 级 | 行为 |
+|---|---|---|
+| `table-fallback` | 载荷 | markdown 表格 → 分组列表(飞书 markdown 组件不渲染表格,真机已证;客户端统一的企业可换 `table-component` 变体) |
+| `cards-template` | 载荷 | v1 的模板渲染:按 Outbound.Kind 加 header(标题/主题色)、把 Progress 渲染成折叠面板、Meta 渲染成 note;样式细节读 `config.cards:` 块 |
+| (占位文案) | 语义 | `channels[].placeholder` 配置「处理中」文案(dispatcher 级,通道无关) |
+
+默认挂载 `[table-fallback, cards-template]`——开箱即是"标题头 + 执行
+过程面板 + 正文 + note"的完整形态;第三方置换 `card_decorators` 列表
+即完全接管。
+
+### 3.3 Outbound 语义字段(装饰器的输入面)
+
+沿用 v1 的语义化扩展,作为装饰器能读到的事实:
+
+```go
+type Outbound struct {
+    Text     string
+    Markdown bool
+    Kind     string            // processing | answer | question | error(生命周期语义)
+    Progress []string          // 过程行(内置订阅者/终稿收口时填充)
+    Meta     string            // 元信息(耗时/调用数)
+    Native   map[string]any    // 逃生舱:整卡透传,跳过 encode 与全部载荷装饰
+}
 ```
-┌ header(title + template 色)          ← cards.<kind>.header
-├ collapsible_panel「执行过程」(收起)   ← Outbound.Progress
-├ hr
-├ markdown 正文                          ← Outbound.Text(表格已降级)
-└ note 灰字                              ← Outbound.Meta
-```
 
-**markdown 表格降级**(适配器内,对上游透明):检测 `|---|` 表格块,
-按配置二选一:
-- `table_render: fallback`(默认):转"分组列表"(表头加粗做小节,每行
-  转「- 字段: 值」),所有客户端可渲染;
-- `table_render: component`:转卡片 table 组件(新客户端原生表格,旧
-  客户端见升级提示)——企业内客户端版本统一时启用。
+零值 = 现行为;`Native` 与装饰链互斥(透传即第三方全责)。
 
-### 3.3 serving/dispatcher:生命周期状态机(通道无关)
+## 4. 一次消息的完整旅程(card 模式,默认装饰)
 
-card 模式的状态流转,每步只填语义字段:
+1. 用户消息进 → dispatcher 发 `Outbound{Kind: processing}` → 语义装饰
+   (占位文案)→ encode → 载荷装饰(cards-template 加灰色 header)→ 占位卡;
+2. agent 执行,observe 切面把每次工具/技能调用发给 sink → 内置订阅者
+   节流合并 → `Update(processing + Progress)` → 卡片"执行过程"生长;
+3. 完成 → `Outbound{Kind: answer, Text, Progress 全量, Meta 耗时}` →
+   装饰(蓝 header + 折叠面板收起 + 表格降级 + note)→ 原地更新为终稿;
+   挂起 → `Kind: question` 收口;失败 → `Kind: error`。
 
-```
-收到消息 ──Send(Kind=processing)──▶ 占位卡
-    │
-    ├─ 过程事件(节流 ≥2s)──Update(processing + Progress 增量)──▶ 卡片过程行生长
-    │
-    ├─ 完成 ──Update(Kind=answer, Text=终稿, Progress=全过程, Meta=耗时)──▶ 终稿卡
-    ├─ 挂起 ──Update(Kind=question, Text=等待提示)──▶ 等待卡(问句仍是独立消息)
-    └─ 失败 ──Update(Kind=error, Text=错误说明)──▶ 失败卡
-```
-
-**过程事件来源**(Ring 0,不靠模型自觉):`runctx` 增加进度接收器接口,
-engine 的工具调用中间件(已包裹每次工具执行)上报"开始调用 X / X 完成
-(耗时)";dispatcher 在 card 模式下往 ctx 装一个带节流的 sink,收到事件
-就更新卡片。分层依据:core 定义 sink 类型 → runtime/engine 上报 →
-serving 消费,方向合法;不装 sink 时零开销(现状路径不变)。
-
-### 3.4 占位文案的归属
-
-「处理中」的**文案**是绑定级配置(通道无关):`channels[].placeholder`;
-「处理中卡片」的**样式**是通道级配置(`config.cards.processing`)。
-两级各自缺省,互不依赖。
-
-## 4. 第三方定制的三个层级
-
-| 层级 | 手段 | 适用 | 成本 |
-|---|---|---|---|
-| L1 配置模板 | YAML `cards:` 块(标题/主题色/文案/开关) | 绝大多数品牌化需求 | 零代码 |
-| L2 Native 透传 | 构造 `Outbound.Native` 完整卡片 JSON | 完全接管单条消息(营销卡片/按钮交互) | 自担飞书 schema |
-| L3 自定义渲染器 | 适配器暴露 `RegisterCardRenderer(kind, func)` | 整类消息的程序化定制(动态按钮/图表) | Go 代码 |
-
-L3 按 YAGNI 缓建:先落 L1+L2,出现真实诉求再开 L3(登记)。
+第三方三个介入深度:换配置(cards:/placeholder)→ 挂自定义装饰器
+(读 Kind/Progress 画自己的卡)→ Binding.OnProgress + Native(连生命
+周期呈现都自己管)。
 
 ## 5. 兼容与降级
 
-- `Outbound` 新字段全零值 = 现行为,`text`/`stream` 模式不动;
-- 不支持 Update 的通道:card 模式已有的整段退化路径不变;
-- Progress/Meta 对不支持富呈现的通道是可忽略语义(适配器自行丢弃);
-- 卡片模板配置缺省 = 内置默认(与今天的卡片一致),增量启用;
-- 挂起模式(suspendKV)与过程更新兼容:挂起发生时占位卡收口为
-  question 态(已实现的行为,换个模板而已)。
+- 不装 sink / 不配装饰器 / 零值 Outbound = 今天的行为,存量零改动;
+- text/stream 模式不经过程订阅(text 无卡可更;stream 有自己的刷新);
+- 不支持 Update 的通道:card 退化整段(已实现),过程更新自然失效;
+- 装饰器 panic:recover + 跳过该装饰器 + 记日志,消息必须发出去
+  (装饰失败不能吞消息——诚实优先于好看);
+- 飞书 PATCH 频控:内置订阅者节流 ≥2s 且合并;终稿更新永远兜底。
 
 ## 6. 落地批次
 
 | 批 | 内容 | 验证 |
 |---|---|---|
-| 1 | Outbound 语义字段 + feishu 模板渲染(header/panel/note)+ cards 配置 | 单测(渲染快照)+ 真机三态卡片 |
-| 2 | markdown 表格降级(fallback 列表形态) | 单测 + 真机(商品清单场景) |
-| 3 | 过程事件 sink(runctx + engine 中间件)+ dispatcher 节流更新 | 单测 + 真机(技能长处理看过程行生长) |
-| 4 | Native 逃生舱 + 文档 | 真机一张全自定义卡 |
-
-批 1/2 独立可用(终稿卡就有完整形态,过程面板先随终稿一次性给出);
-批 3 才有"处理中过程实时生长"。
+| 1 | runctx 事件/接收器类型 + observe.ProgressEvents 发射 + 单测 | 假 sink 断言事件序列 |
+| 2 | Outbound 语义字段 + feishu 载荷装饰链(注册表 + config 接线)+ table-fallback | 单测 + 真机(表格消息) |
+| 3 | cards-template 内置装饰器(header/panel/note,cards: 配置) | 真机三态卡片 |
+| 4 | dispatcher 内置订阅者(节流更新过程行)+ Binding.OnProgress + placeholder 配置 | 真机长处理看过程生长;第三方订阅示例 |
+| 5 | Native 逃生舱 + 使用文档 | 真机全自定义卡 |
 
 ## 7. 风险与开放问题
 
-- **卡片组件的客户端版本差异**:table 组件旧客户端不可用(实测);
-  collapsible_panel/note 的最低版本待探针确认——若用户群客户端老旧,
-  模板要能整体降回纯 markdown(配置 `rich: false` 一键退化)。
-- **过程行的信息密度**:每次工具调用都上报会很长;v1 只报
-  工具/技能级(不报模型轮次),超过 N 行折叠为「…前 K 步已省略」。
-- **更新频控**:飞书 PATCH 有 QPS 限制,过程更新节流 ≥2s 且合并批量,
-  终稿更新始终最后一次兜底(过程刷新失败不影响终稿)。
-- **多通道语义漂移**:钉钉/Slack 的"卡片"能力不对齐,Progress/Meta
-  必须保持"可忽略"语义,禁止任何通道把它们变成必需。
+- **订阅者拖慢执行**:同步回调契约靠文档约束,发射侧 recover +
+  耗时告警(>10ms 记 warn);若实测被滥用,再改异步有界队列(登记);
+- **过程行信息密度**:只发 tool/skill/model 三档;卡片侧超 N 行折叠
+  「…前 K 步省略」;
+- **卡片组件客户端版本**:collapsible_panel/note 的最低版本以探针
+  实测为准,cards-template 提供 `rich: false` 一键退化纯 markdown;
+- **装饰链顺序敏感**:按声明序应用并写入文档;table-fallback 应在
+  cards-template 之前(先净化正文再包结构)。
