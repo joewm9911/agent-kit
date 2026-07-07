@@ -64,9 +64,9 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 				"request": {Type: "string", Required: true},
 			},
 			Steps: []engine.Step{
-				{Name: "auth", Use: "tools/svc/auth", Args: prompt.Value{Literal: `{"token":"{token}"}`}},
-				{Name: "plan", Use: "components/planner", Args: prompt.Value{Literal: `{"request":"{request}"}`}},
-				{Name: "run", Use: "tools/svc/submit", Args: prompt.Value{Literal: `{"plan":"{plan}"}`}},
+				{Name: "auth", Use: "tools/svc/auth", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"token":"{token}"}`}}},
+				{Name: "plan", Use: "components/planner", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"request":"{request}"}`}}},
+				{Name: "run", Use: "tools/svc/submit", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"plan":"{plan}"}`}}},
 			},
 		}},
 	}
@@ -145,8 +145,8 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 				Engine: "workflow",
 				Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
 				Steps: []engine.Step{
-					{Name: "data", Use: "tools/svc/search", Args: prompt.Value{Literal: `{"q":"{q}"}`}},
-					{Name: "say", Use: "model", Args: prompt.Value{Literal: "总结:{data}"}},
+					{Name: "data", Use: "tools/svc/search", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{q}"}`}}},
+					{Name: "say", Use: "model", Args: engine.StepArgs{Value: prompt.Value{Literal: "总结:{data}"}}},
 				},
 			},
 			{
@@ -155,9 +155,9 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 				Engine: "graph",
 				Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 				Steps: []engine.Step{
-					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: prompt.Value{Literal: `{"q":"{q}"}`}},
-					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: prompt.Value{Literal: `{"q":"{q}"}`}},
-					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: prompt.Value{Literal: `{"q":"{a}+{b}"}`}},
+					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{q}"}`}}},
+					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{q}"}`}}},
+					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{a}+{b}"}`}}},
 				},
 			},
 		},
@@ -318,12 +318,12 @@ func TestComponentExportImport(t *testing.T) {
 				{Name: "shared-fmt", Export: true, Engine: "workflow",
 					Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
 					Steps: []engine.Step{
-						{Name: "run", Use: "tools/svc/search", Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+						{Name: "run", Use: "tools/svc/search", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{q}"}`}}},
 					}},
 				{Name: "private-fmt", Engine: "workflow", // 未导出
 					Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 					Steps: []engine.Step{
-						{Name: "run", Use: "tools/svc/search", Args: prompt.Value{Literal: `{"q":"{q}"}`}},
+						{Name: "run", Use: "tools/svc/search", Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{q}"}`}}},
 					}},
 			},
 		}
@@ -350,7 +350,7 @@ func TestComponentExportImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	ok := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
-		Args: prompt.Value{Literal: `{"q":"{q}"}`}})
+		Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"{q}"}`}}})
 	if err := buildNamespace(context.Background(), ok, deps()); err != nil {
 		t.Fatal(err)
 	}
@@ -369,14 +369,14 @@ func TestComponentExportImport(t *testing.T) {
 
 	// 未导出:引用报错且指明 export
 	bad := sales(engine.Step{Name: "fmt", Use: "cap://component/common/private-fmt",
-		Args: prompt.Value{Literal: `{"q":"x"}`}})
+		Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"x"}`}}})
 	if err := buildNamespace(context.Background(), bad, deps()); err == nil || !strings.Contains(err.Error(), "export") {
 		t.Fatalf("unexported ref must fail with export hint, got %v", err)
 	}
 
 	// 未声明 imports:即使已导出也拒绝
 	noImp := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
-		Args: prompt.Value{Literal: `{"q":"x"}`}})
+		Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"x"}`}}})
 	noImp.Imports = nil
 	if err := buildNamespace(context.Background(), noImp, deps()); err == nil || !strings.Contains(err.Error(), "imports") {
 		t.Fatalf("missing imports must fail, got %v", err)
@@ -385,7 +385,7 @@ func TestComponentExportImport(t *testing.T) {
 	// 顺序:import 尚未装配的 ns → 报错提示顺序
 	fresh := newComponentExports()
 	early := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
-		Args: prompt.Value{Literal: `{"q":"x"}`}})
+		Args: engine.StepArgs{Value: prompt.Value{Literal: `{"q":"x"}`}}})
 	err = buildNamespace(context.Background(), early,
 		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
 			maxRisk: capability.RiskMutating, exports: fresh})

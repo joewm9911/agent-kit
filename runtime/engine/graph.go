@@ -35,10 +35,12 @@ type Step struct {
 	Name string `yaml:"name"`
 	Use  string `yaml:"use"`
 	// Args 是入参模板,可引用 {参数名} 与 {步骤名}(依赖步骤的输出);
-	// model 步骤的 args 即提示词。支持字面量或 {ref: cap://prompt/...}
-	// (装配层解析并锁版本,引擎只见解析后的字面量)。为空时透传 skill
-	// 的原始入参 JSON。
-	Args prompt.Value `yaml:"args"`
+	// model 步骤的 args 即提示词。两种写法:标量 = 字面量模板;映射 =
+	// {ref: cap://prompt/..., <占位符>: <绑定值>, ...}——ref 经装配层
+	// 解析锁版本,ref 之外的键是使用点绑定(键=模板占位符,值可含
+	// {步骤}/{参数}/{$input};键在模板中不存在则装配期报错)。引擎只见
+	// 解析后的字面量。为空时透传 skill 的原始入参 JSON。
+	Args StepArgs `yaml:"args"`
 	// Needs 是依赖的步骤名,缺省为上一声明步骤(首步缺省无依赖)。
 	Needs []string `yaml:"needs"`
 	// Timeout 是本步骤单次执行的超时,超时视为步骤失败(中断整图)。
@@ -49,6 +51,41 @@ type Step struct {
 	// | fork(以最外层 agent 的对话快照 + 任务起步;背景无损继承,
 	// 隔离方向不变,只对带内部循环的能力有意义)。
 	Context string `yaml:"context"`
+}
+
+// StepArgs 是步骤入参:内嵌 prompt.Value(Literal/Ref)+ ref 形态的
+// 使用点绑定。yaml 标量 → 字面量;映射 → ref 必填、其余键为绑定。
+type StepArgs struct {
+	prompt.Value `yaml:"-"`
+	// Binds 是 ref 模板的使用点绑定(装配层消费:替换占位后即清空)。
+	Binds map[string]string `yaml:"-"`
+}
+
+// UnmarshalYAML 解析两种写法;映射形态缺 ref、或模板变量名叫 ref 都
+// 在这里挡住(fail fast,不再有键被静默丢弃)。
+func (a *StepArgs) UnmarshalYAML(unmarshal func(any) error) error {
+	var s string
+	if err := unmarshal(&s); err == nil {
+		a.Literal = s
+		return nil
+	}
+	var m map[string]any
+	if err := unmarshal(&m); err != nil {
+		return fmt.Errorf("step args: 需要标量(字面量模板)或映射({ref: ..., <占位符>: <绑定>}):%w", err)
+	}
+	ref, _ := m["ref"].(string)
+	if ref == "" {
+		return fmt.Errorf("step args: 映射形态必须带 ref 键(字面量请用标量写法)")
+	}
+	a.Ref = ref
+	delete(m, "ref")
+	if len(m) > 0 {
+		a.Binds = make(map[string]string, len(m))
+		for k, v := range m {
+			a.Binds[k] = fmt.Sprint(v)
+		}
+	}
+	return nil
 }
 
 // GraphDeclaration 是新形态 skill 的完整声明:对外接口(Description

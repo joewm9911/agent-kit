@@ -329,11 +329,22 @@ func resolveStepArgs(ctx context.Context, steps []engine.Step, prompts *prompt.R
 	out := make([]engine.Step, len(steps))
 	for i, s := range steps {
 		if s.Args.Ref != "" {
-			tpl, err := s.Args.Resolve(ctx, prompts)
+			tpl, err := s.Args.Value.Resolve(ctx, prompts)
 			if err != nil {
 				return nil, fmt.Errorf("step %q: args %w", s.Name, err)
 			}
-			s.Args = prompt.Value{Literal: tpl.Text}
+			text := tpl.Text
+			// 使用点绑定:键必须是模板里存在的占位符(写了就必须有效,
+			// 不允许静默丢弃);值本身可含 {步骤}/{参数}/{$input},留给
+			// 运行时渲染。
+			for k, v := range s.Args.Binds {
+				ph := "{" + k + "}"
+				if !strings.Contains(text, ph) {
+					return nil, fmt.Errorf("step %q: 绑定键 %q 在模板 %s 中没有对应占位符 {%s}", s.Name, k, s.Args.Ref, k)
+				}
+				text = strings.ReplaceAll(text, ph, v)
+			}
+			s.Args = engine.StepArgs{Value: prompt.Value{Literal: text}}
 		}
 		out[i] = s
 	}
