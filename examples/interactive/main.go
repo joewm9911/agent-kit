@@ -76,8 +76,8 @@ func setDefault(key, val string) {
 
 func main() {
 	// 模型选择:provider 感知的 key/base/model 默认注入(key 永不写进配置文件)。
-	// 默认智谱 GLM;OPS_MODEL_PROVIDER=minimax 切回 MiniMax。
-	setDefault("OPS_MODEL_PROVIDER", "zhipu")
+	// 默认 MiniMax(M2.7);OPS_MODEL_PROVIDER=zhipu 切智谱 GLM。
+	setDefault("OPS_MODEL_PROVIDER", "minimax")
 	provider := os.Getenv("OPS_MODEL_PROVIDER")
 	switch provider {
 	case "minimax":

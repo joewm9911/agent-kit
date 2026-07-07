@@ -12,7 +12,7 @@
 #   OPS_SANDBOX_IMAGE 沙箱镜像(默认 python:3.12-slim;pdf 技能进沙箱需带 pypdf 的镜像,
 #                     见 examples/exec-runtime/Dockerfile)
 #   OPS_SESSION       会话 ID(默认 cli-<pid>,每次启动新会话;传上次的 ID 续聊)
-#   OPS_MODEL_PROVIDER 模型厂商(默认 zhipu;可选 minimax / openai)
+#   OPS_MODEL_PROVIDER 模型厂商(默认 minimax;可选 zhipu / openai)
 #   OPS_MODEL_KEY      模型 API key(默认取 ZHIPU_API_KEY / MINIMAX_API_KEY)
 #   OPS_MODEL_NAME     模型名(空 = 各厂商默认:glm-5.2 / MiniMax-M2.7)
 #   OPS_SESSION_STORE / OPS_TODO_STORE  会话/计划存储(runner 检测:redis 可达
@@ -22,7 +22,7 @@ secrets:
   provider: env
 
 # 执行画像基线(app 层):model + reliability 全体执行单元的降级源。
-# 校准依据:技能是内含多次模型调用的子循环,深推理模型(glm-5.2)单次
+# 校准依据:技能是内含多次模型调用的子循环,深推理模型(MiniMax-M2.7 / glm-5.2)单次
 # 生成就可能 >60s,tool_timeout 太紧会把整类技能掐死;429 限流是分钟级
 # 窗口,退避从秒级起跳才有意义。
 reliability:
@@ -72,8 +72,8 @@ sources:
           runtime: python
           description: 执行一段 python3 脚本做计算/数据处理,返回 stdout。script=脚本内容(用 print 输出结果),args=空格分隔参数(可空)。
 
-# 模型可切换(runner 按 OPS_MODEL_PROVIDER 注入默认;默认 zhipu/glm-5.2):
-#   OPS_MODEL_PROVIDER=minimax MINIMAX_API_KEY=... 切回 MiniMax
+# 模型可切换(runner 按 OPS_MODEL_PROVIDER 注入默认;默认 minimax/MiniMax-M2.7):
+#   OPS_MODEL_PROVIDER=zhipu ZHIPU_API_KEY=... 切智谱 GLM
 model:
   provider: "${OPS_MODEL_PROVIDER}"
   config:
