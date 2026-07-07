@@ -8,3 +8,8 @@ examples/examples
 examples/skillpack/work/
 examples/skillpack/pylib/
 examples/superpowers/work/
+
+# interactive 示例运行产物(数据目录/编译产物/agent 生成文件)
+examples/interactive/data/
+examples/interactive/*.html
+/interactive
