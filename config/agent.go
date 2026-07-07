@@ -276,7 +276,8 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	if todoOn {
 		caps = td.Nudge(caps) // 计划卡住提醒(harness 强制纪律)
 	}
-	caps = loop.RecordTools(caps) // 轨迹记录(最外层:记模型实际看到的)
+	caps = loop.RecordTools(caps)   // 轨迹记录(最外层:记模型实际看到的)
+	caps = loop.ProgressTools(caps) // 进度事件发射(体感时长:含审批等待)
 
 	// 上下文压缩归执行画像(loop.compaction),主 loop 从解析出的 eff 取;
 	// comp 是本地副本,ResolvePrompt 在其上锁版本,供 Compactor 与 agent 复用。

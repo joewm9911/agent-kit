@@ -14,14 +14,30 @@ import (
 	"time"
 )
 
+// ScopeKind 枚举:该步骤是框架内部模块的,还是用户配置进来的能力的。
+const (
+	ScopeBuiltin = "builtin" // 内部模块:builtin 域能力(todo/ask_user/记忆等)、框架辅助生成(digest/压缩/评审重试)
+	ScopeCustom  = "custom"  // 用户配置的能力(namespace 工具/技能/skillpack/子 agent)与业务模型轮次
+)
+
 // ProgressEvent 是一次执行步骤的进度事实(结构化,非展示文案)。
 type ProgressEvent struct {
 	// Seq 轮内序号,发射侧单调递增——被丢弃的事件留下可检测的序号
 	// 缺口,订阅方据此感知有损。
 	Seq int
-	// Kind:tool | model(技能以工具形态挂在工具面上,呈现为 tool)。
-	Kind string
-	// Name 能力名/模型步骤名。
+	// Scope 执行域路径,与 runctx 执行域栈同源:"" = 主循环;段格式
+	// comp:<名>#<序>(component/技能子循环)、sub:<名>(子 agent 委托),
+	// 嵌套时段间以 \x1f 相连。域种类只在压栈处定义,事件不发明新词。
+	Scope string
+	// ScopeKind:builtin | custom(见常量)。能力事件按 Domain 判定,
+	// 模型事件按框架内部标记判定。
+	ScopeKind string
+	// CapKind:能力事件透传 capability.Ref.Kind 原值(tool|skill|agent);
+	// 模型轮次为 model。不新造枚举。
+	CapKind string
+	// Domain 是能力的注册域(builtin/catalog/sales...);模型事件为空。
+	Domain string
+	// Name 能力名 / 模型步骤名(框架辅助生成带自报 span 名,如 review/*)。
 	Name string
 	// Status:start | done | error。
 	Status string
@@ -73,6 +89,20 @@ func deliver(ctx context.Context, sink ProgressSink, ev ProgressEvent) {
 		}
 	}()
 	sink(ctx, ev)
+}
+
+type keyBuiltinStep struct{}
+
+// WithBuiltinStep 标记后续调用属于框架内部动作(digest 消化/压缩摘要/
+// 评审重试等辅助生成)——发射点据此给模型事件定 ScopeKind=builtin。
+func WithBuiltinStep(ctx context.Context) context.Context {
+	return context.WithValue(ctx, keyBuiltinStep{}, true)
+}
+
+// BuiltinStep 判定当前是否处于框架内部动作。
+func BuiltinStep(ctx context.Context) bool {
+	b, _ := ctx.Value(keyBuiltinStep{}).(bool)
+	return b
 }
 
 // EmitProgress 发射一个进度事件:无订阅零开销;有订阅非阻塞入队,

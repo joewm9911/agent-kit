@@ -61,13 +61,19 @@ channel 契约会把每个 IM 适配器都耦合上执行语义,还把非 IM 消
 ```go
 // ProgressEvent 是一次执行步骤的进度事实(结构化,非展示文案)。
 type ProgressEvent struct {
-    Seq    int           // 轮内序号,发射侧单调递增——被丢弃的事件留下
-                         // 可检测的序号缺口,订阅方据此感知有损
-    Kind   string        // tool | skill | model
-    Name   string        // 能力名/模型名
-    Status string        // start | done | error
-    Dur    time.Duration // done/error 时的耗时
-    Detail string        // 参数摘要 / 错误摘要(截断,防大 payload)
+    Seq       int           // 轮内序号,发射侧单调递增——被丢弃的事件留下
+                            // 可检测的序号缺口,订阅方据此感知有损
+    Scope     string        // 执行域路径:"" 主循环;comp:<名>#<序>(component/
+                            // 技能)、sub:<名>(子 agent),嵌套段间 \x1f
+    ScopeKind string        // builtin(框架内部:builtin 域能力、digest/压缩/
+                            // 评审重试)| custom(用户配置的能力与业务模型轮次)
+    CapKind   string        // 能力事件透传 capability.Ref.Kind(tool|skill|agent),
+                            // 模型轮次 = model;不新造枚举
+    Domain    string        // 能力注册域(builtin/catalog/...);模型事件为空
+    Name      string        // 能力名 / 模型步骤名(辅助生成带自报 span 名 review/* 等)
+    Status    string        // start | done | error
+    Dur       time.Duration // done/error 时的耗时
+    Detail    string        // 参数摘要 / 结果摘要 / 错误摘要(截断,防大 payload)
 }
 
 // ProgressSink 是订阅者回调,由框架的投递 worker 异步调用——
@@ -94,12 +100,20 @@ func WithProgress(ctx context.Context, sink ProgressSink) context.Context
   事件 + 计数;Seq 缺口让订阅方可感知丢弃;**终稿收口不走这条流**
   (dispatcher 的 answer 更新是主路径),丢进度不丢结果。
 
-### 2.3 发射点(runtime/observe)
+### 2.3 发射点(两处,各拿各的真值)
 
-复用既有 callbacks 切面(observe.Progress 已在同一位置做文本进度行):
-新增 `observe.ProgressEvents()` handler,App 装配期挂一次,运行期从
-ctx 取 sink 发射。v1 只发射 tool/skill/model 三档(与现有进度行同粒
-度);评审重试、compaction 事件登记为扩展(同一事件模型,加 Kind 即可)。
+- **能力事件**:`loop.ProgressTools` 门(Ring 0 门链最外层)——只有
+  能力层分得清 skill 和 tool(eino 眼里都是 Tool),Ref.Kind/Domain
+  从 Meta 透传;时长对齐用户体感(含审批等待)。执行域来自 runctx
+  栈(skill/pack 调用压 comp: 段、子 agent 压 sub: 段)。
+- **模型事件**:`observe.ProgressEvents` 切面(eino callbacks)——
+  业务轮次 ScopeKind=custom;digest/压缩摘要/评审重试经
+  observedGenerate 打内部标记,ScopeKind=builtin、Name 保留自报
+  span 名(review/* 等)。两处发射互斥不双发。
+
+内置订阅者的默认过滤:只呈现 `Scope==""`(主循环)且
+`ScopeKind==custom` 的能力步骤——过程面板不被 component 内部步骤
+和 todo_write/ask_user 等内建调用刷屏;要全量的用 on_progress。
 
 ### 2.4 订阅面(三层,由近及远)
 

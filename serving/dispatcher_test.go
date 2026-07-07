@@ -215,9 +215,9 @@ func TestCardReplyMode(t *testing.T) {
 type progressRunner struct{}
 
 func (progressRunner) Generate(ctx context.Context, _ []*schema.Message) (*schema.Message, error) {
-	runctx.EmitProgress(ctx, runctx.ProgressEvent{Kind: "tool", Name: "查库存", Status: "start"})
-	runctx.EmitProgress(ctx, runctx.ProgressEvent{Kind: "tool", Name: "查库存", Status: "done", Dur: 1200 * time.Millisecond})
-	runctx.EmitProgress(ctx, runctx.ProgressEvent{Kind: "model", Name: "模型", Status: "done"})
+	runctx.EmitProgress(ctx, runctx.ProgressEvent{CapKind: "tool", ScopeKind: runctx.ScopeCustom, Name: "查库存", Status: "start"})
+	runctx.EmitProgress(ctx, runctx.ProgressEvent{CapKind: "tool", ScopeKind: runctx.ScopeCustom, Name: "查库存", Status: "done", Dur: 1200 * time.Millisecond})
+	runctx.EmitProgress(ctx, runctx.ProgressEvent{CapKind: "model", ScopeKind: runctx.ScopeCustom, Name: "模型", Status: "done"})
 	time.Sleep(50 * time.Millisecond) // 让异步投递跑完
 	return schema.AssistantMessage("最终答案", nil), nil
 }
@@ -322,7 +322,7 @@ func TestOnProgressTakesOver(t *testing.T) {
 
 	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(events) >= 3 })
 	mu.Lock()
-	if events[0].Kind != "tool" || events[0].Status != "start" {
+	if events[0].CapKind != "tool" || events[0].Status != "start" {
 		t.Fatalf("raw events expected, got %+v", events[0])
 	}
 	mu.Unlock()

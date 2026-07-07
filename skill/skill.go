@@ -220,13 +220,13 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		Risk:        risk,
 		Tags:        []string{"prompt:" + brief.Version},
 	}
-	var todoSeq atomic.Int64 // 调用级清单的执行域序号
+	var callSeq atomic.Int64 // 调用的执行域序号
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
+		// 每次调用一个新执行域:进度事件、调用级清单、去重计数等按域
+		// 隔离的机制都以此分界;组件保持无状态可重入。
+		ctx = runctx.WithScopePush(ctx, fmt.Sprintf("comp:%s#%d", decl.Name, callSeq.Add(1)))
 		if decl.Todo {
-			// 每次调用一个新执行域:清单与宿主、与历次调用互不可见;
-			// 调用结束即弃,组件保持无状态可重入。
-			ctx = runctx.WithScopePush(ctx, fmt.Sprintf("comp:%s#%d", decl.Name, todoSeq.Add(1)))
-			defer deps.Todo.ClearCurrent(ctx)
+			defer deps.Todo.ClearCurrent(ctx) // 调用级清单随调用结束即弃
 		}
 		vars := map[string]string{}
 		var args map[string]any
@@ -343,5 +343,6 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 	caps = loop.TruncateResults(caps, 0)
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
+	caps = loop.ProgressTools(caps) // 进度事件发射(子循环步骤带执行域)
 	return caps
 }

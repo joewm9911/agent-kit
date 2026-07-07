@@ -12,6 +12,8 @@ import (
 	"github.com/cloudwego/eino/components"
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/joewm9911/agent-kit/core/runctx"
 )
 
 // observedGenerate 执行一次内层模型调用并上报 callback 切面(RunInfo.Name
@@ -20,6 +22,9 @@ func observedGenerate(ctx context.Context, name string,
 	gen func(ctx context.Context, msgs []*schema.Message) (*schema.Message, error),
 	msgs []*schema.Message) (*schema.Message, error) {
 
+	// 内部动作标记:进度事件据此把这类模型调用归为 builtin
+	// (框架辅助生成,非业务轮次)。
+	ctx = runctx.WithBuiltinStep(ctx)
 	ctx = callbacks.ReuseHandlers(ctx, &callbacks.RunInfo{
 		Name: name, Component: components.ComponentOfChatModel,
 	})

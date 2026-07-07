@@ -9,7 +9,7 @@ import (
 
 // TestProgressNoSinkZeroCost:未订阅时发射是空操作。
 func TestProgressNoSinkZeroCost(t *testing.T) {
-	EmitProgress(context.Background(), ProgressEvent{Kind: "tool", Name: "x"}) // 不 panic 即可
+	EmitProgress(context.Background(), ProgressEvent{CapKind: "tool", Name: "x"}) // 不 panic 即可
 }
 
 // TestProgressAsyncDelivery:事件异步送达,Seq 单调,发射端不阻塞。
@@ -24,7 +24,7 @@ func TestProgressAsyncDelivery(t *testing.T) {
 		mu.Unlock()
 	})
 	for i := 0; i < 5; i++ {
-		EmitProgress(ctx, ProgressEvent{Kind: "tool", Name: "t", Status: "start"})
+		EmitProgress(ctx, ProgressEvent{CapKind: "tool", Name: "t", Status: "start"})
 	}
 	waitUntil(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 5 })
 	mu.Lock()
@@ -45,7 +45,7 @@ func TestProgressEmitterNeverBlocks(t *testing.T) {
 	ctx = WithProgress(ctx, func(context.Context, ProgressEvent) { <-block }) // 卡死的订阅者
 	start := time.Now()
 	for i := 0; i < progressBuffer*3; i++ {
-		EmitProgress(ctx, ProgressEvent{Kind: "tool", Name: "t"})
+		EmitProgress(ctx, ProgressEvent{CapKind: "tool", Name: "t"})
 	}
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
 		t.Fatalf("emit blocked: %v", elapsed)

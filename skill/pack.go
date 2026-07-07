@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/cloudwego/eino/schema"
 	"gopkg.in/yaml.v3"
@@ -175,6 +176,9 @@ func parseSkillMD(path string) (name, desc string, allowed []string, front2 skil
 // (ref:/sha:),风险治理靠 Risk 分级(脚本包 Dangerous)。
 // extra 是装配层追加的工具(脚本型包的 exec 工具,工作目录已绑定包目录),
 // 不经白名单过滤——它们是包自己的执行原语,不是宿主能力。
+// packSeq 给 pack 调用的执行域段编号(与 skill.Build 的调用序同规范)。
+var packSeq atomic.Int64
+
 func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps, extra ...capability.Capability) (capability.Capability, error) {
 	if ov.Context != "" && ov.Context != "fresh" && ov.Context != "fork" {
 		return nil, fmt.Errorf("skillpack %s: context 只支持 fresh|fork,got %q", m.Ref, ov.Context)
@@ -270,6 +274,9 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	}
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
 		task := capability.ParseSingle(argsJSON, "input")
+		// 执行域压栈:pack 内部步骤在进度/todo 等按域隔离的机制里
+		// 不与宿主混淆(与 skill.Build 的 comp: 段同规范)。
+		ctx = runctx.WithScopePush(ctx, fmt.Sprintf("comp:%s#%d", m.Name, packSeq.Add(1)))
 		// 上下文边界与内部 skill 一致:独立子循环,过程不回流宿主;
 		// 快照 fork 时以调用方对话快照 + 任务起步。
 		if snapshotFork {

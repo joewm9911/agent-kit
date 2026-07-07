@@ -104,10 +104,13 @@ func (lc *lifecycle) trackProgress() bool {
 	return lc.b.Decorator != nil || lc.msgID != ""
 }
 
-// onEvent 是内置订阅者:tool 事件转过程行,节流刷新占位卡。
-// 运行在进度投递 worker 里(异步),Update 的网络耗时不影响执行主流程。
+// onEvent 是内置订阅者:主循环的用户配置能力步骤转过程行,节流刷新
+// 占位卡。运行在进度投递 worker 里(异步),Update 网络耗时不影响主流程。
+// 过滤策略:只呈现 Scope 为空(主循环)、ScopeKind=custom(用户配置的
+// 能力,builtin 的 todo/ask_user 不刷屏)、非模型步骤;component 内部
+// 与全量原始事件用 OnProgress 订阅。
 func (lc *lifecycle) onEvent(ctx context.Context, ev runctx.ProgressEvent) {
-	if ev.Kind != "tool" { // 内置订阅者只呈现工具/技能级;要全量的用 OnProgress
+	if ev.Scope != "" || ev.ScopeKind != runctx.ScopeCustom || ev.CapKind == "model" {
 		return
 	}
 	lc.mu.Lock()
