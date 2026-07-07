@@ -189,14 +189,17 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 		var c capability.Capability
 		if entry.Use != "" {
-			if !isExternalRef(entry.Use) {
-				return nil, fmt.Errorf("skill %s: 平铺 skills 的 use 只支持外部链接(github.com/...|https://...|file:...),内部委托请用 namespaces", entry.Use)
+			return nil, fmt.Errorf(`skill %s: use 已改名 from(外部获取来源):from: %q`, entry.Name, entry.Use)
+		}
+		if entry.From != "" {
+			if !isExternalRef(entry.From) {
+				return nil, fmt.Errorf("skill %s: 平铺 skills 的 from 只支持外部链接(github.com/...|https://...|file:...),内部委托请用 namespaces", entry.From)
 			}
 			if !entry.Prompt.IsZero() || entry.Engine != "" || len(entry.Capabilities.Include) > 0 {
-				return nil, fmt.Errorf("skill %s: use(外部引用)与 prompt/engine/capabilities 互斥", entry.Use)
+				return nil, fmt.Errorf("skill %s: from(外部引用)与 prompt/engine/capabilities 互斥", entry.From)
 			}
 			c, err = buildSkillpack(ctx, packRoot, packOpts,
-				skill.PackSpec{Use: entry.Use, Integrity: entry.Integrity, Name: entry.Name},
+				skill.PackSpec{Use: entry.From, Integrity: entry.Integrity, Name: entry.Name},
 				skill.PackOverrides{Model: entry.Model, MaxSteps: entry.MaxSteps,
 					Tools: entry.Tools, Context: entry.Context},
 				skillDeps, cfg.Exec, hubs)

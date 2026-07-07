@@ -416,12 +416,13 @@ type NamespaceSkill struct {
 	Params      map[string]capability.ParamDecl `yaml:"params"`
 	Steps       []engine.Step                   `yaml:"steps"`
 	Output      string                          `yaml:"output"`
-	// Use 是入口引用形态(与 steps 互斥),两种值域:
-	//   - 内部委托:components/<name> 等引用,skill 退化为纯接口声明,
-	//     执行整体委托给该 component,params JSON 原样透传;
-	//   - 外部链接:github.com/...@ver | https://...zip | file:...,
-	//     集成一个 SKILL.md 技能包(此时须显式 name,integrity/tools/
-	//     context 见 SkillEntry 同名字段)。
+	// From 集成一个外部 SKILL.md 技能包(github.com/...@ver |
+	// https://...zip | file:...);须显式 name,integrity/tools/context
+	// 见 SkillEntry 同名字段。与 steps/use 互斥。
+	From string `yaml:"from"`
+	// Use 是入口引用形态(与 steps 互斥):components/<name> 等引用,
+	// skill 退化为纯接口声明,执行整体委托给该能力,params JSON 原样
+	// 透传。外部链接已改用 from(写在这里装配期报错指路)。
 	Use       string   `yaml:"use"`
 	Integrity string   `yaml:"integrity"`
 	Tools     []string `yaml:"tools"`
@@ -440,12 +441,16 @@ type NamespaceSkill struct {
 type NamespaceConfig struct {
 	Name    string `yaml:"name"`
 	Profile `yaml:",inline"`
+	// Sources 声明能力供给源(与顶层 sources: 同构);"声明源用 sources、
+	// 引用工具面用 tools"全库一致。
+	Sources []SourceConfig `yaml:"sources"`
+	// Tools 已废弃:源声明改用 sources(装配期报错指路)。
+	ToolsLegacy []SourceConfig `yaml:"tools"`
 	// Imports 声明依赖的 namespace(其导出 component 经
 	// cap://component/<ns>/<name> 可见)。可见性按装配/挂载顺序:被
 	// 依赖的 ns 必须先声明/先挂载,否则装配期报错——与 cap://skill
 	// 的"按关联顺序可见"同一规则。
 	Imports    []string          `yaml:"imports"`
-	Tools      []SourceConfig    `yaml:"tools"`
 	Components []ComponentConfig `yaml:"components"`
 	Skills     []NamespaceSkill  `yaml:"skills"`
 }
@@ -458,7 +463,8 @@ type NamespaceConfig struct {
 // 起步(与编排步骤同义)。
 type SkillEntry struct {
 	skill.Declaration `yaml:",inline"`
-	Use               string   `yaml:"use"`       // 外部链接:github.com/...@ver | https://...zip | file:...
+	From              string   `yaml:"from"`      // 外部获取来源:github.com/...@ver | https://...zip | file:...
+	Use               string   `yaml:"use"`       // 已废弃:外链改用 from(装配期报错指路)
 	Integrity         string   `yaml:"integrity"` // sha256:<hex>,可选强校验
 	Tools             []string `yaml:"tools"`     // 白名单收紧(∩ allowed-tools)
 	Context           string   `yaml:"context"`   // fresh(默认)| fork

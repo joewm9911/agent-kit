@@ -48,8 +48,8 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 	m := testmodel.New(schema.AssistantMessage("plan-made", nil))
 
 	ns := &NamespaceConfig{
-		Name:  "pipeline",
-		Tools: []SourceConfig{{Name: "svc", Type: "nstest", Required: true}},
+		Name:    "pipeline",
+		Sources: []SourceConfig{{Name: "svc", Type: "nstest", Required: true}},
 		Components: []ComponentConfig{{
 			Name:   "planner",
 			Engine: "react",
@@ -111,8 +111,8 @@ func TestNamespaceToolBoundary(t *testing.T) {
 
 	// component 引用不存在于本 ns 的工具源 → 拒绝装配
 	ns := &NamespaceConfig{
-		Name:  "isolated",
-		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Name:    "isolated",
+		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Components: []ComponentConfig{{
 			Name:   "bad",
 			Engine: "react",
@@ -136,8 +136,8 @@ func TestGraphComponentAndSkillUse(t *testing.T) {
 	m := testmodel.New(schema.AssistantMessage("summarized", nil))
 
 	ns := &NamespaceConfig{
-		Name:  "flows",
-		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Name:    "flows",
+		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Components: []ComponentConfig{
 			{
 				// workflow 形态:顺序钉死的私有序列(工具 → 模型),模型只出现一次
@@ -196,8 +196,8 @@ func TestWorkflowComponentRejectsNeeds(t *testing.T) {
 	setupTestSource()
 	global := source.NewCatalog(capability.RiskMutating, nil)
 	ns := &NamespaceConfig{
-		Name:  "badflow",
-		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Name:    "badflow",
+		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Components: []ComponentConfig{{
 			Name:   "x",
 			Engine: "workflow",
@@ -219,8 +219,8 @@ func TestGraphComponentMutuallyExclusive(t *testing.T) {
 	setupTestSource()
 	global := source.NewCatalog(capability.RiskMutating, nil)
 	ns := &NamespaceConfig{
-		Name:  "mixed",
-		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Name:    "mixed",
+		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Components: []ComponentConfig{{
 			Name:   "bad",
 			Engine: "react",
@@ -243,8 +243,8 @@ func TestNamespaceCrossRefOnlySkill(t *testing.T) {
 
 	// ns1 导出一个 skill
 	ns1 := &NamespaceConfig{
-		Name:  "ns1",
-		Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+		Name:    "ns1",
+		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
 		Skills: []NamespaceSkill{{
 			Name:  "lookup",
 			Steps: []engine.Step{{Name: "s", Use: "tools/svc/search"}},
@@ -312,8 +312,8 @@ func TestComponentExportImport(t *testing.T) {
 
 	common := func() *NamespaceConfig {
 		return &NamespaceConfig{
-			Name:  "common",
-			Tools: []SourceConfig{{Name: "svc", Type: "nstest"}},
+			Name:    "common",
+			Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
 			Components: []ComponentConfig{
 				{Name: "shared-fmt", Export: true, Engine: "workflow",
 					Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},

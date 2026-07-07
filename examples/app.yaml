@@ -67,7 +67,7 @@ agents:
 # skillpacks:
 #   sync: auto                   # auto=缺失即下载 | require-local=生产收紧
 # skills:
-#   - use: "github.com/anthropics/skills/pdf@v1.2.0"    # 一行集成,必须 pin
+#   - from: "github.com/anthropics/skills/pdf@v1.2.0"    # 一行集成,必须 pin
 #   - use: "https://skills.example.com/writer.zip"
 #     integrity: "sha256:9f2a..."
 #     name: docs/writer          # 覆盖 ns/名字

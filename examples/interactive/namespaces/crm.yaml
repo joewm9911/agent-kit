@@ -2,7 +2,7 @@
 # 同时充当"多 agent 共享 namespace"的验证对象(两个 agent 都挂载它,
 # 源连接按文件缓存共享,只 Sync 一次)。
 
-tools:
+sources:
   - name: cdp
     type: http
     config:

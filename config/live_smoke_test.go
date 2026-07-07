@@ -471,7 +471,7 @@ func TestLiveSmoke(t *testing.T) {
 				"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
 			}}},
 			Catalog:    CatalogConfig{MaxRisk: "dangerous"}, // 含脚本的包必须显式提升准入
-			Skills:     []*SkillEntry{{Use: "file:" + packSrc}},
+			Skills:     []*SkillEntry{{From: "file:" + packSrc}},
 			Skillpacks: SkillpacksConfig{Dir: skillsRoot},
 			Agents: []AgentConfig{{
 				Name:         "reporter",

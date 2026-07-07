@@ -3,7 +3,7 @@
 # → components(执行单元是什么,不进目录)→ skills(对外长什么样、怎么串)。
 # 边界:工具与 component 不出命名空间,跨 ns 只能引用 cap://skill。
 
-tools:
+sources:
   - name: wx
     type: http
     config:

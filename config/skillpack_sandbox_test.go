@@ -55,7 +55,7 @@ func TestSkillpackExecPropagation(t *testing.T) {
 		cfg := &Config{
 			Profile:    Profile{Model: &ModelConfig{Provider: "packtest"}},
 			Catalog:    CatalogConfig{MaxRisk: "dangerous"},
-			Skills:     []*SkillEntry{{Use: "file:" + src}},
+			Skills:     []*SkillEntry{{From: "file:" + src}},
 			Skillpacks: SkillpacksConfig{Dir: t.TempDir()},
 			Exec:       exec,
 		}
@@ -83,7 +83,7 @@ func TestNamespaceExecInjection(t *testing.T) {
 	ns := func() *NamespaceConfig {
 		return &NamespaceConfig{
 			Name: "calc",
-			Tools: []SourceConfig{{
+			Sources: []SourceConfig{{
 				Name: "py", Type: "exec", Required: true,
 				Config: map[string]any{
 					"tools": []any{map[string]any{"name": "python", "runtime": "python"}},

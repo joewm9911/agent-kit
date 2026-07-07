@@ -34,7 +34,7 @@ skillpacks:
   sync: auto
 
 skills:
-  - use: "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
+  - from: "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
     name: docs/pdf
     max_steps: 12
 

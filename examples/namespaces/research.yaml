@@ -1,6 +1,6 @@
 # namespaces/research.yaml —— 重型执行单元(plan-execute)包装为单步 skill 导出。
 
-tools:
+sources:
   - name: weather
     type: http
     config:

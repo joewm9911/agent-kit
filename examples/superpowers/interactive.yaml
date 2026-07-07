@@ -25,12 +25,12 @@ skillpacks:
   sync: auto
 
 skills:
-  - use: "github.com/obra/superpowers/skills/brainstorming@d884ae04edebef577e82ff7c4e143debd0bbec99"
+  - from: "github.com/obra/superpowers/skills/brainstorming@d884ae04edebef577e82ff7c4e143debd0bbec99"
     name: dev/brainstorming
-  - use: "github.com/obra/superpowers/skills/systematic-debugging@d884ae04edebef577e82ff7c4e143debd0bbec99"
+  - from: "github.com/obra/superpowers/skills/systematic-debugging@d884ae04edebef577e82ff7c4e143debd0bbec99"
     name: dev/systematic-debugging
     max_steps: 10
-  - use: "github.com/obra/superpowers/skills/test-driven-development@d884ae04edebef577e82ff7c4e143debd0bbec99"
+  - from: "github.com/obra/superpowers/skills/test-driven-development@d884ae04edebef577e82ff7c4e143debd0bbec99"
     name: dev/tdd
 
 agents:

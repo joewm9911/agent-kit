@@ -49,7 +49,7 @@ func TestBuildWithExternalSkillEntry(t *testing.T) {
 	cfg := &Config{
 		Profile: Profile{Model: &ModelConfig{Provider: "packtest"}},
 		Skills: []*SkillEntry{
-			{Use: "file:" + src},
+			{From: "file:" + src},
 		},
 		Skillpacks: SkillpacksConfig{Dir: root},
 	}
@@ -76,18 +76,24 @@ func TestSkillEntryMutualExclusion(t *testing.T) {
 	src := writeConfigFixturePack(t)
 	cfg := &Config{
 		Profile:    Profile{Model: &ModelConfig{Provider: "packtest"}},
-		Skills:     []*SkillEntry{{Use: "file:" + src, Declaration: skill.Declaration{Engine: "react"}}},
+		Skills:     []*SkillEntry{{From: "file:" + src, Declaration: skill.Declaration{Engine: "react"}}},
 		Skillpacks: SkillpacksConfig{Dir: t.TempDir()},
 	}
 	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "互斥") {
 		t.Fatalf("use+engine must fail fast, got %v", err)
 	}
-	// 平铺 skills 的 use 不接受内部引用形态
-	cfg.Skills = []*SkillEntry{{Use: "components/foo"}}
+	// 旧 use 键:报错并指路 from
+	cfg.Skills = []*SkillEntry{{Use: "github.com/x/y@v1"}}
+	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "改名 from") {
+		t.Fatalf("legacy use must fail with from hint, got %v", err)
+	}
+	// 平铺 skills 的 from 不接受内部引用形态
+	cfg.Skills = []*SkillEntry{{From: "components/foo"}}
 	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "外部链接") {
-		t.Fatalf("internal use in flat skills must fail, got %v", err)
+		t.Fatalf("internal ref in from must fail, got %v", err)
 	}
 }
 
@@ -97,7 +103,7 @@ func TestBuildRequireLocalMissing(t *testing.T) {
 	cfg := &Config{
 		Profile: Profile{Model: &ModelConfig{Provider: "packtest"}},
 		Skills: []*SkillEntry{{
-			Use: "https://example.invalid/p.zip", Integrity: "sha256:" + strings.Repeat("a", 64),
+			From: "https://example.invalid/p.zip", Integrity: "sha256:" + strings.Repeat("a", 64),
 		}},
 		Skillpacks: SkillpacksConfig{Dir: t.TempDir(), Sync: "require-local"},
 	}
@@ -115,7 +121,7 @@ func TestNamespaceExternalSkill(t *testing.T) {
 	global := source.NewCatalog(capability.RiskMutating, nil)
 
 	ns := &NamespaceConfig{Name: "docs", Skills: []NamespaceSkill{
-		{Name: "writer", Use: "file:" + src},
+		{Name: "writer", From: "file:" + src},
 	}}
 	err := buildNamespace(context.Background(), ns, nsDeps{
 		global: global, prompts: (*prompt.Resolver)(nil),
@@ -131,7 +137,7 @@ func TestNamespaceExternalSkill(t *testing.T) {
 	}
 
 	// 缺 name:fail fast
-	ns2 := &NamespaceConfig{Name: "docs2", Skills: []NamespaceSkill{{Use: "file:" + src}}}
+	ns2 := &NamespaceConfig{Name: "docs2", Skills: []NamespaceSkill{{From: "file:" + src}}}
 	err = buildNamespace(context.Background(), ns2, nsDeps{
 		global:       source.NewCatalog(capability.RiskMutating, nil),
 		defaultModel: testmodel.New(), maxRisk: capability.RiskMutating, packRoot: root,
@@ -157,7 +163,7 @@ func TestScriptPackAdmission(t *testing.T) {
 		cfg := &Config{
 			Profile:    Profile{Model: &ModelConfig{Provider: "packtest"}},
 			Catalog:    CatalogConfig{MaxRisk: maxRisk},
-			Skills:     []*SkillEntry{{Use: "file:" + src}},
+			Skills:     []*SkillEntry{{From: "file:" + src}},
 			Skillpacks: SkillpacksConfig{Dir: t.TempDir()},
 		}
 		app, err := Build(context.Background(), cfg, BuildOptions{})

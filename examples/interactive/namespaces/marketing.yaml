@@ -1,7 +1,7 @@
 # 营销域:reflection / router / plan-execute / 调用级 todo / 跨 ns skill 引用
 # + vector 知识库(RAG = tools 层的一种工具)。
 
-tools:
+sources:
   - name: kb
     type: vector
     config:

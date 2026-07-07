@@ -91,7 +91,7 @@ description: 测试
 namespaces: [../namespaces/ops.yaml]
 `,
 		"namespaces/ops.yaml": `
-tools:
+sources:
   - {name: svc, type: nstest}
 skills:
   - name: lookup
@@ -244,7 +244,7 @@ agents: [agents/x.yaml, agents/y.yaml]
 		"agents/x.yaml": "namespaces: [../namespaces/shared.yaml]\n",
 		"agents/y.yaml": "namespaces: [../namespaces/shared.yaml]\n",
 		"namespaces/shared.yaml": `
-tools:
+sources:
   - {name: cnt, type: countsrc}
 skills:
   - name: ping
@@ -276,7 +276,7 @@ step_defaults: {retry: 2}
 namespaces: [../namespaces/flaky.yaml]
 `,
 		"namespaces/flaky.yaml": `
-tools:
+sources:
   - {name: svc, type: flakysrc}
 skills:
   - name: robust

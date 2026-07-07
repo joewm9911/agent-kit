@@ -25,7 +25,7 @@ func hubTestConfig(t *testing.T, front string) *Config {
 	t.Helper()
 	return &Config{
 		Profile:    Profile{Model: &ModelConfig{Provider: "packtest"}},
-		Skills:     []*SkillEntry{{Use: "file:" + frontPackDir(t, front)}},
+		Skills:     []*SkillEntry{{From: "file:" + frontPackDir(t, front)}},
 		Skillpacks: SkillpacksConfig{Dir: t.TempDir()},
 	}
 }

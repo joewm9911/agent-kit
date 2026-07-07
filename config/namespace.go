@@ -144,8 +144,11 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 
 	// 1. 工具:进 ns 本地目录,对外不可见。Sync 结果按 (ns 文件, 源名)
 	// 缓存——同一 namespace 被多个 agent 实例化时源连接只建一次。
+	if len(ns.ToolsLegacy) > 0 {
+		return fmt.Errorf("namespace %s: tools 已改名 sources(它声明的是能力供给源,与顶层 sources: 同构;引用工具面的 tools 语义不变)", ns.Name)
+	}
 	local := source.NewCatalog(deps.maxRisk, deps.logger)
-	for _, tc := range ns.Tools {
+	for _, tc := range ns.Sources {
 		key := deps.nsPath + "|" + tc.Name
 		if caps, ok := deps.srcCache.get(key); ok {
 			if err := local.AddSource(ctx, source.Static(tc.Name, caps...), true, tc.Priority); err != nil {
@@ -273,14 +276,20 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	for i := range ns.Skills {
 		sc := &ns.Skills[i]
 		if sc.Use != "" && isExternalRef(sc.Use) {
+			return fmt.Errorf(`namespace %s: skill %s: 外部链接已改用 from(use 只保留能力引用语义):from: %q`, ns.Name, sc.Name, sc.Use)
+		}
+		if sc.From != "" {
+			if !isExternalRef(sc.From) {
+				return fmt.Errorf("namespace %s: skill %s: from 只接受外部链接(github.com/...|https://...|file:...);内部引用用 use", ns.Name, sc.Name)
+			}
 			if len(sc.Steps) > 0 {
-				return fmt.Errorf("namespace %s: skill %s: use 与 steps 互斥", ns.Name, sc.Name)
+				return fmt.Errorf("namespace %s: skill %s: from 与 steps 互斥", ns.Name, sc.Name)
 			}
 			if sc.Name == "" {
-				return fmt.Errorf("namespace %s: 外部 skillpack(%s)必须显式 name(命名归属域团队)", ns.Name, sc.Use)
+				return fmt.Errorf("namespace %s: 外部 skillpack(%s)必须显式 name(命名归属域团队)", ns.Name, sc.From)
 			}
 			c, err := buildSkillpack(ctx, deps.packRoot, deps.packOpts,
-				skill.PackSpec{Use: sc.Use, Integrity: sc.Integrity, Name: ns.Name + "/" + sc.Name},
+				skill.PackSpec{Use: sc.From, Integrity: sc.Integrity, Name: ns.Name + "/" + sc.Name},
 				skill.PackOverrides{Tools: sc.Tools, Context: sc.Context},
 				skill.Deps{Catalog: deps.global, Prompts: deps.prompts,
 					DefaultModel: deps.defaultModel, Retry: nsEff.retry(),

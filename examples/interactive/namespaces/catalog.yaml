@@ -2,7 +2,7 @@
 # 覆盖:react(digest/compaction/fork 目标)、direct、rewoo、workflow、
 # graph 并行 needs、{$input}、步骤 timeout/retry、use: 入口、mutating 风险传播。
 
-tools:
+sources:
   - name: shop
     type: http
     config:

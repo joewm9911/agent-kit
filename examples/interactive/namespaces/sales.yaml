@@ -1,6 +1,6 @@
 # 销售域:销售数据查询与分析。工具两个(单品序列/全店汇总)+ 分析师
 # 组件 + 三个导出 skill(报表/单品诊断/滞销扫描)。
-tools:
+sources:
   - name: sales
     type: http
     config:
