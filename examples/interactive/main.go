@@ -111,12 +111,14 @@ func main() {
 		conn.Close()
 		setDefault("OPS_SESSION_STORE", "redis")
 		setDefault("OPS_TODO_STORE", "redis")
+		setDefault("OPS_RESULT_STORE", "redis") // digest 暂存:原生 TTL + 多副本共享
 	} else {
 		setDefault("OPS_SESSION_STORE", "file")
 		setDefault("OPS_TODO_STORE", "file")
+		setDefault("OPS_RESULT_STORE", "file")
 	}
-	storeNote = fmt.Sprintf("session=%s todo=%s(redis: %s)",
-		os.Getenv("OPS_SESSION_STORE"), os.Getenv("OPS_TODO_STORE"), os.Getenv("OPS_REDIS_ADDR"))
+	storeNote = fmt.Sprintf("session=%s todo=%s result=%s(redis: %s)",
+		os.Getenv("OPS_SESSION_STORE"), os.Getenv("OPS_TODO_STORE"), os.Getenv("OPS_RESULT_STORE"), os.Getenv("OPS_REDIS_ADDR"))
 
 	// 沙箱注入:有 docker 就默认全部脚本进容器;没有则宿主直跑并告警
 	// (装配不静默——启动横幅明示脚本跑在哪)。生产应写死 default_sandbox

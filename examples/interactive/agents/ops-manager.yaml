@@ -53,7 +53,8 @@ stores:
   - {name: ltm,      kind: memory,  type: inmemory}   # 分布式向量后端换 type: qdrant
   - {name: plans,    kind: todo,    type: "${OPS_TODO_STORE}",
      config: {dir: "${OPS_DATA_DIR}/ops-plans", addr: "${OPS_REDIS_ADDR}", prefix: "ops:"}}
-  - {name: cache,    kind: result,  type: inmemory}
+  - {name: cache,    kind: result,  type: "${OPS_RESULT_STORE}", ttl: 1h,
+     config: {dir: "${OPS_DATA_DIR}/ops-results", addr: "${OPS_REDIS_ADDR}", prefix: "ops:"}}
 
 # ---- 四大模块各自独立,store 槽引用上面的具名实例 ----
 session:                                     # ① 会话短期记忆
