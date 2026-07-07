@@ -180,7 +180,8 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 
 	desc := tc.Description
 	if desc == "" {
-		desc = "用 " + tc.Runtime + " 执行一段脚本并返回输出。script=脚本内容,args=空格分隔参数。"
+		desc = "用 " + tc.Runtime + " 执行一段脚本并返回输出。script=脚本内容,args=空格分隔参数。" +
+			"适用:没有现成工具覆盖的计算、数据转换、批处理;不适用:已有专用工具能做的事(优先用专用工具),以及获取脚本无法访问的业务数据(用查询工具,不要在脚本里编造数据)。"
 	}
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: srcName, Name: tc.Name},

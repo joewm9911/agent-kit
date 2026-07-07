@@ -259,7 +259,7 @@ func TestTodoPlanSectionStale(t *testing.T) {
 	}
 
 	turn2 := runctx.WithTurnState(testCtx("a", "stale"))
-	if s := td.PlanSection(turn2); !strings.Contains(s, "遗留任务计划") || !strings.Contains(s, "清空") {
+	if s := td.PlanSection(turn2); !strings.Contains(s, "遗留任务计划") || !strings.Contains(s, "提交空 todos") {
 		t.Fatalf("new turn must render stale header with cleanup hint, got %q", s)
 	}
 	writeTodos(t, turn2, `{"todos":[{"content":"y","status":"in_progress"}]}`)

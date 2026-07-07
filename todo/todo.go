@@ -146,7 +146,13 @@ const todoWriteDesc = `写入/更新任务计划清单(整体替换)。使用规
 - 开始做某项前,先把它标为 in_progress(同时最多一项进行中,写入时强制校验)。
 - 完成一项立刻标 completed,不要攒到最后一起标;做的过程中发现新任务,加入清单。
 - 没有完成的事不许标 completed:测试失败、部分完成、被阻塞都保持 in_progress 并新增说明项。
-- 一轮只调用一次;整体替换语义:每次提交完整清单。`
+- 一轮只调用一次;整体替换语义:每次提交完整清单。
+
+示例:
+- 「分析销量下滑的原因并给出补救建议」→ 用。理由:要查销售、查库存、对比归因、给建议,3 步以上且前一步产出决定后一步怎么做。
+- 「把 A、B、C 三个商品各补货 50 件」→ 用。理由:多项同构要求,逐项执行逐项标记,漏没漏一目了然。
+- 「A 商品现在库存多少?」→ 不用。理由:一次查询就能回答,列计划纯属开销。
+- 「你支持哪些操作?」→ 不用。理由:纯对话,没有要执行的步骤。`
 
 // Capabilities 返回 todo_write / todo_read 两个能力(闭包捕获 t.kv)。
 func (t *Todo) Capabilities() []capability.Capability {
@@ -226,8 +232,8 @@ func (t *Todo) PlanSection(ctx context.Context) string {
 	}
 	if bag := runctx.TurnState(ctx); bag != nil {
 		if _, written := bag.Load(turnWritten + key); !written {
-			return "# 遗留任务计划(来自之前的对话轮次,非本轮所列)\n" +
-				"先回答用户当前的问题,之后再处理本计划:无关项用 todo_write 提交删除后的清单(全部无关就提交空 todos 清空);仍相关则在回答完成后继续推进并更新状态。\n" +
+			return "# 遗留任务计划(来自之前轮次)\n" +
+				"先回答当前问题;之后用 todo_write 更新本计划:删除无关项(全部无关就提交空 todos),仍相关的继续推进。\n" +
 				render(list)
 		}
 	}
