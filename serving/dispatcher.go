@@ -21,7 +21,9 @@ type Binding struct {
 	Agent   Runnable
 	// SessionMapping:chat(群共享会话)| chat_user(群内每人独立会话)。
 	SessionMapping string
-	// ReplyMode:text(整段回复)| stream(先发占位,流式刷新,需通道支持 Update)。
+	// ReplyMode:text(整段回复)| card(先回"处理中"卡片,完成后原地
+	// 更新为答案)| stream(先发占位,流式刷新)。card/stream 需通道支持
+	// Update,不支持自动退化为整段。
 	ReplyMode string
 	// AskTimeout 是 ask_user / 审批等待用户回复的超时,默认 10 分钟。
 	AskTimeout time.Duration
@@ -199,6 +201,15 @@ func (d *Dispatcher) run(key string, j job) {
 		}
 		// 流式失败(如通道不支持 Update)退化为整段回复。
 	}
+
+	// card 模式:先回"处理中"占位卡片,完成后原地更新为最终答案——
+	// 长处理(技能子循环)期间用户有即时反馈;中途的 ask_user/审批
+	// 问句仍是独立消息。占位发送失败不阻断处理,退化为整段回复。
+	var placeholder string
+	if j.b.ReplyMode == "card" {
+		placeholder, _ = j.b.Channel.Send(ctx, j.in.Conv, channel.Outbound{Text: "⏳ 处理中...", Markdown: true})
+	}
+
 	answer, err := j.b.Agent.Run(ctx, key, j.in.Text)
 	if err != nil {
 		var suspended *suspend.ErrSuspended
@@ -210,12 +221,21 @@ func (d *Dispatcher) run(key string, j job) {
 			if saveErr != nil {
 				d.logger.Error("save pending turn failed", slog.String("session", key), slog.String("err", saveErr.Error()))
 			}
+			if placeholder != "" { // 占位卡片收口为等待态,不留悬挂的"处理中"
+				_ = j.b.Channel.Update(ctx, j.in.Conv, placeholder, channel.Outbound{Text: "⏸ 已向你提问,回复后继续。", Markdown: true})
+			}
 			return
 		}
 		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", err.Error()))
 		answer = "处理失败:" + err.Error()
 	} else if journal != nil {
 		journal.CompleteTurn(ctx) // 一轮善终,清理该轮日志
+	}
+	if placeholder != "" {
+		if err := j.b.Channel.Update(ctx, j.in.Conv, placeholder, channel.Outbound{Text: answer, Markdown: true}); err == nil {
+			return
+		}
+		// 更新失败(通道不支持等):退化为整段回复,占位卡片保持原样。
 	}
 	if _, err := j.b.Channel.Send(ctx, j.in.Conv, channel.Outbound{Text: answer, Markdown: true}); err != nil {
 		d.logger.Error("send reply failed", slog.String("session", key), slog.String("err", err.Error()))

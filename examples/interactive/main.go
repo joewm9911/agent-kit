@@ -154,7 +154,7 @@ func main() {
 		spec.App.Serving.Addr = os.Getenv("OPS_SERVING_ADDR")
 		spec.App.Channels = append(spec.App.Channels, config.ChannelConfig{
 			Name: "feishu", Type: "feishu", Agent: "ops-manager",
-			SessionMapping: "chat", ReplyMode: "text",
+			SessionMapping: "chat", ReplyMode: "card", // 先回"处理中"卡片,完成后原地更新
 			Config: map[string]any{
 				"app_id":     os.Getenv("FEISHU_APP_ID"),
 				"app_secret": os.Getenv("FEISHU_APP_SECRET"),

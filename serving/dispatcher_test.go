@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"fmt"
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"net/http"
 	"strings"
@@ -15,10 +16,13 @@ import (
 	"github.com/joewm9911/agent-kit/core/runctx"
 )
 
-// fakeChannel 记录所有 Send,供断言。
+// fakeChannel 记录所有 Send/Update,供断言。canUpdate=false 模拟
+// 不支持消息更新的通道(card/stream 应退化为整段回复)。
 type fakeChannel struct {
-	mu   sync.Mutex
-	sent []string
+	mu        sync.Mutex
+	sent      []string
+	updated   []string // "<msgID>:<text>"
+	canUpdate bool
 }
 
 func (f *fakeChannel) Name() string { return "fake" }
@@ -29,10 +33,22 @@ func (f *fakeChannel) Send(_ context.Context, _ channel.ConvRef, msg channel.Out
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, msg.Text)
-	return "mid", nil
+	return fmt.Sprintf("mid-%d", len(f.sent)), nil
 }
-func (f *fakeChannel) Update(context.Context, channel.ConvRef, string, channel.Outbound) error {
-	return channel.ErrUpdateUnsupported
+func (f *fakeChannel) Update(_ context.Context, _ channel.ConvRef, msgID string, msg channel.Outbound) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.canUpdate {
+		return channel.ErrUpdateUnsupported
+	}
+	f.updated = append(f.updated, msgID+":"+msg.Text)
+	return nil
+}
+
+func (f *fakeChannel) updates() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.updated...)
 }
 
 func (f *fakeChannel) messages() []string {
@@ -134,5 +150,52 @@ func TestSessionKeyThread(t *testing.T) {
 	other.Thread = "omt_10"
 	if d.sessionKey(Binding{}, topic) == d.sessionKey(Binding{}, other) {
 		t.Fatal("different threads must map to different sessions")
+	}
+}
+
+// echoRunner:直接回答的最小 runner。
+type echoRunner struct{}
+
+func (echoRunner) Generate(context.Context, []*schema.Message) (*schema.Message, error) {
+	return schema.AssistantMessage("最终答案", nil), nil
+}
+func (r echoRunner) Stream(ctx context.Context, msgs []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	out, err := r.Generate(ctx, msgs)
+	if err != nil {
+		return nil, err
+	}
+	sr, sw := schema.Pipe[*schema.Message](1)
+	sw.Send(out, nil)
+	sw.Close()
+	return sr, nil
+}
+
+// TestCardReplyMode:card 模式先发"处理中"占位,完成后原地更新为答案;
+// 通道不支持更新时退化为整段回复(占位之外再发一条)。
+func TestCardReplyMode(t *testing.T) {
+	// 支持更新的通道:占位 + 原地更新,不再追加消息
+	fc := &fakeChannel{canUpdate: true}
+	ag := agent.New("a", "", echoRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+	h := d.Handler(Binding{Channel: fc, Agent: ag, ReplyMode: "card"})
+	h(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c9"}, Text: "问题", EventID: "ec1"})
+
+	waitFor(t, func() bool { return len(fc.updates()) >= 1 })
+	if msgs := fc.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], "处理中") {
+		t.Fatalf("placeholder expected, got %v", msgs)
+	}
+	if ups := fc.updates(); !strings.Contains(ups[0], "mid-1:最终答案") {
+		t.Fatalf("in-place update expected, got %v", ups)
+	}
+
+	// 不支持更新的通道:退化为整段回复
+	fc2 := &fakeChannel{}
+	d2 := NewDispatcher(nil)
+	h2 := d2.Handler(Binding{Channel: fc2, Agent: ag, ReplyMode: "card"})
+	h2(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c9"}, Text: "问题", EventID: "ec2"})
+
+	waitFor(t, func() bool { return len(fc2.messages()) >= 2 })
+	if msgs := fc2.messages(); msgs[len(msgs)-1] != "最终答案" {
+		t.Fatalf("fallback full reply expected, got %v", msgs)
 	}
 }

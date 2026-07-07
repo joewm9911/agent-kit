@@ -222,7 +222,7 @@ type ChannelConfig struct {
 	Type           string         `yaml:"type"`
 	Agent          string         `yaml:"agent"`
 	SessionMapping string         `yaml:"session_mapping"` // chat | chat_user
-	ReplyMode      string         `yaml:"reply_mode"`      // text | stream
+	ReplyMode      string         `yaml:"reply_mode"`      // text | card | stream
 	Config         map[string]any `yaml:"config"`
 }
 
