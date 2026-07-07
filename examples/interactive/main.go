@@ -93,7 +93,7 @@ func main() {
 			log.Fatal("需要 ZHIPU_API_KEY(keychain: security find-generic-password -a agent-kit -s zhipu-api-key -w)")
 		}
 	}
-	setDefault("OPS_MODEL_NAME", "") // 空 = 厂商默认(glm-5.2 / MiniMax-Text-01)
+	setDefault("OPS_MODEL_NAME", "") // 空 = 厂商默认(glm-5.2 / MiniMax-M2.7)
 
 	srv := newBackendData().serve()
 	defer srv.Close()

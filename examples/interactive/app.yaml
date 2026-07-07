@@ -14,7 +14,7 @@
 #   OPS_SESSION       会话 ID(默认 cli-<pid>,每次启动新会话;传上次的 ID 续聊)
 #   OPS_MODEL_PROVIDER 模型厂商(默认 zhipu;可选 minimax / openai)
 #   OPS_MODEL_KEY      模型 API key(默认取 ZHIPU_API_KEY / MINIMAX_API_KEY)
-#   OPS_MODEL_NAME     模型名(空 = 各厂商默认:glm-5.2 / MiniMax-Text-01)
+#   OPS_MODEL_NAME     模型名(空 = 各厂商默认:glm-5.2 / MiniMax-M2.7)
 #   OPS_SESSION_STORE / OPS_TODO_STORE  会话/计划存储(runner 检测:redis 可达
 #                     → redis,否则 file);OPS_REDIS_ADDR 默认 127.0.0.1:6379
 
