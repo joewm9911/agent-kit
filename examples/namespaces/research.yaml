@@ -18,7 +18,7 @@ components:
     engine: plan-execute
     engine_config:
       max_rounds: 3
-      step_max_steps: 10
+      step_max_rounds: 10
       on_exhausted: summarize
     tools:
       - "tools/weather/get_weather"

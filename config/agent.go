@@ -213,6 +213,9 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	// 工具面挂载仍只由 memory.tools 决定。
 	scope := memory.ScopeConfig{Write: ac.Memory.Scope.Write, Read: ac.Memory.Scope.Read}
 	var kv memory.Store
+	if err := ac.Profile.rejectLegacyKeys("agent " + ac.Name); err != nil {
+		return nil, err
+	}
 	if ac.Memory.ToolsLegacy != nil {
 		return nil, fmt.Errorf("agent %s: memory.tools 已改名 expose_tools(避免与工具列表语义的 tools 冲突)", ac.Name)
 	}

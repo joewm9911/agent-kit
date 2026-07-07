@@ -5,7 +5,7 @@ prompt:
   system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief。多步骤任务先列计划。"
 # 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
 loop:
-  max_steps: 20
+  max_rounds: 20
   compaction: {max_messages: 12, keep_recent: 4}  # 上下文压缩(归 loop)
 step_defaults:
   retry: 1

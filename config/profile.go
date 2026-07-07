@@ -37,11 +37,13 @@ type Profile struct {
 // loop(而非 session)——它压缩的是"执行单元循环的工作上下文",主 loop 与
 // component 都有,只有主 loop 额外有 session;归 loop 才能全链降级到 component。
 type LoopProfile struct {
-	// MaxSteps 是工具调用的轮数上限(直觉语义:一轮 = 一次模型决策 + 一批
-	// 工具执行;react 装配时换算为 eino 的节点步数 2N+1,额外的 1 是收尾
-	// 作答)。默认 12 轮。
-	MaxSteps   *int                   `yaml:"max_steps"`
-	Compaction *loop.CompactionConfig `yaml:"compaction"`
+	// MaxSteps 是工具调用的轮数上限(一轮 = 一次模型决策 + 一批工具执行;
+	// react 装配时换算为 eino 的节点步数 2N+1,额外的 1 是收尾作答)。
+	// 默认 12 轮。yaml 键 max_rounds——名实对齐(内部字段名沿用)。
+	MaxSteps *int `yaml:"max_rounds"`
+	// MaxStepsLegacy 已废弃:max_steps 语义即轮数,改名 max_rounds(报错指路)。
+	MaxStepsLegacy *int                   `yaml:"max_steps"`
+	Compaction     *loop.CompactionConfig `yaml:"compaction"`
 }
 
 // ReliabilityProfile 是执行单元的可靠性:工具单次调用超时 + 模型瞬时错误重试。
@@ -104,6 +106,14 @@ func (p Profile) merge(nearer Profile) Profile {
 		out.StepDefaults.Retry = nearer.StepDefaults.Retry
 	}
 	return out
+}
+
+// rejectLegacyKeys 拦截已改名的旧配置键(fail fast 即迁移指南)。
+func (p Profile) rejectLegacyKeys(where string) error {
+	if p.Loop.MaxStepsLegacy != nil {
+		return fmt.Errorf("%s: max_steps 已改名 max_rounds(语义本就是轮数:一轮=一次模型决策+一批工具)", where)
+	}
+	return nil
 }
 
 // validateNoModel 强制"能力不可自指 model":namespace/component 的 Profile

@@ -144,6 +144,12 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 
 	// 1. 工具:进 ns 本地目录,对外不可见。Sync 结果按 (ns 文件, 源名)
 	// 缓存——同一 namespace 被多个 agent 实例化时源连接只建一次。
+	if err := ns.Profile.rejectLegacyKeys("namespace " + ns.Name); err != nil {
+		return err
+	}
+	if err := deps.mount.rejectLegacyKeys("namespace " + ns.Name + " (mount override)"); err != nil {
+		return err
+	}
 	if len(ns.ToolsLegacy) > 0 {
 		return fmt.Errorf("namespace %s: tools 已改名 sources(它声明的是能力供给源,与顶层 sources: 同构;引用工具面的 tools 语义不变)", ns.Name)
 	}
@@ -201,6 +207,9 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 		// 能力不可自指 model:component 的执行画像不得声明 model。
 		if err := cc.Profile.validateNoModel(fmt.Sprintf("namespace %s: component %s", ns.Name, cc.Name)); err != nil {
+			return err
+		}
+		if err := cc.Profile.rejectLegacyKeys(fmt.Sprintf("namespace %s: component %s", ns.Name, cc.Name)); err != nil {
 			return err
 		}
 		// component 生效画像:nsBase.merge(自己) 再叠加 mount(最高优)。

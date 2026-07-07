@@ -25,7 +25,7 @@ components:
   # 销售分析师:拿汇总找异常,再对可疑单品下钻日序列
   - name: sales_analyst
     engine: react
-    loop: {max_steps: 8, compaction: {max_messages: 24, keep_recent: 8}}
+    loop: {max_rounds: 8, compaction: {max_messages: 24, keep_recent: 8}}
     digest: {over: 3000}
     prompt: "你是销售分析师。任务:{task}。先用 sales_summary 看全局(注意 trend_pct 负值=下滑、units 为 0=滞销),对可疑商品用 get_sales 下钻每日序列,给出量化结论。数据边界:你只有销售数据,库存与订单不归你,不要推断或顺带给结论,明确留白由调用方另查。"
     tools:

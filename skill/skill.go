@@ -58,8 +58,9 @@ type Declaration struct {
 		Include []string `yaml:"include"`
 		Exclude []string `yaml:"exclude"`
 	} `yaml:"capabilities"`
-	Model    *ModelDecl `yaml:"model"`
-	MaxSteps int        `yaml:"max_steps"`
+	Model          *ModelDecl `yaml:"model"`
+	MaxSteps       int        `yaml:"max_rounds"`
+	MaxStepsLegacy *int       `yaml:"max_steps"` // 已废弃:改 max_rounds
 	// Compaction 启用内部循环的上下文压缩(长任务 skill 建议开启)。
 	Compaction loop.CompactionConfig `yaml:"compaction"`
 	// Todo 给内部循环挂调用级临时清单(仅 react):键 = 本次执行域,
@@ -166,6 +167,9 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 
 	// 调用级临时清单(opt-in,仅 react):挂 todo 工具面 + 卡住提醒,
 	// 键按执行域隔离、随调用结束即弃。
+	if decl.MaxStepsLegacy != nil {
+		return nil, fmt.Errorf("skill %s: max_steps 已改名 max_rounds(语义本就是轮数)", decl.Name)
+	}
 	if decl.Todo && engineName != "react" {
 		return nil, fmt.Errorf("skill %s: todo 只对 react 有意义(plan-execute 的计划由引擎管理,其余形态无长循环)", decl.Name)
 	}

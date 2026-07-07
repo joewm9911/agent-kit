@@ -45,7 +45,7 @@ components:
   # 工具面含跨 ns 的 catalog skill(跨命名空间的唯一合法引用形态)
   - name: campaign_planner
     engine: plan-execute
-    engine_config: {max_rounds: 2, step_max_steps: 4, on_exhausted: summarize}
+    engine_config: {max_rounds: 2, step_max_rounds: 4, on_exhausted: summarize}
     prompt: "策划一场关于「{topic}」的促销活动,需要时审查相关商品定价。"
     tools:
       - "cap://skill/catalog/price-review"
@@ -54,7 +54,7 @@ components:
   - name: deep_research
     engine: react
     todo: true
-    loop: {max_steps: 8}
+    loop: {max_rounds: 8}
     prompt: "深入研究课题:{topic}。先用 todo_write 列出研究计划,逐项推进并更新状态,最后给出研究结论。"
 
 skills:

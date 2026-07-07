@@ -3,4 +3,4 @@
 skills:
   - name: pdf
     use: "${PDF_SKILL_REF}"
-    max_steps: 12
+    max_rounds: 12

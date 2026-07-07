@@ -154,7 +154,7 @@ func TestLiveEnginePrompts(t *testing.T) {
 					strParam("city", "城市名"), func(string) string { return "北京:晴,28°C,微风" })
 				r, err := engine.Build(ctx, "plan-execute", &engine.Assembly{
 					Model: m, Capabilities: []capability.Capability{weather},
-					Config: map[string]any{"max_rounds": 2, "step_max_steps": 4},
+					Config: map[string]any{"max_rounds": 2, "step_max_rounds": 4},
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -182,7 +182,7 @@ func TestLiveEnginePrompts(t *testing.T) {
 					capability.NoParams, func(string) string { return "产品名:极光耳机;发布年份:2026" })
 				r, err := engine.Build(ctx, "reflection", &engine.Assembly{
 					Model: m, Capabilities: []capability.Capability{facts},
-					Config: map[string]any{"max_rounds": 2, "step_max_steps": 4},
+					Config: map[string]any{"max_rounds": 2, "step_max_rounds": 4},
 				})
 				if err != nil {
 					t.Fatal(err)

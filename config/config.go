@@ -110,6 +110,10 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		return nil, err
 	}
 
+	if err := cfg.Profile.rejectLegacyKeys("app"); err != nil {
+		return nil, err
+	}
+
 	// 2. 提示词
 	var prompts *prompt.Resolver
 	if len(cfg.Prompts.Sources) > 0 {

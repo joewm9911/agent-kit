@@ -10,7 +10,7 @@ prompt:
 # 压缩阈值触发(token 维度优先用供应商真实用量校准);摘要内容策略可配
 # (prompt 为标量,cap://prompt/ 前缀=引用);要求 session.window >= keep_recent+2(装配期校验)。
 loop:
-  max_steps: 30
+  max_rounds: 30
   compaction: {max_messages: 30, max_tokens: 60000, keep_recent: 10}
   #   compaction: {prompt: "cap://prompt/pp/ops-summarize"}   # 领域保留清单
 

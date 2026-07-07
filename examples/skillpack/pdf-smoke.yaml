@@ -36,7 +36,7 @@ skillpacks:
 skills:
   - from: "github.com/anthropics/skills/skills/pdf@9d2f1ae187231d8199c64b5b762e1bdf2244733d"
     name: docs/pdf
-    max_steps: 12
+    max_rounds: 12
 
 # 轨迹落盘:记录"宿主选中 skill → 子循环模型调用 → python 工具执行"的
 # 完整调用链,冒烟据此硬断言技能真的被走到(而非模型绕过)。
