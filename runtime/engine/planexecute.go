@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -156,8 +155,7 @@ func (r *planExecuteRunner) generateJSON(ctx context.Context, system, user strin
 	if err != nil {
 		return err
 	}
-	raw := ExtractJSON(out.Content)
-	if err := json.Unmarshal([]byte(raw), target); err != nil {
+	if err := unmarshalLoose(out.Content, target); err != nil {
 		return fmt.Errorf("parse model output %q: %w", out.Content, err)
 	}
 	return nil

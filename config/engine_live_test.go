@@ -58,8 +58,12 @@ func engineLiveProviders(t *testing.T) map[string]func(ctx context.Context) (ein
 		if base == "" {
 			base = "https://api.minimaxi.com/v1"
 		}
-		out["minimax/MiniMax-Text-01"] = func(ctx context.Context) (einomodel.ToolCallingChatModel, error) {
-			m, err := model.Build(ctx, "minimax", map[string]any{"api_key": key, "base_url": base})
+		name := os.Getenv("SMOKE_MINIMAX_MODEL") // 型号对照用;空 = 厂商默认 MiniMax-Text-01
+		if name == "" {
+			name = "MiniMax-Text-01"
+		}
+		out["minimax/"+name] = func(ctx context.Context) (einomodel.ToolCallingChatModel, error) {
+			m, err := model.Build(ctx, "minimax", map[string]any{"api_key": key, "base_url": base, "model": name})
 			if err != nil {
 				return nil, err
 			}

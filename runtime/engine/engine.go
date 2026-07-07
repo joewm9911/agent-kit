@@ -7,6 +7,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -99,9 +100,24 @@ func (a *Assembly) ConfString(key, def string) string {
 	return def
 }
 
-// ExtractJSON 截取输出中第一个 { 到最后一个 } 之间的内容,
-// 容忍模型在 JSON 外包裹说明文字或代码块标记。
+var (
+	// thinkBlockRe 匹配推理模型内联在 content 里的思考块(MiniMax-M2/M1、
+	// DeepSeek-R1 等经 OpenAI 兼容接口时的形态)。思考文本里常出现花括号
+	// ({eN} 引用示例、示范 JSON),必须先整块剥除,否则按括号定位会取偏。
+	thinkBlockRe = regexp.MustCompile(`(?s)<think>.*?</think>`)
+	// fencedRe 匹配第一个 ``` 代码栏(可带 json 语言标)。
+	fencedRe = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)```")
+)
+
+// ExtractJSON 从模型输出中提取 JSON 文本,按包裹形态逐层剥离:
+// 先剥 <think> 推理块,再优先取 ``` 代码栏内容,最后截取第一个 { 到
+// 最后一个 } 之间。注意产物可能带尾部冗余(模型多打括号),解析方应
+// 按值解码(见 unmarshalLoose),不要用严格的整段 Unmarshal。
 func ExtractJSON(s string) string {
+	s = thinkBlockRe.ReplaceAllString(s, "")
+	if m := fencedRe.FindStringSubmatch(s); m != nil && strings.Contains(m[1], "{") {
+		s = m[1]
+	}
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start >= 0 && end > start {
