@@ -1,0 +1,36 @@
+# 飞书长连接最小示例:机器人主动连飞书收消息,无需公网地址。
+# 运行(在本目录):
+#   MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
+#   FEISHU_APP_ID=$(security find-generic-password -a agent-kit -s feishu-app-id -w) \
+#   FEISHU_APP_SECRET=$(security find-generic-password -a agent-kit -s feishu-app-secret -w) \
+#   go run ..
+# 开放平台侧:事件订阅方式选「使用长连接接收事件」,订阅 im.message.receive_v1。
+
+secrets:
+  provider: env
+
+model:
+  provider: minimax
+  config:
+    api_key: "${MINIMAX_API_KEY}"
+
+serving:
+  addr: ":8081"   # long_conn 不需要入站端口,这里只为激活 Gateway 模式
+
+agents:
+  - name: helper
+    prompt:
+      system: |
+        你是飞书群里的运营助手。简洁回答;拿不准的先用 ask_user 问清楚。
+
+channels:
+  - name: fs
+    type: feishu
+    agent: helper
+    session_mapping: chat
+    reply_mode: text
+    config:
+      app_id: "${FEISHU_APP_ID}"
+      app_secret: "${FEISHU_APP_SECRET}"
+      mode: long_conn
+      trigger_group: mention

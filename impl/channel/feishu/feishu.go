@@ -1,9 +1,13 @@
 // Package feishu 是飞书(Lark)的 Channel 适配器:
-//   - webhook 事件订阅(url 验证、encrypt_key 解密、verification_token 校验);
-//   - 文本/富文本卡片回复,卡片支持更新(伪流式);
+//   - 事件接收两种模式:webhook 订阅(url 验证、encrypt_key 解密、
+//     verification_token 校验)或长连接(mode: long_conn,机器人主动连
+//     飞书,无需公网地址);
+//   - 文本/富文本卡片回复,卡片支持更新(伪流式),话题内回复;
 //   - tenant_access_token 自动获取与缓存。
 //
-// 不依赖官方 SDK,直接走 OpenAPI,便于自建部署与审计。
+// webhook 与发送路径直接走 OpenAPI 不依赖 SDK(便于自建部署与审计);
+// 长连接的线上协议是私有 protobuf,仅该模式引官方 SDK 做传输
+// (longconn.go),事件进来后与 webhook 收敛到同一条归一化路径。
 package feishu
 
 import (
@@ -16,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -44,6 +49,9 @@ type Config struct {
 	EncryptKey        string `json:"encrypt_key"` // 空 = 明文事件
 	BaseURL           string `json:"base_url"`    // 默认 https://open.feishu.cn
 	Path              string `json:"path"`        // webhook 路径,默认 /webhook/feishu/<name>
+	// Mode 是事件接收模式:webhook(默认)| long_conn(长连接,机器人
+	// 主动连飞书收事件,无需公网地址;开放平台侧订阅方式须选"长连接")。
+	Mode string `json:"mode"`
 	// TriggerP2P / TriggerGroup:all | mention | none,默认 p2p=all,group=mention。
 	TriggerP2P   string `json:"trigger_p2p"`
 	TriggerGroup string `json:"trigger_group"`
@@ -76,6 +84,11 @@ func New(name string, cfg Config) (*Feishu, error) {
 	}
 	if cfg.TriggerGroup == "" {
 		cfg.TriggerGroup = "mention"
+	}
+	switch cfg.Mode {
+	case "", "webhook", "long_conn":
+	default:
+		return nil, fmt.Errorf("feishu %q: unknown mode %q(webhook | long_conn)", name, cfg.Mode)
 	}
 	return &Feishu{name: name, cfg: cfg, hc: &http.Client{Timeout: 15 * time.Second}}, nil
 }
@@ -114,8 +127,12 @@ type eventBody struct {
 	} `json:"event"`
 }
 
-// Start 注册 webhook 路由。飞书要求秒级 ACK:处理逻辑全部异步。
-func (f *Feishu) Start(_ context.Context, mux *http.ServeMux, h channel.InboundHandler) error {
+// Start 启动事件接收:long_conn 模式建立到飞书的长连接,webhook 模式
+// 注册路由(飞书要求秒级 ACK,处理逻辑全部异步)。
+func (f *Feishu) Start(ctx context.Context, mux *http.ServeMux, h channel.InboundHandler) error {
+	if f.cfg.Mode == "long_conn" {
+		return f.startLongConn(ctx, h)
+	}
 	mux.HandleFunc("POST "+f.cfg.Path, func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
@@ -145,48 +162,63 @@ func (f *Feishu) Start(_ context.Context, mux *http.ServeMux, h channel.InboundH
 		}
 		w.WriteHeader(http.StatusOK) // 先 ACK,防平台重试
 
-		if body.Header.EventType != "im.message.receive_v1" || body.Event.Message.MessageType != "text" {
+		if body.Header.EventType != "im.message.receive_v1" {
 			return
 		}
-		if !f.triggered(body) {
-			return
-		}
-		var content struct {
-			Text string `json:"text"`
-		}
-		_ = json.Unmarshal([]byte(body.Event.Message.Content), &content)
-		text := cleanMentions(content.Text)
-		if text == "" {
-			return
-		}
-		conv := channel.ConvRef{
-			Channel: f.name,
-			Chat:    body.Event.Message.ChatID,
-			User:    body.Event.Sender.SenderID.OpenID,
-		}
-		if body.Event.Message.ThreadID != "" { // 话题消息:回复回话题,会话按话题细分
-			conv.Thread = body.Event.Message.ThreadID
-			conv.Anchor = body.Event.Message.MessageID
-		}
-		go h(context.Background(), channel.Inbound{
-			Conv:    conv,
-			Text:    text,
-			EventID: body.Header.EventID,
+		m := body.Event.Message
+		go f.deliver(context.Background(), h, msgEvent{
+			eventID: body.Header.EventID, openID: body.Event.Sender.SenderID.OpenID,
+			msgID: m.MessageID, chatID: m.ChatID, chatType: m.ChatType,
+			threadID: m.ThreadID, msgType: m.MessageType, content: m.Content,
+			mentions: len(m.Mentions),
 		})
 	})
 	return nil
 }
 
-func (f *Feishu) triggered(body *eventBody) bool {
+// msgEvent 是 webhook / long_conn 两种接收模式归一化后的消息事件。
+type msgEvent struct {
+	eventID, openID, msgID, chatID, chatType, threadID, msgType, content string
+	mentions                                                             int
+}
+
+// deliver 是两种接收模式共用的入站路径:触发过滤、@ 清洗、话题路由,
+// 转为 Inbound 交给 dispatcher。被过滤的消息留 debug 日志(静默丢弃
+// 会让"配置了却收不到"无从排查)。
+func (f *Feishu) deliver(ctx context.Context, h channel.InboundHandler, ev msgEvent) {
+	if ev.msgType != "text" || !f.triggered(ev.chatType, ev.mentions) {
+		slog.Debug("feishu inbound dropped", slog.String("channel", f.name),
+			slog.String("msg_type", ev.msgType), slog.String("chat_type", ev.chatType),
+			slog.Int("mentions", ev.mentions))
+		return
+	}
+	var content struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal([]byte(ev.content), &content)
+	text := cleanMentions(content.Text)
+	if text == "" {
+		return
+	}
+	conv := channel.ConvRef{Channel: f.name, Chat: ev.chatID, User: ev.openID}
+	if ev.threadID != "" { // 话题消息:回复回话题,会话按话题细分
+		conv.Thread = ev.threadID
+		conv.Anchor = ev.msgID
+	}
+	h(ctx, channel.Inbound{Conv: conv, Text: text, EventID: ev.eventID})
+}
+
+// triggered 判定是否响应:p2p 之外(group/topic_group)都按群触发策略。
+func (f *Feishu) triggered(chatType string, mentions int) bool {
 	mode := f.cfg.TriggerP2P
-	if body.Event.Message.ChatType == "group" {
+	if chatType != "p2p" {
 		mode = f.cfg.TriggerGroup
 	}
 	switch mode {
 	case "all":
 		return true
 	case "mention":
-		return body.Event.Message.ChatType == "p2p" || len(body.Event.Message.Mentions) > 0
+		return chatType == "p2p" || mentions > 0
 	default:
 		return false
 	}
