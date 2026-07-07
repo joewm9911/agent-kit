@@ -297,17 +297,24 @@ func (f *Feishu) Send(ctx context.Context, conv channel.ConvRef, msg channel.Out
 	return resp.Data.MessageID, err
 }
 
-// Update 更新交互卡片内容(伪流式的刷新通道)。
+// Update 更新交互卡片内容(伪流式的刷新通道)。Native 同样透传。
 func (f *Feishu) Update(ctx context.Context, _ channel.ConvRef, msgID string, msg channel.Outbound) error {
-	if !msg.Markdown {
+	if !msg.Markdown && msg.Native == nil {
 		return channel.ErrUpdateUnsupported // 纯文本消息不可更新
 	}
-	_, content := encode(channel.Outbound{Text: msg.Text, Markdown: true})
+	msg.Markdown = true
+	_, content := encode(msg)
 	return f.call(ctx, http.MethodPatch, "/open-apis/im/v1/messages/"+msgID,
 		map[string]string{"content": content}, nil)
 }
 
 func encode(msg channel.Outbound) (msgType, content string) {
+	// Native 透传:装饰器构造的完整卡片 JSON,原样发送(样式 100% 由
+	// 构造方负责,含 update_multi 等可更新配置)。
+	if msg.Native != nil {
+		b, _ := json.Marshal(msg.Native)
+		return "interactive", string(b)
+	}
 	if !msg.Markdown {
 		b, _ := json.Marshal(map[string]string{"text": msg.Text})
 		return "text", string(b)

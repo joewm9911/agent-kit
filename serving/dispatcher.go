@@ -12,6 +12,7 @@ import (
 	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/store"
+	"github.com/joewm9911/agent-kit/runtime/observe"
 	"github.com/joewm9911/agent-kit/runtime/suspend"
 )
 
@@ -21,12 +22,19 @@ type Binding struct {
 	Agent   Runnable
 	// SessionMapping:chat(群共享会话)| chat_user(群内每人独立会话)。
 	SessionMapping string
-	// ReplyMode:text(整段回复)| card(先回"处理中"卡片,完成后原地
-	// 更新为答案)| stream(先发占位,流式刷新)。card/stream 需通道支持
-	// Update,不支持自动退化为整段。
+	// ReplyMode 是**无装饰器时的内置默认策略**:text(整段回复,跳过
+	// processing)| card(占位卡+原地更新)| stream(占位+流式刷新)。
+	// 装了 Decorator 后生命周期全模式统一驱动,发不发由装饰器 Skip 定。
+	// card/stream 需通道支持 Update,不支持自动退化为整段。
 	ReplyMode string
 	// AskTimeout 是 ask_user / 审批等待用户回复的超时,默认 10 分钟。
 	AskTimeout time.Duration
+	// Placeholder 是 processing 占位文案,空 = 「⏳ 处理中...」。
+	Placeholder string
+	// Decorator 装饰每条出站消息(nil = 不装饰,按 ReplyMode 默认策略)。
+	Decorator Decorator
+	// OnProgress 是第三方进度订阅(装了它,内置的卡片过程更新让位)。
+	OnProgress ProgressHandler
 }
 
 // Dispatcher 承接所有 Binding 的消息分发:
@@ -55,8 +63,9 @@ type job struct {
 	turnID string // 挂起模式的轮次标识;恢复的轮次沿用首跑的 ID
 }
 
-// NewDispatcher 创建分发器。
+// NewDispatcher 创建分发器,并确保进度事件发射切面已挂载(幂等)。
 func NewDispatcher(logger *slog.Logger) *Dispatcher {
+	observe.EnsureProgressEvents()
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -119,13 +128,13 @@ func (d *Dispatcher) Handler(b Binding) channel.InboundHandler {
 			if isInterruptText(in.Text) {
 				d.mu.Unlock()
 				b.Agent.Interrupt(key)
-				_, _ = b.Channel.Send(ctx, in.Conv, channel.Outbound{Text: "好的,正在停止当前任务。"})
+				_, _ = d.send(ctx, b, in.Conv, channel.Outbound{Text: "好的,正在停止当前任务。"})
 				return
 			}
 			if steer, ok := steerText(in.Text); ok {
 				d.mu.Unlock()
 				b.Agent.Steer(key, steer)
-				_, _ = b.Channel.Send(ctx, in.Conv, channel.Outbound{Text: "已把你的话带给正在运行的任务。"})
+				_, _ = d.send(ctx, b, in.Conv, channel.Outbound{Text: "已把你的话带给正在运行的任务。"})
 				return
 			}
 		}
@@ -177,6 +186,7 @@ func (d *Dispatcher) run(key string, j job) {
 
 	// 挂起模式:可挂起的交互通道 + 效果/交互日志随 ctx 下发。
 	// 非挂起模式:进程内阻塞等待的 HITL 桥接(原行为)。
+	// 问句(ask_user/审批)统一带 question 语义过装饰器。
 	var journal *suspend.Journal
 	if d.suspendKV != nil {
 		turnID := j.turnID
@@ -187,27 +197,37 @@ func (d *Dispatcher) run(key string, j job) {
 		ctx = suspend.WithJournal(ctx, journal)
 		conv := j.in.Conv
 		ctx = runctx.WithInteractor(ctx, suspend.Interactor(journal, func(ctx context.Context, q string) error {
-			_, err := j.b.Channel.Send(ctx, conv, channel.Outbound{Text: q})
+			_, err := d.send(ctx, j.b, conv, channel.Outbound{Kind: channel.KindQuestion, Text: q})
 			return err
 		}))
 	} else {
 		ctx = runctx.WithInteractor(ctx, &imInteractor{d: d, b: j.b, conv: j.in.Conv, key: key})
 	}
 
-	// 挂起模式与流式回复不兼容(挂起需要整轮退栈),退化整段。
-	if j.b.ReplyMode == "stream" && d.suspendKV == nil {
+	// 无装饰器 + stream 模式(且非挂起):沿用流式刷新路径(内置默认策略)。
+	if j.b.Decorator == nil && j.b.ReplyMode == "stream" && d.suspendKV == nil {
 		if err := d.streamReply(ctx, j); err == nil {
 			return
 		}
 		// 流式失败(如通道不支持 Update)退化为整段回复。
 	}
 
-	// card 模式:先回"处理中"占位卡片,完成后原地更新为最终答案——
-	// 长处理(技能子循环)期间用户有即时反馈;中途的 ask_user/审批
-	// 问句仍是独立消息。占位发送失败不阻断处理,退化为整段回复。
-	var placeholder string
-	if j.b.ReplyMode == "card" {
-		placeholder, _ = j.b.Channel.Send(ctx, j.in.Conv, channel.Outbound{Text: "⏳ 处理中...", Markdown: true})
+	// 生命周期(全模式统一):processing 首发 → 过程更新 → 收口。
+	// 每一步过装饰器,发不发由装饰器 Skip 定;无装饰器按 ReplyMode
+	// 内置默认策略(text 跳过 processing,card 占位+原地更新)。
+	lc := newLifecycle(d, j.b, j.in.Conv)
+	lc.openProcessing(ctx)
+
+	// 进度订阅:第三方 OnProgress 优先(内置让位);否则装饰器/占位卡
+	// 在场时装内置订阅者(过程行节流刷新 + answer 带全量过程)。
+	// 发射与 reply_mode 无关——事件总是产生,有订阅才投递。
+	if j.b.OnProgress != nil {
+		conv := j.in.Conv
+		ctx = runctx.WithProgress(ctx, func(c context.Context, ev runctx.ProgressEvent) {
+			j.b.OnProgress(c, conv, ev)
+		})
+	} else if lc.trackProgress() {
+		ctx = runctx.WithProgress(ctx, lc.onEvent)
 	}
 
 	answer, err := j.b.Agent.Run(ctx, key, j.in.Text)
@@ -221,25 +241,18 @@ func (d *Dispatcher) run(key string, j job) {
 			if saveErr != nil {
 				d.logger.Error("save pending turn failed", slog.String("session", key), slog.String("err", saveErr.Error()))
 			}
-			if placeholder != "" { // 占位卡片收口为等待态,不留悬挂的"处理中"
-				_ = j.b.Channel.Update(ctx, j.in.Conv, placeholder, channel.Outbound{Text: "⏸ 已向你提问,回复后继续。", Markdown: true})
-			}
+			// 占位收口为等待态,不留悬挂的"处理中"(无占位则问句已独立送达)。
+			lc.close(ctx, channel.KindQuestion, "⏸ 已向你提问,回复后继续。")
 			return
 		}
 		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", err.Error()))
-		answer = "处理失败:" + err.Error()
-	} else if journal != nil {
+		lc.close(ctx, channel.KindError, "处理失败:"+err.Error())
+		return
+	}
+	if journal != nil {
 		journal.CompleteTurn(ctx) // 一轮善终,清理该轮日志
 	}
-	if placeholder != "" {
-		if err := j.b.Channel.Update(ctx, j.in.Conv, placeholder, channel.Outbound{Text: answer, Markdown: true}); err == nil {
-			return
-		}
-		// 更新失败(通道不支持等):退化为整段回复,占位卡片保持原样。
-	}
-	if _, err := j.b.Channel.Send(ctx, j.in.Conv, channel.Outbound{Text: answer, Markdown: true}); err != nil {
-		d.logger.Error("send reply failed", slog.String("session", key), slog.String("err", err.Error()))
-	}
+	lc.close(ctx, channel.KindAnswer, answer)
 }
 
 // streamReply 先发占位消息,拿流式增量按节流间隔刷新同一条消息。
@@ -362,7 +375,7 @@ func (i *imInteractor) await(ctx context.Context, question string) (string, erro
 		i.d.mu.Unlock()
 	}()
 
-	if _, err := i.b.Channel.Send(ctx, i.conv, channel.Outbound{Text: question}); err != nil {
+	if _, err := i.d.send(ctx, i.b, i.conv, channel.Outbound{Kind: channel.KindQuestion, Text: question}); err != nil {
 		return "", err
 	}
 	select {

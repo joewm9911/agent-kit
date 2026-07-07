@@ -218,12 +218,18 @@ type AgentConfig struct {
 
 // ChannelConfig 声明一个 IM 通道绑定。
 type ChannelConfig struct {
-	Name           string         `yaml:"name"`
-	Type           string         `yaml:"type"`
-	Agent          string         `yaml:"agent"`
-	SessionMapping string         `yaml:"session_mapping"` // chat | chat_user
-	ReplyMode      string         `yaml:"reply_mode"`      // text | card | stream
-	Config         map[string]any `yaml:"config"`
+	Name           string `yaml:"name"`
+	Type           string `yaml:"type"`
+	Agent          string `yaml:"agent"`
+	SessionMapping string `yaml:"session_mapping"` // chat | chat_user
+	ReplyMode      string `yaml:"reply_mode"`      // text | card | stream(无装饰器时的默认策略)
+	// Placeholder 是 processing 占位文案(空 = 内置「⏳ 处理中...」)。
+	Placeholder string `yaml:"placeholder"`
+	// Decorator/OnProgress 按名引用代码注册的扩展(serving.RegisterDecorator /
+	// RegisterProgressHandler),装配期查名 fail fast。
+	Decorator  string         `yaml:"decorator"`
+	OnProgress string         `yaml:"on_progress"`
+	Config     map[string]any `yaml:"config"`
 }
 
 // SecretsConfig 声明凭证 provider。

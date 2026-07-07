@@ -303,10 +303,27 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 			if !ok {
 				return nil, fmt.Errorf("channel %s: unknown agent %q", cc.Name, cc.Agent)
 			}
-			err = app.Server.AttachChannel(ctx, ch, dispatcher, serving.Binding{
+			binding := serving.Binding{
 				Channel: ch, Agent: target,
 				SessionMapping: cc.SessionMapping, ReplyMode: cc.ReplyMode,
-			})
+				Placeholder: cc.Placeholder,
+			}
+			// 按名解析装饰器/进度订阅(代码注册、配置启用,查无 fail fast)。
+			if cc.Decorator != "" {
+				dec, err := serving.LookupDecorator(cc.Decorator)
+				if err != nil {
+					return nil, fmt.Errorf("channel %s: %w", cc.Name, err)
+				}
+				binding.Decorator = dec
+			}
+			if cc.OnProgress != "" {
+				ph, err := serving.LookupProgressHandler(cc.OnProgress)
+				if err != nil {
+					return nil, fmt.Errorf("channel %s: %w", cc.Name, err)
+				}
+				binding.OnProgress = ph
+			}
+			err = app.Server.AttachChannel(ctx, ch, dispatcher, binding)
 			if err != nil {
 				return nil, fmt.Errorf("channel %s: %w", cc.Name, err)
 			}

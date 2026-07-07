@@ -21,8 +21,18 @@ import (
 type fakeChannel struct {
 	mu        sync.Mutex
 	sent      []string
-	updated   []string // "<msgID>:<text>"
+	outs      []channel.Outbound // 完整出站记录(Native 等断言用)
+	updated   []string           // "<msgID>:<text>"
 	canUpdate bool
+}
+
+func (f *fakeChannel) lastOutbound() channel.Outbound {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.outs) == 0 {
+		return channel.Outbound{}
+	}
+	return f.outs[len(f.outs)-1]
 }
 
 func (f *fakeChannel) Name() string { return "fake" }
@@ -33,6 +43,7 @@ func (f *fakeChannel) Send(_ context.Context, _ channel.ConvRef, msg channel.Out
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, msg.Text)
+	f.outs = append(f.outs, msg)
 	return fmt.Sprintf("mid-%d", len(f.sent)), nil
 }
 func (f *fakeChannel) Update(_ context.Context, _ channel.ConvRef, msgID string, msg channel.Outbound) error {
@@ -197,5 +208,156 @@ func TestCardReplyMode(t *testing.T) {
 	waitFor(t, func() bool { return len(fc2.messages()) >= 2 })
 	if msgs := fc2.messages(); msgs[len(msgs)-1] != "最终答案" {
 		t.Fatalf("fallback full reply expected, got %v", msgs)
+	}
+}
+
+// progressRunner:运行中发射进度事件,再回答(测内置订阅者/OnProgress)。
+type progressRunner struct{}
+
+func (progressRunner) Generate(ctx context.Context, _ []*schema.Message) (*schema.Message, error) {
+	runctx.EmitProgress(ctx, runctx.ProgressEvent{Kind: "tool", Name: "查库存", Status: "start"})
+	runctx.EmitProgress(ctx, runctx.ProgressEvent{Kind: "tool", Name: "查库存", Status: "done", Dur: 1200 * time.Millisecond})
+	runctx.EmitProgress(ctx, runctx.ProgressEvent{Kind: "model", Name: "模型", Status: "done"})
+	time.Sleep(50 * time.Millisecond) // 让异步投递跑完
+	return schema.AssistantMessage("最终答案", nil), nil
+}
+func (r progressRunner) Stream(ctx context.Context, msgs []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	out, err := r.Generate(ctx, msgs)
+	if err != nil {
+		return nil, err
+	}
+	sr, sw := schema.Pipe[*schema.Message](1)
+	sw.Send(out, nil)
+	sw.Close()
+	return sr, nil
+}
+
+// TestDecoratorLifecycle:装饰器看到全生命周期(processing→answer),
+// Skip 否决占位后终稿自动走 Send;answer 带过程行与 Meta;Native 透传。
+func TestDecoratorLifecycle(t *testing.T) {
+	fc := &fakeChannel{canUpdate: true}
+	ag := agent.New("a", "", progressRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+
+	var mu sync.Mutex
+	var kinds []string
+	var answerOut channel.Outbound
+	dec := func(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel.Outbound {
+		mu.Lock()
+		kinds = append(kinds, out.Kind)
+		mu.Unlock()
+		switch out.Kind {
+		case channel.KindProcessing:
+			out.Skip = true // 不要占位卡
+		case channel.KindAnswer:
+			mu.Lock()
+			answerOut = out
+			mu.Unlock()
+			out.Native = map[string]any{"elements": []any{out.Text}} // 整卡自定义
+		}
+		return out
+	}
+	// text 模式 + 装饰器:生命周期照样统一驱动(processing 也送到装饰器)
+	h := d.Handler(Binding{Channel: fc, Agent: ag, ReplyMode: "text", Decorator: dec})
+	h(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c1"}, Text: "q", EventID: "dl1"})
+
+	waitFor(t, func() bool { return len(fc.messages()) >= 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	if kinds[0] != channel.KindProcessing {
+		t.Fatalf("decorator should see processing first, got %v", kinds)
+	}
+	if len(fc.updates()) != 0 {
+		t.Fatalf("skipped placeholder must not be updated: %v", fc.updates())
+	}
+	// answer 带过程行与 Meta
+	if len(answerOut.Progress) == 0 || !strings.Contains(answerOut.Progress[0], "查库存") {
+		t.Fatalf("answer progress lines missing: %+v", answerOut.Progress)
+	}
+	if !strings.Contains(answerOut.Meta, "1 次工具调用") {
+		t.Fatalf("answer meta missing: %q", answerOut.Meta)
+	}
+	// Native 透传到通道
+	if last := fc.lastOutbound(); last.Native == nil {
+		t.Fatalf("native payload not passed through: %+v", last)
+	}
+}
+
+// TestDecoratorPanicFallback:装饰器 panic 时用未装饰原文发送,消息不丢。
+func TestDecoratorPanicFallback(t *testing.T) {
+	fc := &fakeChannel{}
+	ag := agent.New("a", "", echoRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+	dec := func(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel.Outbound {
+		if out.Kind == channel.KindAnswer {
+			panic("decorator bug")
+		}
+		out.Skip = true
+		return out
+	}
+	h := d.Handler(Binding{Channel: fc, Agent: ag, Decorator: dec})
+	h(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c2"}, Text: "q", EventID: "dp1"})
+
+	waitFor(t, func() bool { return len(fc.messages()) >= 1 })
+	if msgs := fc.messages(); msgs[len(msgs)-1] != "最终答案" {
+		t.Fatalf("panic fallback must send undecorated answer, got %v", msgs)
+	}
+}
+
+// TestOnProgressTakesOver:第三方进度订阅收到原始事件,内置订阅者让位
+// (占位卡不做过程更新)。
+func TestOnProgressTakesOver(t *testing.T) {
+	fc := &fakeChannel{canUpdate: true}
+	ag := agent.New("a", "", progressRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+	var mu sync.Mutex
+	var events []runctx.ProgressEvent
+	h := d.Handler(Binding{Channel: fc, Agent: ag, ReplyMode: "card",
+		OnProgress: func(_ context.Context, _ channel.ConvRef, ev runctx.ProgressEvent) {
+			mu.Lock()
+			events = append(events, ev)
+			mu.Unlock()
+		}})
+	h(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c3"}, Text: "q", EventID: "op1"})
+
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(events) >= 3 })
+	mu.Lock()
+	if events[0].Kind != "tool" || events[0].Status != "start" {
+		t.Fatalf("raw events expected, got %+v", events[0])
+	}
+	mu.Unlock()
+	// 收口 answer 仍照常(占位卡被更新为终稿)
+	waitFor(t, func() bool { return len(fc.updates()) >= 1 })
+	if ups := fc.updates(); !strings.Contains(ups[len(ups)-1], "最终答案") {
+		t.Fatalf("final update expected, got %v", ups)
+	}
+}
+
+// TestQuestionDecorated:ask_user 问句带 question 语义过装饰器。
+func TestQuestionDecorated(t *testing.T) {
+	fc := &fakeChannel{}
+	ag := agent.New("a", "", askRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	dec := func(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel.Outbound {
+		mu.Lock()
+		seen[out.Kind] = true
+		mu.Unlock()
+		if out.Kind == channel.KindProcessing {
+			out.Skip = true
+		}
+		return out
+	}
+	conv := channel.ConvRef{Channel: "fake", Chat: "c4", User: "u1"}
+	h := d.Handler(Binding{Channel: fc, Agent: ag, Decorator: dec})
+	h(context.Background(), channel.Inbound{Conv: conv, Text: "查天气", EventID: "qd1"})
+	waitFor(t, func() bool { return len(fc.messages()) >= 1 })
+	h(context.Background(), channel.Inbound{Conv: conv, Text: "北京", EventID: "qd2"})
+	waitFor(t, func() bool { return len(fc.messages()) >= 2 })
+	mu.Lock()
+	defer mu.Unlock()
+	if !seen[channel.KindQuestion] || !seen[channel.KindAnswer] {
+		t.Fatalf("decorator should see question+answer, got %v", seen)
 	}
 }

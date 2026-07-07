@@ -32,10 +32,33 @@ type Inbound struct {
 	EventID string // 平台事件 ID,幂等去重用
 }
 
-// Outbound 是要发出的一条消息。
+// 生命周期语义(Outbound.Kind):dispatcher 按此驱动,装饰器按此分支。
+// 各 Kind 的字段填充规范见 docs/channel-card-design.md §3.1。
+const (
+	KindProcessing = "processing" // 占位/过程更新(该消息还会被更新)
+	KindAnswer     = "answer"     // 终稿
+	KindQuestion   = "question"   // ask_user/审批问句,或挂起收口
+	KindError      = "error"      // 轮次失败
+)
+
+// Outbound 是要发出的一条消息:语义事实由框架填充,呈现由装饰器决定
+// (不装装饰器时适配器按默认方式渲染)。零值 = 普通文本消息。
 type Outbound struct {
 	Text     string
 	Markdown bool // 富文本(卡片)渲染
+
+	// Kind 是生命周期语义(见上方常量);空 = 杂项通知/存量路径。
+	Kind string
+	// Progress 是过程行事实(框架按固定格式填充,如「✓ x (7.8s)」),
+	// 全量快照、只增不减;展示与否是装饰器的事,不支持富呈现的通道忽略。
+	Progress []string
+	// Meta 是元信息事实(耗时/调用数),通道可渲染为脚注或忽略。
+	Meta string
+	// Native 是通道原生载荷:非 nil 时适配器原样透传(飞书 = 完整卡片
+	// JSON),其余字段不再参与渲染。框架永远不填,装饰器专属输出位。
+	Native map[string]any
+	// Skip 由装饰器置位:true = 本步不发送(dispatcher 消费,不达适配器)。
+	Skip bool
 }
 
 // InboundHandler 由 Dispatcher 提供,Channel 收到消息后调用。

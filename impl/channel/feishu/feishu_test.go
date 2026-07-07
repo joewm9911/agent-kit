@@ -151,3 +151,39 @@ func TestWebhookParsesThread(t *testing.T) {
 		t.Fatalf("plain conv should have no thread: %+v", plain.Conv)
 	}
 }
+
+// TestNativePassthrough:Outbound.Native 原样透传(Send 与 Update 均是),
+// 不经 encode 的默认卡片包装。
+func TestNativePassthrough(t *testing.T) {
+	f, api := newTestFeishu(t)
+	ctx := context.Background()
+	conv := channel.ConvRef{Channel: "f1", Chat: "oc_1"}
+	native := map[string]any{
+		"config":   map[string]any{"update_multi": true},
+		"header":   map[string]any{"template": "blue"},
+		"elements": []any{map[string]any{"tag": "markdown", "content": "自定义"}},
+	}
+
+	if _, err := f.Send(ctx, conv, channel.Outbound{Native: native}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := api.last(t)
+	var card map[string]any
+	if err := json.Unmarshal([]byte(body["content"].(string)), &card); err != nil {
+		t.Fatal(err)
+	}
+	if body["msg_type"] != "interactive" || card["header"].(map[string]any)["template"] != "blue" {
+		t.Fatalf("native not passed through: %+v", body)
+	}
+
+	if err := f.Update(ctx, conv, "om_1", channel.Outbound{Native: native}); err != nil {
+		t.Fatal(err)
+	}
+	path, ubody := api.last(t)
+	if path != "/open-apis/im/v1/messages/om_1" {
+		t.Fatalf("update path = %q", path)
+	}
+	if err := json.Unmarshal([]byte(ubody["content"].(string)), &card); err != nil || card["header"] == nil {
+		t.Fatalf("native update not passed through: %v %+v", err, ubody)
+	}
+}
