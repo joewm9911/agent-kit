@@ -1,20 +1,20 @@
-# IM 通道扩展方案 v2:执行进度流 + 出站装饰链
+# IM 通道扩展方案 v3:执行进度流 + 单一装饰点
 
-> 状态:设计稿 v2(2026-07)。v1(模板渲染为中心)已被本版收编:模板
-> 渲染降格为"内置装饰器之一"。v2 的立场:**框架给机制(事件流 + 装饰
-> 链),呈现策略交给第三方**——TiDA Lens 式富卡片只是这套机制上的一个
-> 默认实现。
+> 状态:设计稿 v3(2026-07)。演进:v1 模板渲染为中心 → v2 两级装饰链
+> → v3 收敛为**单一装饰点,框架不做任何通道样式定制**。立场:**框架给
+> 机制与事实(事件流 + 装饰点 + 语义字段),呈现策略 100% 归第三方**。
 
 ## 0. 两个诉求与设计立场
 
 1. **底层支持 processing 过程流,第三方可订阅**,如何呈现(更新卡片/
    发进度条/写日志/推别处)由订阅方决定;
-2. **飞书发消息前支持对内容做装饰**——原始内容出站前可被第三方改写/
-   包装(加标题头/折叠面板/品牌尾注/表格降级)。
+2. **出站消息发送前支持第三方装饰**——从改文案到整卡结构,一个装饰点
+   全覆盖;框架自身不针对飞书定制 header/模板/表格,这些全是第三方
+   装饰器的事。
 
 立场:两者都是**机制 vs 策略**的切分。框架保证事件如实产生、装饰点
-如实存在(Ring 0,代码保证);产生什么样的用户体验是策略,归第三方
-(或内置默认策略)。
+如实存在、语义事实如实填充(Ring 0,代码保证);产生什么样的用户体验
+是策略,归第三方。
 
 ## 1. 总体架构
 
@@ -29,15 +29,15 @@
                     │                        │
                     │        ┌───────────────┼────────────────┐
                     │   内置订阅者        第三方订阅者      (登记:SSE 透出)
-                    │  (卡片过程更新)  (Binding.OnProgress)
+                    │ (Progress 填进更新) (Binding.OnProgress)
                     │
-                    └─▶ 终稿 Outbound ─▶ 语义装饰链(通道无关)
-                                              │
-                                        channel.Send/Update
-                                              │
-                                  feishu encode() ─▶ 载荷装饰链(卡片 JSON)
-                                              │
-                                          飞书 OpenAPI
+                    └─▶ Outbound{Kind, Text, Progress, Meta}
+                                    │
+                          装饰点 Binding.Decorator(第三方,可选)
+                            ├─ 改语义字段 → 适配器默认渲染(最简卡片)
+                            └─ 构造 Native → 适配器原样透传(整卡自定义)
+                                    │
+                              channel.Send/Update ─▶ 飞书 OpenAPI
 ```
 
 ## 2. 执行进度流
@@ -113,13 +113,13 @@ ctx 取 sink 发射。v1 只发射 tool/skill/model 三档(与现有进度行同
 
 ### 2.5 接线方式:函数值 vs 按名注册
 
-OnProgress/Decorators 是 Go 函数,YAML 表达不了。两条接线路径:
+OnProgress/Decorator 是 Go 函数,YAML 表达不了。两条接线路径:
 
 **嵌入方**(自己写 main 直接装配)——直接塞函数值:
 
 ```go
 serving.Binding{Channel: ch, Agent: ag, ReplyMode: "card",
-    OnProgress: myHandler, Decorators: []serving.Decorator{myFooter}}
+    OnProgress: myHandler, Decorator: myCard}
 ```
 
 **配置方**(经 config.Build 从 YAML 装配)——按名注册表(init 自注册、
@@ -129,11 +129,7 @@ serving.Binding{Channel: ch, Agent: ag, ReplyMode: "card",
 func init() {
     serving.RegisterProgressHandler("card-steps", func(ctx context.Context,
         conv channel.ConvRef, ev runctx.ProgressEvent) { /* 自行呈现 */ })
-    serving.RegisterDecorator("brand-footer", func(ctx context.Context,
-        out channel.Outbound) channel.Outbound {
-        if out.Kind == "answer" { out.Text += "\n---\n_由 XX 助手生成_" }
-        return out
-    })
+    serving.RegisterDecorator("my-card", myCardDecorator) // 见 §3 示例
 }
 ```
 
@@ -143,123 +139,119 @@ channels:
     type: feishu
     agent: ops-manager
     reply_mode: card
-    on_progress: card-steps        # 绑定级:进度订阅(装了它内置订阅者让位)
-    decorators: [brand-footer]     # 绑定级:语义装饰链,顺序即应用序
+    on_progress: card-steps        # 进度订阅(装了它内置订阅者让位)
+    decorator: my-card             # 出站装饰(单一装饰点,见 §3)
     config:
-      card_decorators: [table-fallback, brand-header]   # 通道级:卡片 JSON 装饰链
+      app_id: "${FEISHU_APP_ID}"
+      app_secret: "${FEISHU_APP_SECRET}"
 ```
 
-三个位置的分工:`on_progress` 管"过程给谁看"(订阅流);`decorators`
-管"说什么"(文本语义,跨通道通用);`card_decorators` 管"飞书卡片长
-什么样"(载荷结构)。
+两个位置的分工:`on_progress` 管"过程给谁看"(订阅流);`decorator`
+管"每条出站消息长什么样"(从文案到整卡结构,全部在这一个点)。
 
-## 3. 出站装饰链
+## 3. 出站装饰:单一装饰点
 
-### 3.1 两级装饰:语义级(通道无关)与载荷级(通道专属)
-
-**语义装饰**——改的是 `channel.Outbound`(文本/语义字段),不知道飞书:
+**不区分语义装饰与通道装饰,框架不做任何飞书样式定制**(不加 header、
+不做模板、不做表格降级)——呈现完全交给第三方。只有一个装饰点:
 
 ```go
+// serving.Decorator 应用于每条出站消息(占位卡/终稿/问句/错误),
+// 在 channel.Send/Update 之前调用。装饰器读语义事实(Kind/Text/
+// Progress/Meta),两种产出:
+//   - 改写语义字段(Text 等):适配器按默认方式渲染(飞书 = 最简卡片);
+//   - 构造 Native:适配器原样透传(飞书 = 完整卡片 JSON),header/
+//     折叠面板/按钮/表格组件想加什么加什么,样式 100% 第三方所有。
+type Decorator func(ctx context.Context, conv channel.ConvRef, out channel.Outbound) channel.Outbound
+
 // serving.Binding 增加:
-// Decorators 依次应用于每条出站消息(含占位卡/终稿/问句),返回改写
-// 后的消息。典型:追加品牌尾注、注入元信息、敏感词过滤。
-Decorators []func(ctx context.Context, out channel.Outbound) channel.Outbound
+Decorator Decorator // nil = 不装饰,现行为
+
+// 按名注册(配置方接线用;嵌入方直接塞函数值):
+func RegisterDecorator(name string, d Decorator)
 ```
 
-**载荷装饰**——改的是飞书卡片 JSON(encode 之后、POST 之前),第三方
-拿到完整卡片结构,可以加 header/折叠面板/note/按钮/任意组件:
-
-```go
-// impl/channel/feishu:
-// CardDecorator 在卡片 JSON 构建后、发送前依次应用。card 是可变的
-// 飞书卡片结构(elements/header/config...);返回 nil 表示放弃装饰。
-type CardDecorator func(ctx context.Context, conv channel.ConvRef, card map[string]any) map[string]any
-
-// 注册表模式(init 自注册、运行期只读,与 model/source 同源):
-func RegisterCardDecorator(name string, d CardDecorator)
-```
-
-```yaml
-channels:
-  - name: ops-feishu
-    type: feishu
-    config:
-      card_decorators: [table-fallback, brand-header]  # 按名引用,顺序即应用序
-```
-
-第三方 Go 侧 `init()` 里 `feishu.RegisterCardDecorator("brand-header", fn)`,
-YAML 按名挂载——代码提供能力、配置决定启用,装配期查名 fail fast。
-
-### 3.2 内置装饰器(默认策略,全部可卸载)
-
-| 名 | 级 | 行为 |
-|---|---|---|
-| `table-fallback` | 载荷 | markdown 表格 → 分组列表(飞书 markdown 组件不渲染表格,真机已证;客户端统一的企业可换 `table-component` 变体) |
-| `cards-template` | 载荷 | v1 的模板渲染:按 Outbound.Kind 加 header(标题/主题色)、把 Progress 渲染成折叠面板、Meta 渲染成 note;样式细节读 `config.cards:` 块 |
-| (占位文案) | 语义 | `channels[].placeholder` 配置「处理中」文案(dispatcher 级,通道无关) |
-
-默认挂载 `[table-fallback, cards-template]`——开箱即是"标题头 + 执行
-过程面板 + 正文 + note"的完整形态;第三方置换 `card_decorators` 列表
-即完全接管。
-
-### 3.3 Outbound 语义字段(装饰器的输入面)
-
-沿用 v1 的语义化扩展,作为装饰器能读到的事实:
+适配器侧唯一的配合:`Outbound.Native` 非 nil 时原样透传,不再 encode:
 
 ```go
 type Outbound struct {
     Text     string
     Markdown bool
-    Kind     string            // processing | answer | question | error(生命周期语义)
-    Progress []string          // 过程行(内置订阅者/终稿收口时填充)
-    Meta     string            // 元信息(耗时/调用数)
-    Native   map[string]any    // 逃生舱:整卡透传,跳过 encode 与全部载荷装饰
+    Kind     string         // processing | answer | question | error(生命周期语义)
+    Progress []string       // 过程行事实(框架填充,展示与否装饰器决定)
+    Meta     string         // 元信息事实(耗时/调用数)
+    Native   map[string]any // 非 nil = 通道原生载荷,适配器原样透传
 }
 ```
 
-零值 = 现行为;`Native` 与装饰链互斥(透传即第三方全责)。
+装饰器示例(第三方实现 TiDA 式卡片,框架零参与):
 
-## 4. 一次消息的完整旅程(card 模式,默认装饰)
+```go
+serving.RegisterDecorator("my-card", func(ctx context.Context,
+    conv channel.ConvRef, out channel.Outbound) channel.Outbound {
+    card := map[string]any{
+        "config": map[string]any{"wide_screen_mode": true, "update_multi": true},
+        "header": map[string]any{ // 处理中灰头、完成蓝头——第三方自己的策略
+            "title":    map[string]any{"tag": "plain_text", "content": "运营助手"},
+            "template": map[string]string{"processing": "grey", "answer": "blue",
+                "question": "orange", "error": "red"}[out.Kind],
+        },
+        "elements": buildElements(out), // 折叠面板(out.Progress)+ 正文 + note(out.Meta)
+    }
+    out.Native = card
+    return out
+})
+```
 
-1. 用户消息进 → dispatcher 发 `Outbound{Kind: processing}` → 语义装饰
-   (占位文案)→ encode → 载荷装饰(cards-template 加灰色 header)→ 占位卡;
-2. agent 执行,observe 切面把每次工具/技能调用发给 sink → 内置订阅者
-   节流合并 → `Update(processing + Progress)` → 卡片"执行过程"生长;
-3. 完成 → `Outbound{Kind: answer, Text, Progress 全量, Meta 耗时}` →
-   装饰(蓝 header + 折叠面板收起 + 表格降级 + note)→ 原地更新为终稿;
-   挂起 → `Kind: question` 收口;失败 → `Kind: error`。
+要点:
+- **框架给事实,第三方给样式**:Kind/Progress/Meta 是框架保证如实填充
+  的语义事实;怎么画(乃至画不画)全在装饰器;
+- **一个函数管所有状态**:占位/终稿/问句/错误都过同一个装饰器,按
+  out.Kind 分支——生命周期呈现策略集中在一处,不散落;
+- **不装 = 现行为**:默认无装饰器,飞书渲染最简 markdown 卡片(现状);
+- 框架可另外**导出工具函数**(如 markdown 表格转列表)供装饰器选用——
+  是库函数不是管道阶段,用不用第三方定。
 
-第三方三个介入深度:换配置(cards:/placeholder)→ 挂自定义装饰器
-(读 Kind/Progress 画自己的卡)→ Binding.OnProgress + Native(连生命
-周期呈现都自己管)。
+## 4. 一次消息的完整旅程(card 模式 + 第三方装饰器)
+
+1. 用户消息进 → dispatcher 构造 `Outbound{Kind: processing}` →
+   装饰器(第三方画占位卡,或不管)→ Send → 占位卡;
+2. agent 执行,observe 切面发事件给 sink → 内置订阅者节流合并 →
+   构造 `Outbound{Kind: processing, Progress: 过程行}` → 装饰器 →
+   Update → 卡片过程生长(装了 on_progress 则这步整体由第三方接管);
+3. 完成 → `Outbound{Kind: answer, Text, Progress 全量, Meta}` →
+   装饰器 → Update 原地收口;挂起 → `Kind: question`;失败 → `Kind: error`。
+
+第三方两个介入深度:装 `decorator`(读事实画卡,生命周期由框架驱动)
+→ 再装 `on_progress`(连过程呈现节奏都自己管)。
 
 ## 5. 兼容与降级
 
-- 不装 sink / 不配装饰器 / 零值 Outbound = 今天的行为,存量零改动;
+- 不装 sink / 不装装饰器 / 零值 Outbound = 今天的行为,存量零改动;
 - text/stream 模式不经过程订阅(text 无卡可更;stream 有自己的刷新);
 - 不支持 Update 的通道:card 退化整段(已实现),过程更新自然失效;
-- 装饰器 panic:recover + 跳过该装饰器 + 记日志,消息必须发出去
-  (装饰失败不能吞消息——诚实优先于好看);
-- 飞书 PATCH 频控:内置订阅者节流 ≥2s 且合并;终稿更新永远兜底。
+- 装饰器 panic:recover + 用未装饰的原始消息发送 + 记日志——装饰失败
+  不能吞消息(诚实优先于好看);
+- 飞书 PATCH 频控:内置订阅者节流 ≥2s 且合并;终稿更新永远兜底;
+- Native 透传即第三方全责(schema 兼容、客户端版本差异)。
 
 ## 6. 落地批次
 
 | 批 | 内容 | 验证 |
 |---|---|---|
 | 1 | runctx 事件/接收器类型 + observe.ProgressEvents 发射 + 单测 | 假 sink 断言事件序列 |
-| 2 | Outbound 语义字段 + feishu 载荷装饰链(注册表 + config 接线)+ table-fallback | 单测 + 真机(表格消息) |
-| 3 | cards-template 内置装饰器(header/panel/note,cards: 配置) | 真机三态卡片 |
-| 4 | dispatcher 内置订阅者(节流更新过程行)+ Binding.OnProgress + placeholder 配置 | 真机长处理看过程生长;第三方订阅示例 |
-| 5 | Native 逃生舱 + 使用文档 | 真机全自定义卡 |
+| 2 | Outbound 语义字段 + Native 透传(feishu)+ Binding.Decorator + 注册表/配置接线 | 单测 + 真机(装饰器画一张带 header 的卡) |
+| 3 | dispatcher 内置订阅者(节流把 Progress 填进 processing 更新)+ Binding.OnProgress + placeholder 配置 | 真机长处理看过程生长;第三方订阅示例 |
+| 4 | 工具函数库(表格转列表等)+ 使用文档 + interactive 示例装饰器 | 真机完整 TiDA 式卡片 |
 
 ## 7. 风险与开放问题
 
 - **队列容量与丢弃率**:默认 64 对 tool/skill 粒度富余(一轮通常
   <30 事件);若未来加模型 token 级事件,粒度换挡时重估容量;
   投递 worker 内 recover,订阅者 panic 记日志不中断投递;
-- **过程行信息密度**:只发 tool/skill/model 三档;卡片侧超 N 行折叠
-  「…前 K 步省略」;
-- **卡片组件客户端版本**:collapsible_panel/note 的最低版本以探针
-  实测为准,cards-template 提供 `rich: false` 一键退化纯 markdown;
-- **装饰链顺序敏感**:按声明序应用并写入文档;table-fallback 应在
-  cards-template 之前(先净化正文再包结构)。
+- **过程行信息密度**:只发 tool/skill/model 三档;行数控制是装饰器
+  的事(框架给全量事实);
+- **卡片组件客户端版本**:Native 里用什么组件第三方自担(table 组件
+  旧客户端显示升级提示,collapsible_panel/note 以探针实测为准);
+- **装饰器与 Update 的一致性**:同一条消息的占位与收口都过装饰器,
+  第三方需保证两次产出的卡片可 PATCH(update_multi 等 config 自己带上,
+  文档写明)。
