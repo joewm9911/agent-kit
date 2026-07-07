@@ -111,6 +111,48 @@ ctx 取 sink 发射。v1 只发射 tool/skill/model 三档(与现有进度行同
 
 登记不做:SSE/webhook 向进程外推流(出现真实诉求再开,事件模型不变)。
 
+### 2.5 接线方式:函数值 vs 按名注册
+
+OnProgress/Decorators 是 Go 函数,YAML 表达不了。两条接线路径:
+
+**嵌入方**(自己写 main 直接装配)——直接塞函数值:
+
+```go
+serving.Binding{Channel: ch, Agent: ag, ReplyMode: "card",
+    OnProgress: myHandler, Decorators: []serving.Decorator{myFooter}}
+```
+
+**配置方**(经 config.Build 从 YAML 装配)——按名注册表(init 自注册、
+运行期只读、装配期查名 fail fast,与 model/source 同一惯例):
+
+```go
+func init() {
+    serving.RegisterProgressHandler("card-steps", func(ctx context.Context,
+        conv channel.ConvRef, ev runctx.ProgressEvent) { /* 自行呈现 */ })
+    serving.RegisterDecorator("brand-footer", func(ctx context.Context,
+        out channel.Outbound) channel.Outbound {
+        if out.Kind == "answer" { out.Text += "\n---\n_由 XX 助手生成_" }
+        return out
+    })
+}
+```
+
+```yaml
+channels:
+  - name: ops-feishu
+    type: feishu
+    agent: ops-manager
+    reply_mode: card
+    on_progress: card-steps        # 绑定级:进度订阅(装了它内置订阅者让位)
+    decorators: [brand-footer]     # 绑定级:语义装饰链,顺序即应用序
+    config:
+      card_decorators: [table-fallback, brand-header]   # 通道级:卡片 JSON 装饰链
+```
+
+三个位置的分工:`on_progress` 管"过程给谁看"(订阅流);`decorators`
+管"说什么"(文本语义,跨通道通用);`card_decorators` 管"飞书卡片长
+什么样"(载荷结构)。
+
 ## 3. 出站装饰链
 
 ### 3.1 两级装饰:语义级(通道无关)与载荷级(通道专属)
