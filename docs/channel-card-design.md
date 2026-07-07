@@ -211,6 +211,26 @@ serving.RegisterDecorator("my-card", func(ctx context.Context,
 - 框架可另外**导出工具函数**(如 markdown 表格转列表)供装饰器选用——
   是库函数不是管道阶段,用不用第三方定。
 
+### 3.1 Kind 语义与字段填充规范(装饰器可依赖的契约)
+
+| Kind | 触发时机 | Text | Progress | Meta |
+|---|---|---|---|---|
+| `processing` | ① card 模式收到消息即发占位;② 过程更新(内置订阅者节流触发) | 占位文案,默认「⏳ 处理中...」(`placeholder:` 可配) | ① 首发空;② 截至当前的**全量快照**(非增量,方便整卡重画) | 空 |
+| `answer` | 轮次正常完成的终稿(所有 reply_mode 都标,不只 card) | agent 最终回答原文 | 本轮全量过程行 | 「耗时 45s · 3 次工具调用」式事实串 |
+| `question` | ① ask_user/审批问句(独立消息);② 挂起时占位卡收口 | ① 问句原文;② 「⏸ 已向你提问,回复后继续。」 | ① 空;② 截至挂起的过程行 | 空 |
+| `error` | 轮次失败 | 「处理失败:<错误摘要>」 | 截至失败的过程行 | 耗时 |
+| `""` 零值 | 杂项通知(中断确认/限流提示)及存量路径 | 通知文案 | 空 | 空 |
+
+Progress 行格式(框架填充的事实行):`<状态符> <名称> (<耗时>)`,如
+`✓ quick-product-qa (7.8s)`、`⚙ get_sales 执行中`、`✗ restock (2.1s) 失败`。
+嫌格式不合意的用 on_progress 订阅原始 ProgressEvent 自己拼。
+
+装饰器可依赖的三条不变式:
+1. **同一 msgID 的装饰输入一致演进**:占位与其收口更新是同一条消息,
+   Kind 只沿 processing → answer|question|error 走,Progress 只增不减;
+2. **Text 永远是可直接发送的完整内容**:不装装饰器它就是用户看到的原文;
+3. **Native 框架永远不填**:它是装饰器专属的输出位。
+
 ## 4. 一次消息的完整旅程(card 模式 + 第三方装饰器)
 
 1. 用户消息进 → dispatcher 构造 `Outbound{Kind: processing}` →
