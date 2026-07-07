@@ -61,7 +61,8 @@ channel 契约会把每个 IM 适配器都耦合上执行语义,还把非 IM 消
 ```go
 // ProgressEvent 是一次执行步骤的进度事实(结构化,非展示文案)。
 type ProgressEvent struct {
-    Seq    int           // 轮内序号(订阅方排序/去重用)
+    Seq    int           // 轮内序号,发射侧单调递增——被丢弃的事件留下
+                         // 可检测的序号缺口,订阅方据此感知有损
     Kind   string        // tool | skill | model
     Name   string        // 能力名/模型名
     Status string        // start | done | error
@@ -69,19 +70,29 @@ type ProgressEvent struct {
     Detail string        // 参数摘要 / 错误摘要(截断,防大 payload)
 }
 
-// ProgressSink 接收进度事件。实现方必须快速返回(慢消费自行异步);
-// 发射侧 recover 保护,订阅者 panic 不得中断执行。
+// ProgressSink 是订阅者回调,由框架的投递 worker 异步调用——
+// 订阅者的耗时/阻塞/panic 都影响不到执行主流程。
 type ProgressSink func(ctx context.Context, ev ProgressEvent)
 
+// WithProgress 安装订阅:内部创建有界队列(默认 64)+ 投递 goroutine
+// (生命周期随 ctx,ctx 结束即退出)。发射侧对队列做非阻塞写,队列满
+// 直接丢弃并计数——主流程在任何情况下都不等待订阅者。
 func WithProgress(ctx context.Context, sink ProgressSink) context.Context
-func Progress(ctx context.Context) ProgressSink // 无则 nil,发射点跳过
+
+// emit 是发射点内部入口:无订阅时零开销(判 nil 即返回)。
 ```
 
 要点:
 - **事件是事实不是文案**:「⚙ 调用 X」还是「Step 2/5」是订阅方的事;
 - **不装 sink 零开销**:发射点判 nil 即返回,现有路径不变;
-- **同步回调 + 快返回契约**:不引入 channel/goroutine 的生命周期问题,
-  节流、缓冲、批量都是订阅方的职责(dispatcher 的内置订阅者自己节流)。
+- **发射侧永不阻塞(结构性保证,非契约)**:异步有界队列 + 非阻塞写。
+  同步回调曾是 v2 初稿方案,被否——"订阅者必须快"是靠文档约束自觉,
+  违反"纪律靠 harness"原则:订阅者里一次 IM 网络调用就拖慢每步工具
+  执行,挂住就 hang 整个主循环。队列/goroutine 的生命周期问题用
+  ctx 绑定解决(轮次结束 worker 退出),不外泄管理负担;
+- **丢弃语义**:进度是有损可接受的提示性信号(UI 刷新),队列满丢新
+  事件 + 计数;Seq 缺口让订阅方可感知丢弃;**终稿收口不走这条流**
+  (dispatcher 的 answer 更新是主路径),丢进度不丢结果。
 
 ### 2.3 发射点(runtime/observe)
 
@@ -201,8 +212,9 @@ type Outbound struct {
 
 ## 7. 风险与开放问题
 
-- **订阅者拖慢执行**:同步回调契约靠文档约束,发射侧 recover +
-  耗时告警(>10ms 记 warn);若实测被滥用,再改异步有界队列(登记);
+- **队列容量与丢弃率**:默认 64 对 tool/skill 粒度富余(一轮通常
+  <30 事件);若未来加模型 token 级事件,粒度换挡时重估容量;
+  投递 worker 内 recover,订阅者 panic 记日志不中断投递;
 - **过程行信息密度**:只发 tool/skill/model 三档;卡片侧超 N 行折叠
   「…前 K 步省略」;
 - **卡片组件客户端版本**:collapsible_panel/note 的最低版本以探针
