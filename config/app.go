@@ -92,7 +92,7 @@ type AgentSpec struct {
 // NamespaceSpec 是解析后的 namespace 文件。
 type NamespaceSpec struct {
 	NamespaceFile
-	Path string // 绝对路径,亦作源连接缓存键
+	Path string // 资源 FS 内路径('/' 分隔),亦作源连接缓存键
 }
 
 // AppSpec 是 LoadApp 的产物:全部文件解析完毕、名字与路径校验通过。
@@ -187,6 +187,25 @@ func LoadAppFS(root fs.FS, entry string) (*AppSpec, error) {
 	return spec, nil
 }
 
+// buildPromptProvider 构造一个 prompt provider。type: file 时锚到资源 FS
+// (与配置同源:prompt 目录相对配置根解析,不依赖进程 CWD);其余类型
+// (inline/http/自定义)走通用注册表。root 为 nil(单文件 Build 无资源 FS)
+// 时 file 回落注册表工厂(os.DirFS,相对 CWD)。
+func buildPromptProvider(ps PromptSourceConfig, root fs.FS) (prompt.Provider, error) {
+	if ps.Type == "file" && root != nil {
+		dir, _ := ps.Config["dir"].(string)
+		if dir == "" {
+			return nil, fmt.Errorf("file prompt source: dir is required")
+		}
+		sub, err := fs.Sub(root, path.Clean(dir))
+		if err != nil {
+			return nil, err
+		}
+		return prompt.NewFileProvider(sub), nil
+	}
+	return prompt.NewProvider(ps.Type, ps.Config)
+}
+
 // applyFileName 落实"文件名即名字":name 为空取文件名,显式声明则必须一致。
 func applyFileName(name *string, fsPath, kind string) error {
 	base := path.Base(fsPath)
@@ -222,7 +241,7 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	if len(ac.Prompts.Sources) > 0 {
 		prompts = prompt.NewResolver(ac.Prompts.DefaultLabel)
 		for _, ps := range ac.Prompts.Sources {
-			p, err := prompt.NewProvider(ps.Type, ps.Config)
+			p, err := buildPromptProvider(ps, spec.Root)
 			if err != nil {
 				return nil, fmt.Errorf("prompt source %s: %w", ps.Name, err)
 			}

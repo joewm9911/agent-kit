@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
+	"path"
 	"sync"
 	"time"
 )
@@ -43,23 +44,32 @@ func (p *inlineProvider) Get(_ context.Context, name, _ string) (*Template, erro
 	return &Template{Name: name, Version: "inline", Text: text}, nil
 }
 
-// ---- file:本地目录/git 仓库,<dir>/<name>.md,和代码一起评审 ----
+// ---- file:<name>.md,和代码一起评审。以 fs.FS 子树承载,与配置同源
+// (本地目录 / 内嵌二进制 / 远程),锚点是资源 FS 而非进程 CWD ----
 
 type fileProvider struct {
-	dir string
+	fsys fs.FS
 }
 
+// NewFileProvider 从一个 fs.FS 子树取 <name>.md。装配层(BuildApp)以资源
+// FS 在 prompt 目录处 fs.Sub 出这个子树,于是 prompt 与配置同源。
+func NewFileProvider(fsys fs.FS) Provider {
+	return &fileProvider{fsys: fsys}
+}
+
+// newFile 是注册表工厂,供单文件 Build(无资源 FS)使用:dir 以 os.DirFS
+// 锚定。多文件 BuildApp 走 NewFileProvider + 资源 FS。
 func newFile(conf map[string]any) (Provider, error) {
 	dir, _ := conf["dir"].(string)
 	if dir == "" {
 		return nil, fmt.Errorf("file prompt provider: dir is required")
 	}
-	return &fileProvider{dir: dir}, nil
+	return &fileProvider{fsys: os.DirFS(dir)}, nil
 }
 
 func (p *fileProvider) Get(_ context.Context, name, _ string) (*Template, error) {
-	path := filepath.Join(p.dir, filepath.Clean(name)+".md")
-	data, err := os.ReadFile(path)
+	// fs.FS 语义拒绝 '..' 逃逸,顺带把读到子树外的路径穿越堵死。
+	data, err := fs.ReadFile(p.fsys, path.Clean(name)+".md")
 	if err != nil {
 		return nil, fmt.Errorf("read prompt file: %w", err)
 	}
