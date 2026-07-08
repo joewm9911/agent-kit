@@ -8,8 +8,6 @@ import (
 	"context"
 	"strings"
 
-	goredis "github.com/redis/go-redis/v9"
-
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
 	"github.com/joewm9911/agent-kit/protocol/memory"
 )
@@ -25,14 +23,14 @@ func init() {
 }
 
 type memStore struct {
-	rdb    goredis.UniversalClient
+	rdb    redisconn.Client
 	prefix string
 }
 
 func (m *memStore) key(scope string) string { return m.prefix + scope }
 
 func (m *memStore) Put(ctx context.Context, scope, key, value string) error {
-	return m.rdb.HSet(ctx, m.key(scope), key, value).Err()
+	return m.rdb.HSet(ctx, m.key(scope), key, value)
 }
 
 // Search 在给定 scopes 内做关键词匹配,命中满 limit 即返回。多个 scope 出现
@@ -41,7 +39,7 @@ func (m *memStore) Search(ctx context.Context, scopes []string, query string, li
 	out := map[string]string{}
 	q := strings.ToLower(query)
 	for _, scope := range scopes {
-		all, err := m.rdb.HGetAll(ctx, m.key(scope)).Result()
+		all, err := m.rdb.HGetAll(ctx, m.key(scope))
 		if err != nil {
 			return nil, err
 		}

@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
+	"github.com/joewm9911/agent-kit/impl/utils/redisconn/redisconntest"
 	"github.com/joewm9911/agent-kit/protocol/memory"
 )
 
@@ -12,14 +15,13 @@ func testConf(t *testing.T) map[string]any {
 	t.Helper()
 	// db 14(与 impl/session/redis 的 db 15 分开):go test 并行跑各包,
 	// 同 db 的 FlushDB 会互相清空。
-	conf := map[string]any{"addr": "127.0.0.1:6379", "db": 14, "prefix": "aktest:"}
-	rdb, _, err := redisconn.Dial(conf)
-	if err != nil {
+	rdb := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:6379", DB: 14})
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		t.Skipf("redis 不可达,跳过: %v", err)
 	}
 	rdb.FlushDB(context.Background())
 	t.Cleanup(func() { rdb.FlushDB(context.Background()); rdb.Close() })
-	return conf
+	return map[string]any{"addr": "127.0.0.1:6379", "db": 14, "prefix": "aktest:"}
 }
 
 // TestRedisMemory 验证 redis 长期记忆:按 scope 分桶写入、关键词检索限于
@@ -63,6 +65,26 @@ func TestRedisMemory(t *testing.T) {
 	capped, _ := kv.Search(ctx, []string{memory.SharedScope}, "流程", 1)
 	if len(capped) != 1 {
 		t.Fatalf("limit=1 应只返回 1 条,得 %d", len(capped))
+	}
+}
+
+// TestMemoryThirdPartyClient:第三方 Client 实现驱动长期记忆后端
+// (scope 分桶/关键词检索),无 redis server。
+func TestMemoryThirdPartyClient(t *testing.T) {
+	redisconn.RegisterClient("corp-mem-fake", redisconntest.New())
+	kv, err := memory.New("redis", map[string]any{"client": "corp-mem-fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	must(t, kv.Put(ctx, memory.UserScope("u1"), "预算", "上限 100 万"))
+	must(t, kv.Put(ctx, memory.UserScope("u2"), "预算", "上限 50 万"))
+	hits, err := kv.Search(ctx, []string{memory.UserScope("u1")}, "预算", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits["预算"] != "上限 100 万" || len(hits) != 1 {
+		t.Fatalf("scope 检索错: %v", hits)
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 
 	"github.com/cloudwego/eino/schema"
-	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
 	"github.com/joewm9911/agent-kit/protocol/session"
@@ -27,7 +26,7 @@ func init() {
 // ---- session 会话历史 ----
 
 type sessStore struct {
-	rdb    goredis.UniversalClient
+	rdb    redisconn.Client
 	prefix string
 	window int
 }
@@ -38,7 +37,7 @@ func (s *sessStore) Append(ctx context.Context, sessionID string, msgs ...*schem
 	if len(msgs) == 0 {
 		return nil
 	}
-	vals := make([]any, 0, len(msgs))
+	vals := make([][]byte, 0, len(msgs))
 	for _, m := range msgs {
 		b, err := json.Marshal(m)
 		if err != nil {
@@ -46,7 +45,7 @@ func (s *sessStore) Append(ctx context.Context, sessionID string, msgs ...*schem
 		}
 		vals = append(vals, b)
 	}
-	return s.rdb.RPush(ctx, s.key(sessionID), vals...).Err()
+	return s.rdb.RPush(ctx, s.key(sessionID), vals...)
 }
 
 // Load 返回窗口裁剪后的最近消息(window<=0 不裁剪)。
@@ -64,14 +63,14 @@ func (s *sessStore) LoadAll(ctx context.Context, sessionID string) ([]*schema.Me
 }
 
 func (s *sessStore) rangeMsgs(ctx context.Context, sessionID string, start, stop int64) ([]*schema.Message, error) {
-	raws, err := s.rdb.LRange(ctx, s.key(sessionID), start, stop).Result()
+	raws, err := s.rdb.LRange(ctx, s.key(sessionID), start, stop)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]*schema.Message, 0, len(raws))
 	for _, r := range raws {
 		var m schema.Message
-		if err := json.Unmarshal([]byte(r), &m); err != nil {
+		if err := json.Unmarshal(r, &m); err != nil {
 			return nil, err
 		}
 		out = append(out, &m)
@@ -80,5 +79,5 @@ func (s *sessStore) rangeMsgs(ctx context.Context, sessionID string, start, stop
 }
 
 func (s *sessStore) Clear(ctx context.Context, sessionID string) error {
-	return s.rdb.Del(ctx, s.key(sessionID)).Err()
+	return s.rdb.Delete(ctx, s.key(sessionID))
 }
