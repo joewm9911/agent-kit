@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -308,7 +309,7 @@ func TestBuildPackForkContext(t *testing.T) {
 
 func TestPackReadJail(t *testing.T) {
 	src := writeFixturePack(t)
-	pr := packReadCap(src)
+	pr := packReadCap(packFS(src))
 	ctx := context.Background()
 	out, _ := capability.Invoke(ctx, pr, `{}`)
 	if !strings.Contains(out, "templates/outline.md") {
@@ -320,6 +321,25 @@ func TestPackReadJail(t *testing.T) {
 	}
 	out, _ = capability.Invoke(ctx, pr, `{"path":"../../etc/passwd"}`)
 	if !strings.Contains(out, "out of bounds") {
+		t.Fatalf("jail escape not blocked: %q", out)
+	}
+}
+
+// TestPackReadFS: the fs cap works over any fs.FS (here an in-memory FS,
+// standing in for an embedded pack) — deployment-agnostic, same '..' jail.
+func TestPackReadFS(t *testing.T) {
+	pr := packReadCap(fstest.MapFS{
+		"SKILL.md":             {Data: []byte("---\nname: t\n---\nbody")},
+		"templates/outline.md": {Data: []byte("outline")},
+	})
+	ctx := context.Background()
+	if out, _ := capability.Invoke(ctx, pr, `{}`); !strings.Contains(out, "templates/outline.md") {
+		t.Fatalf("list: %q", out)
+	}
+	if out, _ := capability.Invoke(ctx, pr, `{"path":"templates/outline.md"}`); out != "outline" {
+		t.Fatalf("read: %q", out)
+	}
+	if out, _ := capability.Invoke(ctx, pr, `{"path":"../escape"}`); !strings.Contains(out, "out of bounds") {
 		t.Fatalf("jail escape not blocked: %q", out)
 	}
 }

@@ -17,8 +17,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -255,7 +257,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	}
 	// L3 读取口:包里除 SKILL.md 还有文件才挂(工具面不承诺不存在的东西)。
 	if m.HasFiles {
-		caps = append(caps, packReadCap(m.Dir))
+		caps = append(caps, packReadCap(packFS(m.Dir)))
 	}
 	caps = append(caps, extra...)
 
@@ -333,9 +335,14 @@ func buildAgentDelegate(m *PackManifest, snapshotFork bool, hub func(string) (ca
 	})
 }
 
-// packReadCap 是包目录的只读工具(L3 渐进披露):list 列文件、read 读内容。
-// 路径囚笼:解析后的绝对路径必须仍在包目录内,拒绝 ../ 与绝对路径逃逸。
-func packReadCap(dir string) capability.Capability {
+// packFS 把一个已安装的包目录包成 fs.FS(pack_read 的承载)。这是接入点:
+// bundled 包(随配置内嵌)可改为 fs.Sub(资源FS, 包目录),pack_read 代码不变。
+func packFS(dir string) fs.FS { return os.DirFS(dir) }
+
+// packReadCap 是包内容的只读工具(L3 渐进披露,即 fs cap):list 列文件、
+// read 读内容。以 fs.FS 承载包根,内嵌/本地/远程一套代码;fs.FS 的
+// ValidPath 语义天然拒绝 '..' 与绝对路径逃逸,免去手写路径囚笼。
+func packReadCap(packFS fs.FS) capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "pack", Name: "pack_read"},
 		Description: "Read a reference file bundled with the skill pack (limited to docs/templates packaged inside the pack; an empty path lists the manifest). Note: the user's files are not inside the pack — to read or write the user's files, use a script execution tool (e.g. python).",
@@ -346,32 +353,22 @@ func packReadCap(dir string) capability.Capability {
 			Path string `json:"path"`
 		}
 		_ = json.Unmarshal([]byte(argsJSON), &args) // path 可选:缺省列清单
-		rel := args.Path
-		if rel == "" {
+		if args.Path == "" {
 			var files []string
-			_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
+			_ = fs.WalkDir(packFS, ".", func(p string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
 					return err
 				}
-				r, _ := filepath.Rel(dir, p)
-				files = append(files, filepath.ToSlash(r))
+				files = append(files, p)
 				return nil
 			})
 			return strings.Join(files, "\n"), nil
 		}
-		target := filepath.Join(dir, filepath.FromSlash(rel))
-		abs, err := filepath.Abs(target)
-		if err != nil {
-			return "", err
-		}
-		base, err := filepath.Abs(dir)
-		if err != nil {
-			return "", err
-		}
-		if abs != base && !strings.HasPrefix(abs, base+string(filepath.Separator)) {
+		clean := path.Clean(args.Path)
+		if !fs.ValidPath(clean) { // '..'、绝对路径、逃出包根:囚笼由 fs.FS 强制
 			return "path out of bounds: pack_read can only read files bundled with the skill pack. to access the user's file paths, use a script execution tool instead (e.g. python's open()).", nil
 		}
-		data, err := os.ReadFile(abs)
+		data, err := fs.ReadFile(packFS, clean)
 		if err != nil {
 			return fmt.Sprintf("read failed: %v", err), nil
 		}
