@@ -289,10 +289,13 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 		app.Server = serving.New(ac.Serving.Addr, agents, logger)
 		dispatcher := serving.NewDispatcher(logger)
 		// app 层具名 stores 可被 suspend.store 以 cap://store/suspend/<name> 引用。
+		// IM 通道与 HTTP /messages 共用同一挂起后端:飞书里挂起的审批
+		// 从 HTTP 恢复(或反之)都成立,键只认会话。
 		if kv, err := suspendKV(ac.Suspend, ac.Stores); err != nil {
 			return nil, err
 		} else if kv != nil {
 			dispatcher.EnableSuspend(kv)
+			app.Server.EnableSuspend(kv)
 		}
 		for _, cc := range ac.Channels {
 			ch, err := channel.New(cc.Type, cc.Name, cc.Config)

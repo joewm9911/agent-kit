@@ -8,6 +8,7 @@ package serving
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/protocol/channel"
+	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/runtime/suspend"
 )
 
@@ -25,6 +27,12 @@ type Server struct {
 	mux    *http.ServeMux
 	agents map[string]Runnable
 	logger *slog.Logger
+
+	// suspendKV 非 nil 时 /messages 的 JSON 路径启用持久化挂起(与
+	// dispatcher 的 IM 路径同一机制、同一后端):ask_user/审批不占请求
+	// 等待,响应 waiting 态;同会话的下一个请求即答案。SSE 流式路径
+	// 不参与(问句无法安放在增量事件流的语义里)。
+	suspendKV store.KV
 }
 
 // New 创建 Gateway 并注册 agent 路由。
@@ -42,6 +50,11 @@ func New(addr string, agents []Runnable, logger *slog.Logger) *Server {
 
 // Mux 暴露路由器,channel 的 webhook 注册在此。
 func (s *Server) Mux() *http.ServeMux { return s.mux }
+
+// EnableSuspend 启用 /messages 的持久化挂起,后端与 IM 通道共用。
+func (s *Server) EnableSuspend(kv store.KV) {
+	s.suspendKV = kv
+}
 
 // AttachChannel 把一个 channel 绑定到 agent 并挂载其 webhook。
 func (s *Server) AttachChannel(ctx context.Context, ch channel.Channel, d *Dispatcher, b Binding) error {
@@ -101,13 +114,72 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		s.stream(w, ctx, a, req.Session, req.Input)
 		return
 	}
+	if s.suspendKV != nil {
+		s.suspendableMessage(w, ctx, a, req.Session, req.Input)
+		return
+	}
 	answer, err := a.Run(ctx, req.Session, req.Input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	writeJSON(w, map[string]string{"session": req.Session, "status": "done", "answer": answer})
+}
+
+// suspendableMessage 以挂起模式执行一轮,机制与 dispatcher 的 IM 路径
+// 完全同构("卸载重放",见 runtime/suspend 包注释),只是传输面不同:
+// IM 的问句要主动送达会话,HTTP 的"送达"就是本次响应体——
+//   - 会话存在挂起轮次 → 本条输入是答案:记入交互日志,以原输入 + 原
+//     轮次 ID 重放(交互点命中日志越过挂起,mutating 工具命中效果日志
+//     不二次执行),进程重启/换副本后同样成立;
+//   - 运行在交互点挂起(ErrSuspended)→ 持久化待答轮次,响应
+//     {status: "waiting", question};正常完成 → {status: "done", answer}。
+//
+// 同会话并发请求没有串行保护(dispatcher 的会话队列是 IM 语义,不在
+// HTTP 路径重造),调用方须按会话串行调用。
+func (s *Server) suspendableMessage(w http.ResponseWriter, ctx context.Context, a Runnable, session, input string) {
+	turnInput, turnID := input, ""
+	if rec, ok, err := suspend.TakePendingTurn(ctx, s.suspendKV, session); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ok {
+		if err := suspend.AnswerPending(ctx, s.suspendKV, rec.WaitingID, input); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		turnInput, turnID = rec.Input, rec.TurnID
+	}
+	if turnID == "" {
+		turnID = suspend.NewTurnID()
+	}
+	journal := suspend.NewJournal(s.suspendKV, turnID)
+	ctx = suspend.WithJournal(ctx, journal)
+	// notify 置空:问题不需要独立投递,挂起后直接写进响应体。
+	ctx = runctx.WithInteractor(ctx, suspend.Interactor(journal, func(context.Context, string) error { return nil }))
+
+	answer, err := a.Run(ctx, session, turnInput)
+	if err != nil {
+		var suspended *suspend.ErrSuspended
+		if errors.As(err, &suspended) {
+			if err := suspend.SavePendingTurn(ctx, s.suspendKV, session, suspend.PendingTurn{
+				TurnID: turnID, Input: turnInput, WaitingID: suspended.InteractionID,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]string{"session": session, "status": "waiting", "question": suspended.Question})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	journal.CompleteTurn(ctx)
+	writeJSON(w, map[string]string{"session": session, "status": "done", "answer": answer})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"session": req.Session, "answer": answer})
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // handleControl 处理运行控制:{session, action: interrupt|steer, message}。

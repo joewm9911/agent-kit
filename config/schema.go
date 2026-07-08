@@ -250,8 +250,9 @@ type ServingConfig struct {
 	Addr string `yaml:"addr"`
 }
 
-// SuspendConfig 启用 IM 通道的持久化挂起:ask_user/审批等待持久化,
-// 跨小时/跨天/跨进程重启均可恢复;未配置时为进程内阻塞等待。
+// SuspendConfig 启用持久化挂起(IM 通道与 HTTP /messages 共用同一
+// 后端):ask_user/审批等待持久化,跨小时/跨天/跨进程重启均可恢复;
+// 未配置时 IM 为进程内阻塞等待,HTTP 用装配时注入的 Interactor。
 // 后端收敛到 store.KV:store 写裸 type(file/redis/...)或
 // cap://store/suspend/<name> 引用具名实例(多文件 app 层);
 // dir 是 file 后端的简写(等价 store: file + store_config: {dir: ...})。
