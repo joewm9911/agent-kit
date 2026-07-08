@@ -6,7 +6,7 @@
 #   MINIMAX_API_KEY   必填(keychain 取)
 #   OPS_MODEL_BASE    模型 base_url(默认国内 api.minimaxi.com)
 #   OPS_API_BASE      业务后端(默认 runner 内置 mock)
-#   OPS_DATA_DIR      工作目录(默认 ./data/interactive;技能装其下 agent-kit/.skills)
+#   OPS_DATA_DIR      可写状态目录 state_dir(默认 ./data/interactive;技能装其下 agent-kit/.skills)
 #   PDF_SKILL_REF     pdf 技能来源(默认真实 anthropics/skills,pin sha)
 #   OPS_SANDBOX       脚本执行沙箱(runner 检测:有 docker → "docker",否则 "" 宿主直跑)
 #   OPS_SANDBOX_IMAGE 沙箱镜像(默认 python:3.12-slim;pdf 技能进沙箱需带 pypdf 的镜像,
@@ -29,7 +29,7 @@ reliability:
   retry: {max_attempts: 3, base_delay: 3s, max_delay: 30s}
   tool_timeout: 300s
 
-# 外部技能包:安装到 <work_dir>/agent-kit/.skills;pdf 技能带脚本
+# 外部技能包:安装到 <state_dir>/agent-kit/.skills;pdf 技能带脚本
 # (Risk=Dangerous),准入需显式提升。
 state_dir: "${OPS_DATA_DIR}"
 catalog:
