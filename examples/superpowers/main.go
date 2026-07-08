@@ -32,6 +32,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/config"
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
+	"github.com/joewm9911/agent-kit/protocol/resource"
 	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
@@ -48,11 +49,13 @@ func main() {
 	setDefault("SP_MODEL_BASE", "https://api.minimaxi.com/v1")
 	setDefault("SP_WORK_DIR", "./data/superpowers")
 
-	appPath := "examples/superpowers/interactive.yaml"
-	if _, err := os.Stat(appPath); err != nil {
-		appPath = "interactive.yaml"
+	// 入口经 resource.Find 搜索(AGENTKIT_CONFIG → CWD → 可执行文件目录
+	// → /etc/agentkit),不再手写 os.Stat 兜底。
+	ref, err := resource.Find("examples/superpowers/interactive.yaml")
+	if err != nil {
+		ref = "interactive.yaml"
 	}
-	cfg, err := config.Load(appPath)
+	cfg, err := config.Load(ref)
 	if err != nil {
 		log.Fatal(err)
 	}
