@@ -303,6 +303,78 @@ namespaces:
 
 单文件形态(`config.Load`+`Build`)保留为兼容路径。
 
+## 资源加载:ResourceLoader
+
+> 状态:设计已定稿(见 [docs/resource-loading-design.md](docs/resource-loading-design.md)),实施分 5 批推进中。本节是加载逻辑的权威说明。
+
+所有**只读资源**——配置(app/agent/namespace,component 内联于 ns)、
+提示词文件、skill 包及其文件读取能力(pack_read,即 fs cap)——经**同一个**
+ResourceLoader 抽象加载。核心是 Go 标准库 `io/fs.FS`:一个 `Resolve(ref)`
+把资源 ref 解析为「根 FS + 入口路径」,之后所有相对引用都在这个根 FS 内
+用 `/` 分隔的路径解析(拒绝 `..` 逃逸)。**唯一锚点 = 根 FS**,不再依赖
+进程 CWD。
+
+**为什么这么设计**:早期 agent/namespace 文件相对 app.yaml 目录解析(可移植),
+但 prompt 目录和 work_dir 相对进程 CWD 解析(不可移植)——同一份配置两套
+基准,换目录/进容器就断。统一到根 FS 后,配置无论来自本地盘、内嵌二进制、
+还是远程,加载语义完全一致。
+
+### 加载逻辑(一张决策图)
+
+```
+资源 ref(AGENTKIT_CONFIG 或启动参数)
+  │
+  ├─ 无 scheme:./app.yaml、/etc/app/app.yaml   → file loader:os.DirFS(目录)
+  ├─ embed:main/config/app.yaml                → 宿主注册的 embed.FS
+  └─ https://…(后置)                          → http loader:拉取为内存 FS
+        │
+        ▼
+   resource.Resolve(ref) → (根 FS, 入口路径)
+        │
+        ├─ config.LoadAppFS(根FS, 入口)
+        │     ├─ agents/<name>.yaml     ┐ 全部在根 FS 内按 path 解析
+        │     └─ namespaces/<name>.yaml ┘ (component 内联于 ns 文件)
+        │
+        ├─ prompt / secrets:fs.Sub(根FS, 子目录) —— 与配置天然同源
+        │
+        └─ skill 包:
+              ├─ bundled(随配置分发)→ fs.Sub(根FS, 包目录),不落盘
+              └─ remote(from: github…)→ 装配期 fetch 到 state_dir(可写)
+                    │
+                    ▼
+              pack_read(fs cap)持有包的 fs.FS —— 内嵌/本地/远程一套代码,
+              fs.FS 语义顺带把"读到包外"的路径穿越堵死
+```
+
+### 只读资源 vs 可写状态(必须分开)
+
+| 类别 | 内容 | 承载 |
+|---|---|---|
+| **只读资源** | 配置、提示词、secrets、skill 包清单与包内文件 | 根 FS(本地盘 / 内嵌 / 远程,均可) |
+| **可写状态** | skill 远程安装、file 后端(session/todo/digest)、轨迹落盘 | `state_dir`(必须真实可写目录;装配期校验可写,不可写 fail fast) |
+
+`state_dir` 默认链:`state_dir` 配置 → 环境 `AGENTKIT_STATE_DIR` → OS 约定
+(`$XDG_STATE_HOME/agentkit`)。容器里显式挂 volume 指过来。
+
+### 部署形态
+
+```go
+// 本地盘(开发 / 传统部署):
+spec, _ := config.LoadApp("/etc/agentkit/app.yaml")   // 或裸名走搜索路径
+
+// 单二进制内嵌(容器 / 免依赖交付):配置与提示词全部编进二进制
+//go:embed config
+var cfgFS embed.FS
+spec, _ := config.LoadAppFS(cfgFS, "config/app.yaml")  // 零磁盘依赖
+```
+
+入口裸名走搜索路径:显式 `AGENTKIT_CONFIG` → 进程 CWD → 可执行文件目录
+→ `/etc/agentkit/`,命中即用并在启动日志明示"从哪加载"。
+
+**扩展**:新增资源来源(OCI artifact、S3、配置中心)= 实现一个 scheme
+解析器返回 `fs.FS` 并 `resource.Register`——与全框架"代码注册、配置按名
+启用"同构,无需改核心。
+
 ## 运行
 
 ```bash
