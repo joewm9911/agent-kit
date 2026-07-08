@@ -13,8 +13,8 @@ import (
 	"time"
 
 	// 空导入触发 source / channel / model 工厂注册
-	_ "github.com/joewm9911/agent-kit/impl/exec/docker" // 官方 docker 执行沙箱
 	_ "github.com/joewm9911/agent-kit/impl/channel/feishu"
+	_ "github.com/joewm9911/agent-kit/impl/exec/docker" // 官方 docker 执行沙箱
 	_ "github.com/joewm9911/agent-kit/impl/memory/redis"
 	_ "github.com/joewm9911/agent-kit/impl/model/minimax"
 	_ "github.com/joewm9911/agent-kit/impl/model/openai"
