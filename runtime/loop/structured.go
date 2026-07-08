@@ -60,8 +60,8 @@ func (e *StructuredEnforcer) Enforce(ctx context.Context, m model.ToolCallingCha
 			break
 		}
 		out, err := m.Generate(ctx, []*schema.Message{
-			schema.SystemMessage("你必须只输出一个符合以下 JSON Schema 的 JSON 对象,不要输出任何其他内容:\n" + e.schemaText),
-			schema.UserMessage(fmt.Sprintf("修正以下输出使其符合 schema。\n校验错误:%v\n原输出:\n%s", lastErr, current)),
+			schema.SystemMessage("You must output only a single JSON object conforming to the following JSON Schema, and nothing else:\n" + e.schemaText),
+			schema.UserMessage(fmt.Sprintf("Fix the following output to conform to the schema.\nValidation error: %v\nOriginal output:\n%s", lastErr, current)),
 		})
 		if err != nil {
 			return "", err

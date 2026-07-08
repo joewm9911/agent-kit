@@ -158,6 +158,23 @@ func main() {
 			Name: "feishu", Type: "feishu", Agent: "ops-manager",
 			SessionMapping: "chat", ReplyMode: "card",
 			Decorator: "ops-card", // 示例装饰器(card.go):富样式卡片,内容定制全在第三方侧
+			// 面向用户文案本地化为中文(默认英文):演示 texts 覆盖,只列改动项,
+			// 未列字段回落英文默认。
+			Texts: map[string]string{
+				"placeholder":  "⏳ 处理中...",
+				"step_running": "⚙ %s 执行中",
+				"step_done":    "✓ %s (%.1fs)",
+				"step_failed":  "✗ %s (%.1fs) 失败",
+				"summary":      "耗时 %.1fs · %d 次工具调用",
+				"stopped":      "好的,正在停止当前任务。",
+				"steered":      "已把你的话带给正在运行的任务。",
+				"overloaded":   "消息太多啦,请稍后再试。",
+				"thinking":     "思考中...",
+				"suspended":    "⏸ 已向你提问,回复后继续。",
+				"failure":      "处理失败:%s",
+				"approval":     "需要你批准一个操作:\n%s\n参数:%s\n回复「同意」执行,回复其他内容取消。",
+				"ask_timeout":  "等待用户回复超时",
+			},
 			Config: map[string]any{
 				"app_id":     os.Getenv("FEISHU_APP_ID"),
 				"app_secret": os.Getenv("FEISHU_APP_SECRET"),

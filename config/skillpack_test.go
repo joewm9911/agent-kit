@@ -80,19 +80,19 @@ func TestSkillEntryMutualExclusion(t *testing.T) {
 		Skillpacks: SkillpacksConfig{Dir: t.TempDir()},
 	}
 	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "互斥") {
+		!strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("use+engine must fail fast, got %v", err)
 	}
 	// 旧 use 键:报错并指路 from
 	cfg.Skills = []*SkillEntry{{Use: "github.com/x/y@v1"}}
 	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "改名 from") {
+		!strings.Contains(err.Error(), "renamed from") {
 		t.Fatalf("legacy use must fail with from hint, got %v", err)
 	}
 	// 平铺 skills 的 from 不接受内部引用形态
 	cfg.Skills = []*SkillEntry{{From: "components/foo"}}
 	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "外部链接") {
+		!strings.Contains(err.Error(), "external links") {
 		t.Fatalf("internal ref in from must fail, got %v", err)
 	}
 }

@@ -311,6 +311,12 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 				SessionMapping: cc.SessionMapping, ReplyMode: cc.ReplyMode,
 				Placeholder: cc.Placeholder,
 			}
+			// 面向用户文案覆盖(未知键 fail fast)。
+			texts, err := serving.NewTexts(cc.Texts)
+			if err != nil {
+				return nil, fmt.Errorf("channel %s: %w", cc.Name, err)
+			}
+			binding.Texts = texts
 			// 按名解析装饰器/进度订阅(代码注册、配置启用,查无 fail fast)。
 			if cc.Decorator != "" {
 				dec, err := serving.LookupDecorator(cc.Decorator)

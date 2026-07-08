@@ -85,13 +85,13 @@ func (r *directRunner) Generate(ctx context.Context, msgs []*schema.Message) (*s
 			defer wg.Done()
 			inv, ok := r.tools[call.Function.Name]
 			if !ok {
-				results[i] = schema.ToolMessage(fmt.Sprintf("未知工具 %q", call.Function.Name), call.ID)
+				results[i] = schema.ToolMessage(fmt.Sprintf("unknown tool %q", call.Function.Name), call.ID)
 				return
 			}
 			out, err := inv.InvokableRun(ctx, call.Function.Arguments)
 			if err != nil {
 				// 以结果回传错误,让收尾调用能向上说明,不中断
-				results[i] = schema.ToolMessage(fmt.Sprintf("工具执行失败: %v", err), call.ID)
+				results[i] = schema.ToolMessage(fmt.Sprintf("tool execution failed: %v", err), call.ID)
 				return
 			}
 			results[i] = schema.ToolMessage(out, call.ID)

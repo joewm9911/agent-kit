@@ -58,14 +58,14 @@ func TestAutoRecallSplitPaths(t *testing.T) {
 	// 双路开启:两种来源都出现
 	both := autoRecall(kv, scope, retr, 2, 2, 3)
 	joined := strings.Join(both(recallCtx("s1", "预算")), "\n")
-	if !strings.Contains(joined, "长期记忆") || !strings.Contains(joined, "早前对话") {
+	if !strings.Contains(joined, "Long-term memory") || !strings.Contains(joined, "Earlier conversation") {
 		t.Fatalf("both paths expected: %q", joined)
 	}
 
 	// 只开 session 路:KV 不出现
 	sessOnly := autoRecall(kv, scope, retr, 2, 2, 0)
 	joined = strings.Join(sessOnly(recallCtx("s2", "预算")), "\n")
-	if strings.Contains(joined, "长期记忆") || !strings.Contains(joined, "早前对话") {
+	if strings.Contains(joined, "Long-term memory") || !strings.Contains(joined, "Earlier conversation") {
 		t.Fatalf("session-only expected: %q", joined)
 	}
 
@@ -73,7 +73,7 @@ func TestAutoRecallSplitPaths(t *testing.T) {
 	before := retr.hits.Load()
 	kvOnly := autoRecall(kv, scope, retr, 2, 0, 3)
 	joined = strings.Join(kvOnly(recallCtx("s3", "预算")), "\n")
-	if !strings.Contains(joined, "长期记忆") || strings.Contains(joined, "早前对话") {
+	if !strings.Contains(joined, "Long-term memory") || strings.Contains(joined, "Earlier conversation") {
 		t.Fatalf("kv-only expected: %q", joined)
 	}
 	if retr.hits.Load() != before {

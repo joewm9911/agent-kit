@@ -72,18 +72,18 @@ func (a *StepArgs) UnmarshalYAML(unmarshal func(any) error) error {
 	var s string
 	if err := unmarshal(&s); err == nil {
 		if strings.HasPrefix(s, prompt.RefPrefix) {
-			return fmt.Errorf(`step args: 提示词引用写在 prompt: 键(args 只放参数):prompt: %q`, s)
+			return fmt.Errorf(`step args: a prompt reference belongs under the prompt: key (args holds parameters only): prompt: %q`, s)
 		}
 		a.Literal = s
 		return nil
 	}
 	var m map[string]any
 	if err := unmarshal(&m); err != nil {
-		return fmt.Errorf("step args: 需要标量(字面量模板)或映射(参数绑定):%w", err)
+		return fmt.Errorf("step args: expected a scalar (literal template) or a mapping (parameter binding): %w", err)
 	}
 	for _, k := range []string{"ref", "use"} {
 		if _, legacy := m[k]; legacy {
-			return fmt.Errorf(`step args: 模板引用已移至 prompt: 键(args 只放参数):prompt: "cap://prompt/...",args 写纯绑定映射`)
+			return fmt.Errorf(`step args: a template reference has moved to the prompt: key (args holds parameters only): prompt: "cap://prompt/...", args holds a pure binding mapping`)
 		}
 	}
 	a.Fields = make(map[string]string, len(m))
@@ -180,10 +180,10 @@ func compileGraph(decl *GraphDeclaration, resolve StepResolver) (*graphPlan, err
 			return nil, fmt.Errorf("duplicate step name %q", s.Name)
 		}
 		if !s.Prompt.IsZero() {
-			return nil, fmt.Errorf("step %q: prompt 未消费(装配层需先解析并收敛为字面量)", s.Name)
+			return nil, fmt.Errorf("step %q: prompt not consumed (the assembly layer must resolve and collapse it to a literal first)", s.Name)
 		}
 		if s.Args.Fields != nil {
-			return nil, fmt.Errorf("step %q: args 参数映射未消费(装配层需先转换)", s.Name)
+			return nil, fmt.Errorf("step %q: args parameter mapping not consumed (the assembly layer must convert it first)", s.Name)
 		}
 		if _, clash := decl.Params[s.Name]; clash {
 			return nil, fmt.Errorf("step %q collides with a param name (template refs would be ambiguous)", s.Name)
@@ -361,7 +361,7 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		// 以结果回传而非错误:让上级大脑补齐参数重试,循环不中断。
-		return fmt.Sprintf("调用未执行:缺少必填参数 %s。", strings.Join(missing, ", ")), nil
+		return fmt.Sprintf("call not executed: missing required parameter(s) %s.", strings.Join(missing, ", ")), nil
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

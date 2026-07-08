@@ -100,12 +100,12 @@ func (c ScopeConfig) writeScope(ctx context.Context) (string, error) {
 		if s := runctx.Session(ctx); s != "" {
 			return "session:" + s, nil
 		}
-		return "", fmt.Errorf("会话记忆需要会话身份,当前缺失")
+		return "", fmt.Errorf("session memory requires a session identity, which is currently missing")
 	default: // "" | "user"
 		if u := runctx.User(ctx); u != "" {
 			return UserScope(u), nil
 		}
-		return "", fmt.Errorf("用户记忆需要终端用户身份,当前通道未提供")
+		return "", fmt.Errorf("user memory requires an end-user identity, which this channel did not provide")
 	}
 }
 
@@ -142,10 +142,10 @@ func (c ScopeConfig) ReadScopes(ctx context.Context) []string {
 func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 	save := capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_save"},
-		Description: "保存一条长期记忆。当用户告知偏好、事实或值得跨会话记住的信息时调用。",
+		Description: "Save a long-term memory. Call when the user states a preference, a fact, or information worth remembering across sessions.",
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"key":   {Type: schema.String, Desc: "记忆的简短标题(名词短语,便于日后检索)", Required: true},
-			"value": {Type: schema.String, Desc: "记忆内容(自包含,不要指代上文)", Required: true},
+			"key":   {Type: schema.String, Desc: "A short title for the memory (a noun phrase, for easy later retrieval)", Required: true},
+			"value": {Type: schema.String, Desc: "The memory content (self-contained, do not refer to earlier context)", Required: true},
 		}),
 	}, func(ctx context.Context, argsJSON string) (string, error) {
 		var args struct{ Key, Value string }
@@ -155,7 +155,7 @@ func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 		sc, err := scope.writeScope(ctx)
 		if err != nil {
 			// 以工具结果回传,让大脑向用户说明,不中断循环。
-			return "未能保存记忆:" + err.Error(), nil
+			return "failed to save memory: " + err.Error(), nil
 		}
 		if err := kv.Put(ctx, sc, args.Key, args.Value); err != nil {
 			return "", err
@@ -165,8 +165,8 @@ func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 
 	search := capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_search"},
-		Description: "按关键词检索长期记忆。回答依赖用户历史偏好或既往事实时先调用。",
-		Params:      capability.SingleParam("query", "检索关键词"),
+		Description: "Search long-term memory by keyword. Call first when an answer depends on the user's past preferences or prior facts.",
+		Params:      capability.SingleParam("query", "Search keywords"),
 	}, func(ctx context.Context, argsJSON string) (string, error) {
 		query := capability.ParseSingle(argsJSON, "query")
 		hits, err := kv.Search(ctx, scope.ReadScopes(ctx), query, 5)

@@ -168,13 +168,13 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	// 调用级临时清单(opt-in,仅 react):挂 todo 工具面 + 卡住提醒,
 	// 键按执行域隔离、随调用结束即弃。
 	if decl.MaxStepsLegacy != nil {
-		return nil, fmt.Errorf("skill %s: max_steps 已改名 max_rounds(语义本就是轮数)", decl.Name)
+		return nil, fmt.Errorf("skill %s: max_steps has been renamed to max_rounds (the semantics were always a round count)", decl.Name)
 	}
 	if decl.Todo && engineName != "react" {
-		return nil, fmt.Errorf("skill %s: todo 只对 react 有意义(plan-execute 的计划由引擎管理,其余形态无长循环)", decl.Name)
+		return nil, fmt.Errorf("skill %s: todo only makes sense for react (plan-execute's plan is managed by the engine, and other forms have no long loop)", decl.Name)
 	}
 	if decl.Todo && deps.Todo == nil {
-		return nil, fmt.Errorf("skill %s: todo 已启用但未注入 Todo 后端(装配层需提供 Deps.Todo)", decl.Name)
+		return nil, fmt.Errorf("skill %s: todo is enabled but no Todo backend was injected (the assembly layer must provide Deps.Todo)", decl.Name)
 	}
 	if decl.Todo {
 		caps = append(caps, deps.Todo.Capabilities()...)
@@ -303,7 +303,7 @@ func resolveEnginePrompts(ctx context.Context, conf map[string]any, r prompt.Sou
 		key := strings.TrimSuffix(k, "_prompt")
 		val, ok := v.(string)
 		if !ok {
-			return nil, nil, fmt.Errorf(`engine_config.%s: 只接受标量——引用写 "cap://prompt/..."({ref: ...} 写法已移除)`, k)
+			return nil, nil, fmt.Errorf(`engine_config.%s: only accepts a scalar — write references as "cap://prompt/..." (the {ref: ...} form has been removed)`, k)
 		}
 		if !strings.HasPrefix(val, prompt.RefPrefix) {
 			prompts[key] = val

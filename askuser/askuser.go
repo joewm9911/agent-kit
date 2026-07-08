@@ -15,8 +15,8 @@ import (
 func New() capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "ask_user"},
-		Description: "向用户提一个问题并等待回答。仅在缺少必要信息、且无法通过其他工具获取时使用;一次只问一个问题。",
-		Params:      capability.SingleParam("question", "要问用户的问题,简洁明确"),
+		Description: "Ask the user one question and wait for the answer. Use only when required information is missing and cannot be obtained through other tools; ask only one question at a time.",
+		Params:      capability.SingleParam("question", "The question to ask the user, concise and specific"),
 		Tags:        []string{capability.TagInteractive}, // 等人回复不占工具超时
 	}
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {

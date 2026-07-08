@@ -193,14 +193,14 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 		var c capability.Capability
 		if entry.Use != "" {
-			return nil, fmt.Errorf(`skill %s: use 已改名 from(外部获取来源):from: %q`, entry.Name, entry.Use)
+			return nil, fmt.Errorf(`skill %s: use has been renamed from (the external fetch source): from: %q`, entry.Name, entry.Use)
 		}
 		if entry.From != "" {
 			if !isExternalRef(entry.From) {
-				return nil, fmt.Errorf("skill %s: 平铺 skills 的 from 只支持外部链接(github.com/...|https://...|file:...),内部委托请用 namespaces", entry.From)
+				return nil, fmt.Errorf("skill %s: from on flat skills only supports external links (github.com/...|https://...|file:...); for internal delegation use namespaces", entry.From)
 			}
 			if !entry.Prompt.IsZero() || entry.Engine != "" || len(entry.Capabilities.Include) > 0 {
-				return nil, fmt.Errorf("skill %s: from(外部引用)与 prompt/engine/capabilities 互斥", entry.From)
+				return nil, fmt.Errorf("skill %s: from (external ref) is mutually exclusive with prompt/engine/capabilities", entry.From)
 			}
 			c, err = buildSkillpack(ctx, packRoot, packOpts,
 				skill.PackSpec{Use: entry.From, Integrity: entry.Integrity, Name: entry.Name},

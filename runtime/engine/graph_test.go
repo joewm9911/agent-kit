@@ -450,7 +450,7 @@ func TestGraphRejectsUnresolvedArgsRef(t *testing.T) {
 		return capability.New(capability.Meta{Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "m"}},
 			func(context.Context, string) (string, error) { return "", nil }), nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "未消费") {
+	if err == nil || !strings.Contains(err.Error(), "not consumed") {
 		t.Fatalf("unconsumed prompt must fail compile, got %v", err)
 	}
 }

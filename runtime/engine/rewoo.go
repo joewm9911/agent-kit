@@ -17,15 +17,15 @@ func init() {
 	Register("rewoo", BuildRewoo)
 }
 
-const defaultRewooPlannerPrompt = `你是规划器。把任务拆成一次性的工具调用计划,不依赖中间观察。
-只输出 JSON:{"steps": [{"id": "e1", "tool": "<工具名>", "args": {<参数,值里可用 {e1} 引用前序步骤结果>}}, ...]}
-规则:
-- id 依次为 e1、e2、...;args 的字符串值里用 {eN} 占位引用第 N 步的结果;
-- 只使用给定的工具;参数按各工具的说明组织;
-- 步骤数不超过上限;能并行的步骤不要人为串联(没有引用关系就是可并行)。`
+const defaultRewooPlannerPrompt = `You are a planner. Break the task into a one-shot plan of tool calls that does not rely on intermediate observations.
+Output JSON only: {"steps": [{"id": "e1", "tool": "<tool name>", "args": {<arguments; a string value may use {e1} to reference the result of an earlier step>}}, ...]}
+Rules:
+- ids are e1, e2, ... in order; in an args string value, use {eN} to reference the result of step N;
+- use only the given tools; organize arguments per each tool's description;
+- do not exceed the step limit; do not artificially serialize steps that can run in parallel (no reference relation means they can run in parallel).`
 
-const defaultRewooSolverPrompt = `你是求解器。根据任务与各步骤的执行证据,直接给出最终回答。
-证据可能包含失败记录,如实反映,不要编造。`
+const defaultRewooSolverPrompt = `You are a solver. Based on the task and the execution evidence from each step, give the final answer directly.
+The evidence may contain failure records; report them faithfully and do not fabricate.`
 
 // BuildRewoo 构建 ReWOO 引擎(Reasoning Without Observation):
 //
@@ -57,7 +57,7 @@ func BuildRewoo(ctx context.Context, asm *Assembly) (Runner, error) {
 		if meta.Params != nil {
 			if js, err := meta.Params.ToJSONSchema(); err == nil && js != nil {
 				if b, err := json.Marshal(js); err == nil {
-					params = " 参数schema:" + string(b)
+					params = " params schema:" + string(b)
 				}
 			}
 		}
@@ -99,8 +99,8 @@ func (r *rewooRunner) Generate(ctx context.Context, msgs []*schema.Message) (*sc
 
 	// 1. 规划:一次调用产出完整计划
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(fmt.Sprintf("%s\n\n可用工具:\n%s\n步骤上限:%d", r.planner, r.listing, r.maxSteps)),
-		schema.UserMessage("任务:\n" + task),
+		schema.SystemMessage(fmt.Sprintf("%s\n\nAvailable tools:\n%s\nStep limit: %d", r.planner, r.listing, r.maxSteps)),
+		schema.UserMessage("Task:\n" + task),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("rewoo plan: %w", err)
@@ -129,7 +129,7 @@ func (r *rewooRunner) Generate(ctx context.Context, msgs []*schema.Message) (*sc
 	}
 	return r.asm.Model.Generate(ctx, []*schema.Message{
 		schema.SystemMessage(r.solver),
-		schema.UserMessage(fmt.Sprintf("任务:\n%s\n\n执行证据:\n%s", task, eb.String())),
+		schema.UserMessage(fmt.Sprintf("Task:\n%s\n\nExecution evidence:\n%s", task, eb.String())),
 	})
 }
 
@@ -218,11 +218,11 @@ func (r *rewooRunner) execute(ctx context.Context, steps []rewooStep) (map[strin
 func (r *rewooRunner) runTool(ctx context.Context, name, argsJSON string) string {
 	c, ok := r.tools[name]
 	if !ok {
-		return fmt.Sprintf("(失败:计划引用了不存在的工具 %q)", name)
+		return fmt.Sprintf("(failed: plan referenced a nonexistent tool %q)", name)
 	}
 	out, err := capability.Invoke(ctx, c, argsJSON)
 	if err != nil {
-		return fmt.Sprintf("(失败:%v)", err)
+		return fmt.Sprintf("(failed: %v)", err)
 	}
 	return out
 }

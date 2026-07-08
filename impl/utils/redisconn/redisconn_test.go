@@ -42,7 +42,7 @@ func TestRegisterClientFailFast(t *testing.T) {
 		t.Fatalf("unknown client must fail with hint, got %v", err)
 	}
 	if _, _, err := redisconn.Dial(map[string]any{"client": "nope", "addr": "x:1"}); err == nil ||
-		!strings.Contains(err.Error(), "互斥") {
+		!strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("client+addr must fail, got %v", err)
 	}
 

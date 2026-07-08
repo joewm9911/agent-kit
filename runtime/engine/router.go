@@ -15,9 +15,9 @@ func init() {
 	Register("router", BuildRouter)
 }
 
-const defaultRoutePrompt = `你是路由器。根据输入从下列目标中选择唯一最合适的一个,并为它组织调用参数。
-只输出 JSON:{"target": "<目标名>", "args": {<按目标的参数说明组织>}}
-不要回答问题本身,不要选多个目标。`
+const defaultRoutePrompt = `You are a router. From the targets below, select the single most appropriate one for the input and organize its call arguments.
+Output JSON only: {"target": "<target name>", "args": {<organized per the target's parameter description>}}
+Do not answer the question itself, and do not select more than one target.`
 
 // BuildRouter 构建分诊引擎:一次轻量模型调用把输入路由到工具面上的
 // 某个能力(能力的 description 即路由说明),调用后直接返回其结果——
@@ -75,7 +75,7 @@ func (r *routerRunner) Generate(ctx context.Context, msgs []*schema.Message) (*s
 	task := renderConversation(msgs)
 
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(r.prompt + "\n\n可选目标:\n" + r.listing),
+		schema.SystemMessage(r.prompt + "\n\nAvailable targets:\n" + r.listing),
 		schema.UserMessage(task),
 	})
 	if err != nil {

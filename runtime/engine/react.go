@@ -58,7 +58,7 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 								return out, err // 挂起/用户中断/预算/HITL 中断:必须穿透
 							}
 							return &compose.ToolOutput{Result: fmt.Sprintf(
-								"工具 %s 执行失败:%v。请读取错误原因,修正参数后重试一次或换用其他方式。", in.Name, err)}, nil
+								"tool %s failed: %v. Read the error, fix the arguments and retry once, or use a different approach.", in.Name, err)}, nil
 						}
 						return out, err
 					}

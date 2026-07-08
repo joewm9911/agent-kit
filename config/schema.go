@@ -225,8 +225,12 @@ type ChannelConfig struct {
 	Agent          string `yaml:"agent"`
 	SessionMapping string `yaml:"session_mapping"` // chat | chat_user
 	ReplyMode      string `yaml:"reply_mode"`      // text | card | stream(无装饰器时的默认策略)
-	// Placeholder 是 processing 占位文案(空 = 内置「⏳ 处理中...」)。
+	// Placeholder 是 processing 占位文案(空 = 内置英文默认「⏳ Working…」)。
 	Placeholder string `yaml:"placeholder"`
+	// Texts 覆盖面向用户的文案(键 = serving.Texts 字段的 snake_case,如
+	// placeholder/stopped/approval;空字段回落英文默认)。IM 部署在此配
+	// 本地化文案。
+	Texts map[string]string `yaml:"texts"`
 	// Decorator/OnProgress 按名引用代码注册的扩展(serving.RegisterDecorator /
 	// RegisterProgressHandler),装配期查名 fail fast。
 	Decorator  string         `yaml:"decorator"`

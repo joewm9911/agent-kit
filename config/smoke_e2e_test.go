@@ -142,35 +142,35 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 	reply := func(text string) (*schema.Message, error) { return schema.AssistantMessage(text, nil), nil }
 
 	switch {
-	// —— 框架内部调用(system 层识别)——
-	case strings.Contains(sysT, "压缩成要点摘要"): // Summarize
+	// —— 框架内部调用(system 层识别;提示词已英文化,匹配英文特征串)——
+	case strings.Contains(sysT, "bullet-point summary"): // Summarize
 		return reply("[SUM]任务与结论要点")
-	case strings.Contains(sysT, "你是结果消化器"): // digest
+	case strings.Contains(sysT, "You are a result digester"): // digest
 		return reply("[DGST]库存充足,周转正常")
-	case strings.Contains(sysT, "你是评审者"): // reflection reviewer
+	case strings.Contains(sysT, "You are a reviewer"): // reflection reviewer
 		if strings.Contains(userT, "[REV]") {
 			return reply(`{"pass": true}`)
 		}
 		return reply(`{"pass": false, "feedback": "在文末追加[REV]标记"}`)
-	case strings.Contains(sysT, "你是路由器"):
+	case strings.Contains(sysT, "You are a router"):
 		return reply(`{"target":"faq_bot","args":{"q":"退货政策"}}`)
-	case strings.Contains(sysT, "你是规划器"): // rewoo planner
+	case strings.Contains(sysT, "You are a planner"): // rewoo planner
 		return reply(`{"steps":[
 			{"id":"e1","tool":"search_products","args":{"q":"促销"}},
 			{"id":"e2","tool":"get_inventory","args":{"sku":"S1"}}]}`)
-	case strings.Contains(sysT, "你是求解器"): // rewoo solver
+	case strings.Contains(sysT, "You are a solver"): // rewoo solver
 		return reply("[REWOO]盘点完成")
-	case strings.Contains(sysT, "你是任务规划器"): // plan-execute planner
+	case strings.Contains(sysT, "You are a task planner"): // plan-execute planner
 		return reply(`{"steps":["审查活动相关商品定价"]}`)
-	case strings.Contains(sysT, "你是任务复盘器"):
+	case strings.Contains(sysT, "You are a task reviewer"): // plan-execute replanner
 		return reply(`{"action":"finish","response":"[PE]活动方案已定"}`)
-	case strings.Contains(sysT, "你是执行器"): // plan-execute 内嵌 react
+	case strings.Contains(sysT, "Complete only the single step"): // plan-execute executor (react)
 		if toolMsgs == 0 && s.hasTool("price-review") {
 			return call("price-review", `{"sku":"P100","question":"活动定价"}`), nil
 		}
 		return reply("[EXEC]步骤完成:" + markers(toolT))
-	case strings.Contains(sysT, "你是文案执行者"): // reflection executor
-		if strings.Contains(userT, "评审意见") {
+	case strings.Contains(sysT, "你是文案执行者"): // reflection executor (example YAML overrides with a custom prompt)
+		if strings.Contains(userT, "Review feedback") {
 			return reply("文案v2[REV]")
 		}
 		return reply("文案v1")
@@ -184,7 +184,7 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 			return call("get_inventory", `{"sku":"P100"}`), nil
 		}
 		out := "[ANALYST]定价合理"
-		if strings.Contains(userT, "对话背景") || strings.Contains(sysT, "对话背景") {
+		if strings.Contains(userT, "caller's conversation") || strings.Contains(sysT, "caller's conversation") {
 			out += "[SNAP]"
 		}
 		if strings.Contains(toolT, "结果已消化") {
@@ -217,7 +217,7 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 		return reply("[RESEARCH]结论:值得投入")
 	case strings.Contains(userT, "你是客户分析师"):
 		out := "[CRM]建议主动跟进"
-		if strings.Contains(userT, "对话背景") || strings.Contains(sysT, "对话背景") {
+		if strings.Contains(userT, "caller's conversation") || strings.Contains(sysT, "caller's conversation") {
 			out += "[SNAP]"
 		}
 		return reply(out)
@@ -238,7 +238,7 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 		case strings.Contains(lastUser, "记住") && toolMsgs == 0:
 			return call("memory_save", `{"key":"汇报偏好","value":"喜欢简短汇报"}`), nil
 		case strings.Contains(lastUser, "偏好"):
-			if strings.Contains(sysT, "长期记忆") {
+			if strings.Contains(sysT, "Long-term memory") {
 				return reply("[T-RECALL][HIT]你喜欢简短汇报")
 			}
 			return reply("[T-RECALL]未找到偏好")
@@ -493,7 +493,7 @@ func TestSmokeAgentMemoryLoop(t *testing.T) {
 	// t5:无用户身份的会话——用户记忆写入 fail fast,不静默落库
 	anon := context.Background()
 	if out, err = ops.Run(anon, "anon-session", "记住:我喜欢简短汇报"); err != nil ||
-		!strings.Contains(out, "终端用户身份") {
+		!strings.Contains(out, "end-user") {
 		t.Fatalf("anonymous write should fail fast: %q %v", out, err)
 	}
 

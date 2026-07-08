@@ -228,7 +228,7 @@ skills:
 		t.Fatal(err)
 	}
 	_, err = BuildApp(context.Background(), spec, BuildOptions{})
-	if err == nil || !strings.Contains(err.Error(), "model 不能在此声明") {
+	if err == nil || !strings.Contains(err.Error(), "model cannot be declared here") {
 		t.Fatalf("expect namespace model rejection, got %v", err)
 	}
 }

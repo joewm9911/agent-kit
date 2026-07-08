@@ -53,7 +53,7 @@ func TestSkillpackModelHubWiring(t *testing.T) {
 	// 未声明的具名模型:装配 fail fast
 	cfg2 := hubTestConfig(t, "model: ghost")
 	if _, err := Build(context.Background(), cfg2, BuildOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "未声明") {
+		!strings.Contains(err.Error(), "is not declared") {
 		t.Fatalf("unknown named model must fail fast, got %v", err)
 	}
 }
@@ -82,7 +82,7 @@ func TestSkillpackAgentHubWiring(t *testing.T) {
 	cfg2 := hubTestConfig(t, "agent: ghost")
 	cfg2.Agents = []AgentConfig{{Name: "helper"}}
 	if _, err := Build(context.Background(), cfg2, BuildOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "未在本 app 声明") {
+		!strings.Contains(err.Error(), "not declared in this app") {
 		t.Fatalf("unknown agent must fail fast at assembly, got %v", err)
 	}
 }

@@ -91,10 +91,10 @@ func LoadManifest(pd PackDir) (*PackManifest, error) {
 			slog.String("old", "fork(eino 语义=隔离)"), slog.String("new", "fresh(隔离)"))
 		front.Context = "fresh"
 	default:
-		return nil, fmt.Errorf("skillpack %s: frontmatter context 只支持 fresh|fork(旧值 fork/fork_with_context 自动映射),got %q", pd.Ref, front.Context)
+		return nil, fmt.Errorf("skillpack %s: frontmatter context only supports fresh|fork (legacy values fork/fork_with_context are auto-mapped), got %q", pd.Ref, front.Context)
 	}
 	if front.Agent != "" && front.Model != "" {
-		return nil, fmt.Errorf("skillpack %s: frontmatter agent 与 model 互斥(agent 模式下模型由该 agent 自身决定)", pd.Ref)
+		return nil, fmt.Errorf("skillpack %s: frontmatter agent and model are mutually exclusive (in agent mode the model is decided by that agent itself)", pd.Ref)
 	}
 	hasFiles := false
 	runtimeSet := map[string]bool{}
@@ -143,16 +143,16 @@ type skillFront struct {
 func parseSkillMD(path string) (name, desc string, allowed []string, front2 skillFront, body string, err error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", nil, front2, "", fmt.Errorf("读取 SKILL.md: %w", err)
+		return "", "", nil, front2, "", fmt.Errorf("read SKILL.md: %w", err)
 	}
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	rest, ok := strings.CutPrefix(text, "---\n")
 	if !ok {
-		return "", "", nil, front2, "", fmt.Errorf("SKILL.md 缺 frontmatter(--- 开头)")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md is missing frontmatter (must start with ---)")
 	}
 	front, body, ok := strings.Cut(rest, "\n---")
 	if !ok {
-		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter 未闭合(缺结尾 ---)")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter is not closed (missing trailing ---)")
 	}
 	var fm struct {
 		Name         string `yaml:"name"`
@@ -166,10 +166,10 @@ func parseSkillMD(path string) (name, desc string, allowed []string, front2 skil
 		Model   string `yaml:"model"`
 	}
 	if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
-		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter 解析失败: %w", err)
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter parse failed: %w", err)
 	}
 	if fm.Description == "" {
-		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter 缺 description(L1 选品依据)")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md frontmatter is missing description (the L1 selection basis)")
 	}
 	front2 = skillFront{Context: fm.Context, Agent: fm.Agent, Model: fm.Model}
 	switch v := fm.AllowedTools.(type) {
@@ -181,7 +181,7 @@ func parseSkillMD(path string) (name, desc string, allowed []string, front2 skil
 			allowed = append(allowed, fmt.Sprint(it))
 		}
 	default:
-		return "", "", nil, front2, "", fmt.Errorf("SKILL.md allowed-tools: 期望列表或字符串")
+		return "", "", nil, front2, "", fmt.Errorf("SKILL.md allowed-tools: expected a list or a string")
 	}
 	return fm.Name, fm.Description, allowed, front2, strings.TrimSpace(strings.TrimPrefix(body, "\n")), nil
 }
@@ -197,7 +197,7 @@ var packSeq atomic.Int64
 
 func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps, extra ...capability.Capability) (capability.Capability, error) {
 	if ov.Context != "" && ov.Context != "fresh" && ov.Context != "fork" {
-		return nil, fmt.Errorf("skillpack %s: context 只支持 fresh|fork,got %q", m.Ref, ov.Context)
+		return nil, fmt.Errorf("skillpack %s: context only supports fresh|fork, got %q", m.Ref, ov.Context)
 	}
 	// 快照 fork 判定:本地覆盖(agent-kit 语义,fork=快照)优先;否则
 	// frontmatter 公共协议语义——fork_with_context=快照,fork=隔离(即默认
@@ -208,7 +208,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	// 工具面/治理/模型都是该 agent 自己的,本包不再建子循环。
 	if m.Agent != "" {
 		if deps.AgentHub == nil {
-			return nil, fmt.Errorf("skillpack %s: frontmatter 声明 agent: %q 但装配环境未提供 AgentHub", m.Ref, m.Agent)
+			return nil, fmt.Errorf("skillpack %s: frontmatter declares agent: %q but the assembly environment provides no AgentHub", m.Ref, m.Agent)
 		}
 		return buildAgentDelegate(m, snapshotFork, deps.AgentHub), nil
 	}
@@ -223,7 +223,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 		mdl = built
 	} else if m.Model != "" {
 		if deps.ModelHub == nil {
-			return nil, fmt.Errorf("skillpack %s: frontmatter 声明 model: %q 但装配环境未提供 ModelHub(app 级 models: 具名模型)", m.Ref, m.Model)
+			return nil, fmt.Errorf("skillpack %s: frontmatter declares model: %q but the assembly environment provides no ModelHub (app-level models: named models)", m.Ref, m.Model)
 		}
 		built, err := deps.ModelHub(ctx, m.Model)
 		if err != nil {
@@ -243,7 +243,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	var caps []capability.Capability
 	if len(include) > 0 {
 		if deps.Catalog == nil {
-			return nil, fmt.Errorf("skillpack %s: 声明了工具白名单但装配层未提供目录", m.Ref)
+			return nil, fmt.Errorf("skillpack %s: a tool allowlist is declared but the assembly layer provided no catalog", m.Ref)
 		}
 		var err error
 		if caps, err = deps.Catalog.Select(include, nil); err != nil {
@@ -284,7 +284,7 @@ func BuildPack(ctx context.Context, m *PackManifest, ov PackOverrides, deps Deps
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "skill", Domain: m.NS, Name: m.Name, Version: m.Version},
 		Description: m.Description,
-		Params:      capability.SingleParam("input", "任务描述(自然语言)"),
+		Params:      capability.SingleParam("input", "Task description (natural language)"),
 		Risk:        risk,
 		Tags:        []string{"ref:" + m.Ref, "sha:" + m.SHA[:12]},
 	}
@@ -314,20 +314,20 @@ func buildAgentDelegate(m *PackManifest, snapshotFork bool, hub func(string) (ca
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "skill", Domain: m.NS, Name: m.Name, Version: m.Version},
 		Description: m.Description,
-		Params:      capability.SingleParam("input", "任务描述(自然语言)"),
+		Params:      capability.SingleParam("input", "Task description (natural language)"),
 		Risk:        capability.RiskMutating,
 		Tags:        []string{"ref:" + m.Ref, "sha:" + m.SHA[:12], "agent:" + m.Agent},
 	}
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
 		target, ok := hub(m.Agent)
 		if !ok {
-			return "", fmt.Errorf("skillpack %s: frontmatter 指定的 agent %q 不存在", m.Ref, m.Agent)
+			return "", fmt.Errorf("skillpack %s: the agent %q specified in frontmatter does not exist", m.Ref, m.Agent)
 		}
 		if snapshotFork {
 			ctx = runctx.WithForkContext(ctx)
 		}
 		task := capability.ParseSingle(argsJSON, "input")
-		instr := "[技能指令]\n" + m.Body + "\n\n[任务]\n" + task
+		instr := "[Skill instructions]\n" + m.Body + "\n\n[Task]\n" + task
 		payload, _ := json.Marshal(map[string]string{"task": instr})
 		return capability.Invoke(ctx, target, string(payload))
 	})
@@ -338,8 +338,8 @@ func buildAgentDelegate(m *PackManifest, snapshotFork bool, hub func(string) (ca
 func packReadCap(dir string) capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "pack", Name: "pack_read"},
-		Description: "读取技能包自带的参考文件(仅限包内打包的文档/模板,path 为空列清单)。注意:用户的文件不在包内,读写用户文件请用脚本执行工具(如 python)。",
-		Params:      capability.SingleParam("path", "包内相对路径;空 = 列出文件清单"),
+		Description: "Read a reference file bundled with the skill pack (limited to docs/templates packaged inside the pack; an empty path lists the manifest). Note: the user's files are not inside the pack — to read or write the user's files, use a script execution tool (e.g. python).",
+		Params:      capability.SingleParam("path", "Relative path inside the pack; empty = list the file manifest"),
 	}
 	return capability.New(meta, func(_ context.Context, argsJSON string) (string, error) {
 		var args struct {
@@ -369,11 +369,11 @@ func packReadCap(dir string) capability.Capability {
 			return "", err
 		}
 		if abs != base && !strings.HasPrefix(abs, base+string(filepath.Separator)) {
-			return "路径越界:pack_read 只能读技能包自带的文件。要访问用户的文件路径,请改用脚本执行工具(如 python 的 open())。", nil
+			return "path out of bounds: pack_read can only read files bundled with the skill pack. to access the user's file paths, use a script execution tool instead (e.g. python's open()).", nil
 		}
 		data, err := os.ReadFile(abs)
 		if err != nil {
-			return fmt.Sprintf("读取失败:%v", err), nil
+			return fmt.Sprintf("read failed: %v", err), nil
 		}
 		return string(data), nil
 	})

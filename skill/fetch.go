@@ -173,7 +173,7 @@ func EnsurePack(ctx context.Context, root string, spec PackSpec, opts PackOption
 		return PackDir{}, err
 	}
 	if !ref.pinned && !opts.AllowUnpinned {
-		return PackDir{}, fmt.Errorf("skillpack %s: ref 未锁定版本(github 需 @tag|@sha,https 需 integrity);确需漂移请显式 allow_unpinned: true", spec.Use)
+		return PackDir{}, fmt.Errorf("skillpack %s: ref is not version-pinned (github needs @tag|@sha, https needs integrity); set allow_unpinned: true explicitly if drift is intended", spec.Use)
 	}
 	lf, err := readLock(root)
 	if err != nil {
@@ -190,7 +190,7 @@ func EnsurePack(ctx context.Context, root string, spec PackSpec, opts PackOption
 				return PackDir{}, err
 			}
 			if sha != entry.SHA256 {
-				return PackDir{}, fmt.Errorf("skillpack %s: 本地内容与 skills.lock 不符(篡改或漂移)\n  目录: %s\n  期望: %s\n  实际: %s\n  确认变更请删除该目录与 lock 条目后重新装配", spec.Use, dir, entry.SHA256, sha)
+				return PackDir{}, fmt.Errorf("skillpack %s: local content does not match skills.lock (tampering or drift)\n  dir: %s\n  want: %s\n  got: %s\n  to accept the change, delete this directory and the lock entry, then re-assemble", spec.Use, dir, entry.SHA256, sha)
 			}
 			ns, name, _ := splitPackName(entry.Name)
 			return PackDir{Dir: dir, Ref: spec.Use, NS: ns, Name: name, Version: entry.Version, SHA: sha}, nil
@@ -198,7 +198,7 @@ func EnsurePack(ctx context.Context, root string, spec PackSpec, opts PackOption
 	}
 
 	if opts.RequireLocal && ref.kind != "file" {
-		return PackDir{}, fmt.Errorf("skillpack %s: 本地未物化且 sync: require-local(先在有网环境完成一次装配或运行打包期 sync)", spec.Use)
+		return PackDir{}, fmt.Errorf("skillpack %s: not materialized locally and sync: require-local (run one assembly in a networked environment first, or run the build-time sync)", spec.Use)
 	}
 
 	// 拉取到临时目录。
@@ -264,7 +264,7 @@ func EnsurePack(ctx context.Context, root string, spec PackSpec, opts PackOption
 	}
 	// 与既有 lock 比对:重物化必须复现同一内容(file: 例外,漂移是预期)。
 	if entry != nil && ref.kind != "file" && entry.SHA256 != sha {
-		return PackDir{}, fmt.Errorf("skillpack %s: 重新拉取的内容与 skills.lock 不符(上游漂移)\n  期望: %s\n  实际: %s\n  确认接受请删除 lock 条目后重新装配", spec.Use, entry.SHA256, sha)
+		return PackDir{}, fmt.Errorf("skillpack %s: re-fetched content does not match skills.lock (upstream drift)\n  want: %s\n  got: %s\n  to accept, delete the lock entry and re-assemble", spec.Use, entry.SHA256, sha)
 	}
 
 	final := packDirPath(root, ns+"/"+name, version)
@@ -294,7 +294,7 @@ func packDirPath(root, fullName, version string) string {
 // splitPackName 拆 "ns/name";裸名默认 ns=pack(标识外部供给来源)。
 func splitPackName(full string) (ns, name string, err error) {
 	if full == "" {
-		return "", "", fmt.Errorf("skillpack: SKILL.md frontmatter 缺 name 且未提供本地覆盖")
+		return "", "", fmt.Errorf("skillpack: SKILL.md frontmatter is missing name and no local override was provided")
 	}
 	if !strings.Contains(full, "/") {
 		return "pack", full, nil
@@ -316,11 +316,11 @@ func download(ctx context.Context, url string) ([]byte, error) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("下载失败: %w", err)
+		return nil, fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("下载失败: %s → HTTP %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("download failed: %s → HTTP %d", url, resp.StatusCode)
 	}
 	const maxArchive = 128 << 20 // 128MB 上限,防拉爆
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxArchive+1))
@@ -328,7 +328,7 @@ func download(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > maxArchive {
-		return nil, fmt.Errorf("归档超过 %dMB 上限", maxArchive>>20)
+		return nil, fmt.Errorf("archive exceeds the %dMB limit", maxArchive>>20)
 	}
 	return raw, nil
 }
@@ -336,11 +336,11 @@ func download(ctx context.Context, url string) ([]byte, error) {
 func verifyIntegrity(raw []byte, integrity string) error {
 	want, ok := strings.CutPrefix(integrity, "sha256:")
 	if !ok {
-		return fmt.Errorf("integrity 只支持 sha256:<hex>,got %q", integrity)
+		return fmt.Errorf("integrity only supports sha256:<hex>, got %q", integrity)
 	}
 	sum := sha256.Sum256(raw)
 	if got := hex.EncodeToString(sum[:]); got != want {
-		return fmt.Errorf("integrity 校验失败\n  期望: sha256:%s\n  实际: sha256:%s", want, got)
+		return fmt.Errorf("integrity check failed\n  want: sha256:%s\n  got: sha256:%s", want, got)
 	}
 	return nil
 }
@@ -350,13 +350,13 @@ func verifyIntegrity(raw []byte, integrity string) error {
 func unzip(raw []byte, dst, subdir string) (string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		return "", fmt.Errorf("解包失败: %w", err)
+		return "", fmt.Errorf("unzip failed: %w", err)
 	}
 	out := filepath.Join(dst, "unzipped")
 	for _, f := range zr.File {
 		rel := filepath.Clean(filepath.FromSlash(f.Name))
 		if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-			return "", fmt.Errorf("归档含非法路径 %q", f.Name)
+			return "", fmt.Errorf("archive contains an illegal path %q", f.Name)
 		}
 		target := filepath.Join(out, rel)
 		if f.FileInfo().IsDir() {
@@ -392,7 +392,7 @@ func unzip(raw []byte, dst, subdir string) (string, error) {
 		root = filepath.Join(root, filepath.FromSlash(subdir))
 	}
 	if st, err := os.Stat(root); err != nil || !st.IsDir() {
-		return "", fmt.Errorf("归档内未找到包目录 %q", subdir)
+		return "", fmt.Errorf("pack directory %q not found in the archive", subdir)
 	}
 	return root, nil
 }
@@ -418,7 +418,7 @@ func copyTree(src, dst string) error {
 			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("skillpack: 包内不允许符号链接: %s", rel)
+			return fmt.Errorf("skillpack: symlinks are not allowed inside a pack: %s", rel)
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {

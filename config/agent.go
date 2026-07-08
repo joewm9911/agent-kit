@@ -64,20 +64,20 @@ func resolveStoreRef(ref string, stores []StoreInstance, wantKind string) (strin
 		return "", nil, 0, err
 	}
 	if r.Kind != "store" {
-		return "", nil, 0, fmt.Errorf("%s: 不是 store 引用(kind=%s)", ref, r.Kind)
+		return "", nil, 0, fmt.Errorf("%s: not a store ref (kind=%s)", ref, r.Kind)
 	}
 	if r.Domain != wantKind {
-		return "", nil, 0, fmt.Errorf("%s: store kind 为 %q,该槽需要 %q", ref, r.Domain, wantKind)
+		return "", nil, 0, fmt.Errorf("%s: store kind is %q, this slot requires %q", ref, r.Domain, wantKind)
 	}
 	for _, s := range stores {
 		if s.Name == r.Name {
 			if s.Kind != wantKind {
-				return "", nil, 0, fmt.Errorf("store 实例 %q 的 kind 为 %q,与槽 %q 不符", s.Name, s.Kind, wantKind)
+				return "", nil, 0, fmt.Errorf("store instance %q has kind %q, which does not match slot %q", s.Name, s.Kind, wantKind)
 			}
 			return s.Type, s.Config, s.TTL.Std(), nil
 		}
 	}
-	return "", nil, 0, fmt.Errorf("%s: 未声明名为 %q 的 store 实例", ref, r.Name)
+	return "", nil, 0, fmt.Errorf("%s: no store instance named %q is declared", ref, r.Name)
 }
 
 // resolveRetrieverRef 解析 retriever 槽引用:cap://retriever/<kind>/<name>
@@ -91,17 +91,17 @@ func resolveRetrieverRef(ref string, retrievers []RetrieverInstance, wantKind st
 		return "", nil, err
 	}
 	if r.Kind != "retriever" {
-		return "", nil, fmt.Errorf("%s: 不是 retriever 引用(kind=%s)", ref, r.Kind)
+		return "", nil, fmt.Errorf("%s: not a retriever ref (kind=%s)", ref, r.Kind)
 	}
 	if r.Domain != wantKind {
-		return "", nil, fmt.Errorf("%s: retriever kind 为 %q,该槽需要 %q", ref, r.Domain, wantKind)
+		return "", nil, fmt.Errorf("%s: retriever kind is %q, this slot requires %q", ref, r.Domain, wantKind)
 	}
 	for _, rv := range retrievers {
 		if rv.Name == r.Name {
 			return rv.Type, rv.Config, nil
 		}
 	}
-	return "", nil, fmt.Errorf("%s: 未声明名为 %q 的 retriever 实例", ref, r.Name)
+	return "", nil, fmt.Errorf("%s: no retriever instance named %q is declared", ref, r.Name)
 }
 
 // resolveKV 解析 store 引用并构建一个 KV 后端(ref 为空 → inmemory 默认;
@@ -217,7 +217,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		return nil, err
 	}
 	if ac.Memory.ToolsLegacy != nil {
-		return nil, fmt.Errorf("agent %s: memory.tools 已改名 expose_tools(避免与工具列表语义的 tools 冲突)", ac.Name)
+		return nil, fmt.Errorf("agent %s: memory.tools has been renamed expose_tools (to avoid clashing with tools that means the tool list)", ac.Name)
 	}
 	if ac.Memory.ExposeTools || kvK > 0 {
 		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "memory")
@@ -416,7 +416,7 @@ func autoRecall(kv memory.Store, scope memory.ScopeConfig, retr session.Retrieve
 		if kv != nil && kvK > 0 {
 			if hits, err := kv.Search(ctx, scope.ReadScopes(ctx), query, kvK); err == nil {
 				for k, v := range hits {
-					out = append(out, fmt.Sprintf("长期记忆 %s: %s", k, v))
+					out = append(out, fmt.Sprintf("Long-term memory %s: %s", k, v))
 				}
 			}
 		}
@@ -427,7 +427,7 @@ func autoRecall(kv memory.Store, scope memory.ScopeConfig, retr session.Retrieve
 				if window > 0 && len(raw) > window {
 					older := raw[:len(raw)-window]
 					for _, s := range retr.Retrieve(ctx, older, query, sessK) {
-						out = append(out, "早前对话 "+s)
+						out = append(out, "Earlier conversation "+s)
 					}
 				}
 			}

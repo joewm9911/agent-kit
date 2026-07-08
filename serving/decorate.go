@@ -50,7 +50,7 @@ func LookupDecorator(name string) (Decorator, error) {
 	defer extMu.RUnlock()
 	d, ok := decorators[name]
 	if !ok {
-		return nil, fmt.Errorf("serving: unknown decorator %q(需先 RegisterDecorator)", name)
+		return nil, fmt.Errorf("serving: unknown decorator %q (call RegisterDecorator first)", name)
 	}
 	return d, nil
 }
@@ -71,7 +71,7 @@ func LookupProgressHandler(name string) (ProgressHandler, error) {
 	defer extMu.RUnlock()
 	h, ok := progressers[name]
 	if !ok {
-		return nil, fmt.Errorf("serving: unknown progress handler %q(需先 RegisterProgressHandler)", name)
+		return nil, fmt.Errorf("serving: unknown progress handler %q (call RegisterProgressHandler first)", name)
 	}
 	return h, nil
 }

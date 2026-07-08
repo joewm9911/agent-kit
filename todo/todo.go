@@ -141,18 +141,18 @@ func validate(items []todoItem) string {
 	return ""
 }
 
-const todoWriteDesc = `写入/更新任务计划清单(整体替换)。使用规范:
-- 何时用:任务需要 3 步以上、或用户给出多项要求时,开始动手前先列计划;简单问答不要用。
-- 开始做某项前,先把它标为 in_progress(同时最多一项进行中,写入时强制校验)。
-- 完成一项立刻标 completed,不要攒到最后一起标;做的过程中发现新任务,加入清单。
-- 没有完成的事不许标 completed:测试失败、部分完成、被阻塞都保持 in_progress 并新增说明项。
-- 一轮只调用一次;整体替换语义:每次提交完整清单。
+const todoWriteDesc = `Write/update the task plan list (whole-list replacement). Usage rules:
+- When to use: when a task needs 3+ steps, or the user gives multiple requirements, lay out a plan before starting work; do not use for simple Q&A.
+- Before starting an item, mark it in_progress (at most one in_progress at a time, enforced on write).
+- Mark an item completed the moment it is done; do not batch them up to mark at the end; if new tasks surface while working, add them to the list.
+- Never mark something completed that is not done: on test failure, partial completion, or being blocked, keep it in_progress and add a note item.
+- Call at most once per turn; whole-list replacement semantics: submit the complete list every time.
 
-示例:
-- 「分析销量下滑的原因并给出补救建议」→ 用。理由:要查销售、查库存、对比归因、给建议,3 步以上且前一步产出决定后一步怎么做。
-- 「把 A、B、C 三个商品各补货 50 件」→ 用。理由:多项同构要求,逐项执行逐项标记,漏没漏一目了然。
-- 「A 商品现在库存多少?」→ 不用。理由:一次查询就能回答,列计划纯属开销。
-- 「你支持哪些操作?」→ 不用。理由:纯对话,没有要执行的步骤。`
+Examples:
+- "Analyze why sales are declining and give remediation suggestions" -> use it. Reason: you must check sales, check inventory, compare and attribute, and give suggestions — 3+ steps, and each step's output decides how the next is done.
+- "Restock products A, B, and C by 50 units each" -> use it. Reason: multiple isomorphic requirements, executed and marked item by item, so nothing is missed at a glance.
+- "How much stock does product A have right now?" -> don't. Reason: a single query answers it; a plan is pure overhead.
+- "What operations do you support?" -> don't. Reason: pure conversation, no steps to execute.`
 
 // Capabilities 返回 todo_write / todo_read 两个能力(闭包捕获 t.kv)。
 func (t *Todo) Capabilities() []capability.Capability {
@@ -161,13 +161,13 @@ func (t *Todo) Capabilities() []capability.Capability {
 		Description: todoWriteDesc,
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"todos": {
-				Type: schema.Array, Required: true, Desc: "完整的任务清单",
+				Type: schema.Array, Required: true, Desc: "The complete task list",
 				ElemInfo: &schema.ParameterInfo{
 					Type: schema.Object,
 					SubParams: map[string]*schema.ParameterInfo{
-						"content":     {Type: schema.String, Desc: "任务内容(简短祈使句)", Required: true},
-						"status":      {Type: schema.String, Desc: "状态", Enum: []string{"pending", "in_progress", "completed"}, Required: true},
-						"active_form": {Type: schema.String, Desc: "进行中的现在时表述,如「正在检索日志」,用于进度展示"},
+						"content":     {Type: schema.String, Desc: "Task content (short imperative phrase)", Required: true},
+						"status":      {Type: schema.String, Desc: "Status", Enum: []string{"pending", "in_progress", "completed"}, Required: true},
+						"active_form": {Type: schema.String, Desc: "Present-tense phrasing of the in-progress item, e.g. \"Searching logs\", used for progress display"},
 					},
 				},
 			},
@@ -205,7 +205,7 @@ func (t *Todo) Capabilities() []capability.Capability {
 
 	readMeta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_read"},
-		Description: "读取当前任务计划清单。",
+		Description: "Read the current task plan list.",
 		Params:      capability.NoParams, // 无参工具:空 schema 会被部分厂商 400
 	}
 	read := capability.New(readMeta, func(ctx context.Context, _ string) (string, error) {

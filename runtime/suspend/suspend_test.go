@@ -130,7 +130,7 @@ func TestApproveSuspendAndReplay(t *testing.T) {
 	if !errors.As(err, &suspended) {
 		t.Fatalf("expect suspend, got %v", err)
 	}
-	if !strings.Contains(suspended.Question, "批准") {
+	if !strings.Contains(suspended.Question, "Approval required") {
 		t.Fatalf("question = %q", suspended.Question)
 	}
 	if err := AnswerPending(context.Background(), kv, suspended.InteractionID, "同意"); err != nil {

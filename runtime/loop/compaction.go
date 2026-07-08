@@ -123,11 +123,11 @@ func (c *CompactionConfig) ResolvePrompt(ctx context.Context, r prompt.Source) e
 	return nil
 }
 
-const defaultSummarizePrompt = `把以下对话与工具执行记录压缩成要点摘要,保留:用户目标、关键事实与数据、已完成的操作、未完成的事项。丢弃寒暄与过程细节。`
+const defaultSummarizePrompt = `Compress the following conversation and tool-execution records into a bullet-point summary, keeping: the user's goal, key facts and data, actions already completed, and outstanding items. Drop pleasantries and process details.`
 
 // mergeClause 是框架追加的归并指令:增量归并是压缩算法的机制部分,
 // 不随内容策略被配置覆盖。
-const mergeClause = `若输入含 [已有摘要] 段,把它与新内容归并为一份摘要,不要丢失其中的既有要点。`
+const mergeClause = `If the input contains an [Existing summary] section, merge it with the new content into a single summary without losing any of its existing points.`
 
 func (c CompactionConfig) summarizePrompt() string {
 	p := c.resolvedPrompt
@@ -198,7 +198,7 @@ func Compactor(m model.ToolCallingChatModel, cfg CompactionConfig) engine.Messag
 			if cut <= prev.prefixLen || cut >= len(msgs) {
 				return view
 			}
-			delta := append([]*schema.Message{schema.SystemMessage("[已有摘要]\n" + prev.summary)}, msgs[prev.prefixLen:cut]...)
+			delta := append([]*schema.Message{schema.SystemMessage("[Existing summary]\n" + prev.summary)}, msgs[prev.prefixLen:cut]...)
 			summary, err := Summarize(ctx, m, cfg, delta)
 			if err != nil {
 				return view
@@ -246,7 +246,7 @@ func (e summaryEntry) valid(msgs []*schema.Message) bool {
 // 切割点之后的原始消息。
 func (e summaryEntry) view(msgs []*schema.Message) []*schema.Message {
 	out := make([]*schema.Message, 0, len(msgs)-e.prefixLen+2)
-	out = append(out, schema.SystemMessage("[早前对话与执行记录摘要]\n"+e.summary))
+	out = append(out, schema.SystemMessage("[Earlier conversation and execution summary]\n"+e.summary))
 	for _, m := range msgs[:e.prefixLen] {
 		if m.Role == schema.User && m.Content != "" {
 			out = append(out, m) // 锚定:被摘要覆盖的最初任务原文常驻

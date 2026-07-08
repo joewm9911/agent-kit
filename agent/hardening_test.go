@@ -144,7 +144,7 @@ func TestSummaryViewAnchorsFirstUserMessage(t *testing.T) {
 	if synthetic != 2 {
 		t.Fatalf("synthetic = %d, want 2 (summary+anchor)", synthetic)
 	}
-	if !strings.HasPrefix(view[0].Content, "[已有摘要]") {
+	if !strings.HasPrefix(view[0].Content, "[Existing summary]") {
 		t.Fatalf("view[0] should be merge-labeled summary, got %q", view[0].Content)
 	}
 	if view[1].Role != schema.User || !strings.Contains(view[1].Content, "归档表不动") {

@@ -119,8 +119,8 @@ func TestExecValidation(t *testing.T) {
 		tc   ToolConfig
 		want string
 	}{
-		{"unknown-runtime-no-fallback", ToolConfig{Name: "x", Runtime: "ruby"}, "未知 runtime"},
-		{"engine-and-command", ToolConfig{Name: "x", Runtime: "bash", Sandbox: "fake", Command: []string{"bash", "-c"}}, "互斥"},
+		{"unknown-runtime-no-fallback", ToolConfig{Name: "x", Runtime: "ruby"}, "unknown runtime"},
+		{"engine-and-command", ToolConfig{Name: "x", Runtime: "bash", Sandbox: "fake", Command: []string{"bash", "-c"}}, "mutually exclusive"},
 		{"unknown-sandbox", ToolConfig{Name: "x", Runtime: "python", Sandbox: "ghost"}, "unknown sandbox"},
 		{"missing-name", ToolConfig{Runtime: "sh"}, "required"},
 	}

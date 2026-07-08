@@ -224,13 +224,31 @@ func (s *suspendingInteractor) Ask(ctx context.Context, question string) (string
 }
 
 func (s *suspendingInteractor) Approve(ctx context.Context, req runctx.ApprovalRequest) (bool, error) {
-	q := fmt.Sprintf("需要你批准一个操作:\n%s\n参数:%s\n回复「同意」执行,回复其他内容取消。", req.Description, req.Arguments)
-	ans, err := s.resolve(ctx, q)
+	ans, err := s.resolve(ctx, fmt.Sprintf(DefaultApprovalPrompt, req.Description, req.Arguments))
 	if err != nil {
 		return false, err
 	}
-	ans = strings.TrimSpace(ans)
-	return ans == "同意" || strings.EqualFold(ans, "y") || strings.EqualFold(ans, "yes"), nil
+	return IsAffirmative(ans), nil
+}
+
+// DefaultApprovalPrompt formats the approval question sent to the user;
+// the two %s are the operation description and its arguments. Shared by the
+// suspend-mode and in-process HITL paths so the wording stays identical.
+const DefaultApprovalPrompt = "Approval required for an operation:\n%s\nArguments: %s\nReply \"yes\" to proceed, anything else to cancel."
+
+// IsAffirmative reports whether a user's reply approves the pending
+// operation. It accepts common affirmatives in English and Chinese so a
+// multilingual deployment works without extra configuration.
+func IsAffirmative(reply string) bool {
+	switch strings.ToLower(strings.TrimSpace(reply)) {
+	case "y", "yes", "ok", "approve":
+		return true
+	}
+	switch strings.TrimSpace(reply) {
+	case "同意", "是", "批准", "好":
+		return true
+	}
+	return false
 }
 
 func (s *suspendingInteractor) resolve(ctx context.Context, question string) (string, error) {

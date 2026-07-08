@@ -80,7 +80,7 @@ func TestComponentTodoEngineRestriction(t *testing.T) {
 		Engine: "plan-execute",
 		Todo:   true,
 	}, Deps{DefaultModel: testmodel.New()})
-	if err == nil || !strings.Contains(err.Error(), "只对 react") {
+	if err == nil || !strings.Contains(err.Error(), "only makes sense for react") {
 		t.Fatalf("expect engine restriction, got %v", err)
 	}
 }

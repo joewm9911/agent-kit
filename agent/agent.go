@@ -399,7 +399,7 @@ func sessionView(all []*schema.Message) []*schema.Message {
 const summaryTagPrefix = "[[rolling-summary:"
 
 func makeSummaryMsg(covered int, text string) *schema.Message {
-	return schema.SystemMessage(fmt.Sprintf("%s%d]]\n[会话摘要]\n%s", summaryTagPrefix, covered, text))
+	return schema.SystemMessage(fmt.Sprintf("%s%d]]\n[Conversation summary]\n%s", summaryTagPrefix, covered, text))
 }
 
 // splitSummaryView 解析全量历史:剔除所有摘要标记消息,按最新一条
@@ -435,9 +435,9 @@ func splitSummaryView(all []*schema.Message) (covered int, view []*schema.Messag
 		covered = len(raw)
 	}
 	if lastText != "" {
-		// 存储格式带 [会话摘要] 标签;视图侧换成归并指令识别的 [已有摘要]。
-		body := strings.TrimPrefix(lastText, "[会话摘要]\n")
-		view = append(view, schema.SystemMessage("[已有摘要]\n"+body))
+		// 存储格式带 [Conversation summary] 标签;视图侧换成归并指令识别的 [Existing summary]。
+		body := strings.TrimPrefix(lastText, "[Conversation summary]\n")
+		view = append(view, schema.SystemMessage("[Existing summary]\n"+body))
 		synthetic = 1
 		// 锚定:最初的任务描述已被摘要覆盖时,原文常驻视图头部——
 		// 多次归并后"最初到底要做什么"不漂移。

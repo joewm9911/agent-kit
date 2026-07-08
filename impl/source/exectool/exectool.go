@@ -125,7 +125,7 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 		return nil, fmt.Errorf("tool: name and runtime are required")
 	}
 	if tc.Sandbox != "" && len(tc.Command) > 0 {
-		return nil, fmt.Errorf("tool %s: sandbox 与 command 互斥", tc.Name)
+		return nil, fmt.Errorf("tool %s: sandbox and command are mutually exclusive", tc.Name)
 	}
 
 	// 风险默认 dangerous(跑代码)。
@@ -158,7 +158,7 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 	case sbName != "":
 		f, ok := exec.Lookup(sbName)
 		if !ok {
-			return nil, fmt.Errorf("tool %s: unknown sandbox %q(需先 RegisterSandbox)", tc.Name, sbName)
+			return nil, fmt.Errorf("tool %s: unknown sandbox %q (call RegisterSandbox first)", tc.Name, sbName)
 		}
 		// runtime 注入沙箱配置:沙箱据此选容器内解释器(docker 等据 runtime
 		// 决定跑 python/node/bash)。
@@ -169,26 +169,26 @@ func newTool(srcName string, tc ToolConfig, srcTimeout time.Duration, workdir st
 		cmdTmpl = tc.Command
 	default:
 		if def.require {
-			return nil, fmt.Errorf("tool %s: require_sandbox 已开但该工具无沙箱可用(既无工具级 sandbox,也无 exec.default_sandbox)——拒绝宿主直跑", tc.Name)
+			return nil, fmt.Errorf("tool %s: require_sandbox is on but no sandbox is available for this tool (neither a tool-level sandbox nor exec.default_sandbox) — refusing to run directly on the host", tc.Name)
 		}
 		t, ok := builtinTemplates[tc.Runtime]
 		if !ok {
-			return nil, fmt.Errorf("tool %s: 未知 runtime %q 且未提供 command/sandbox(内置:bash|sh|python|node)", tc.Name, tc.Runtime)
+			return nil, fmt.Errorf("tool %s: unknown runtime %q and no command/sandbox provided (built-in: bash|sh|python|node)", tc.Name, tc.Runtime)
 		}
 		cmdTmpl = t
 	}
 
 	desc := tc.Description
 	if desc == "" {
-		desc = "用 " + tc.Runtime + " 执行一段脚本并返回输出。script=脚本内容,args=空格分隔参数。" +
-			"适用:没有现成工具覆盖的计算、数据转换、批处理;不适用:已有专用工具能做的事(优先用专用工具),以及获取脚本无法访问的业务数据(用查询工具,不要在脚本里编造数据)。"
+		desc = "Run a script with " + tc.Runtime + " and return its output. script = the script body, args = space-separated arguments. " +
+			"Use for: computation, data transformation, or batch processing not covered by an existing tool. Do not use for: things an existing dedicated tool can do (prefer the dedicated tool), or fetching business data the script cannot access (use a query tool; do not fabricate data in the script)."
 	}
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: srcName, Name: tc.Name},
 		Description: desc,
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"script": {Type: schema.String, Desc: "脚本内容", Required: true},
-			"args":   {Type: schema.String, Desc: "参数,空格分隔(可空)"},
+			"script": {Type: schema.String, Desc: "The script body", Required: true},
+			"args":   {Type: schema.String, Desc: "Arguments, space-separated (may be empty)"},
 		}),
 		Risk: risk,
 	}

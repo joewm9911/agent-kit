@@ -36,7 +36,7 @@ type backend struct {
 func (b *backend) packDirs() ([]skill.PackDir, error) {
 	nss, err := os.ReadDir(b.root)
 	if err != nil {
-		return nil, fmt.Errorf("einoskill: 读取技能根目录 %s: %w", b.root, err)
+		return nil, fmt.Errorf("einoskill: read skill root directory %s: %w", b.root, err)
 	}
 	var out []skill.PackDir
 	for _, ns := range nss {
@@ -128,5 +128,5 @@ func (b *backend) Get(ctx context.Context, name string) (adkskill.Skill, error) 
 			BaseDirectory: abs,
 		}, nil
 	}
-	return adkskill.Skill{}, fmt.Errorf("einoskill: 技能 %q 不存在(名字形如 <ns>/<name>)", name)
+	return adkskill.Skill{}, fmt.Errorf("einoskill: skill %q does not exist (name looks like <ns>/<name>)", name)
 }

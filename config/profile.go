@@ -111,7 +111,7 @@ func (p Profile) merge(nearer Profile) Profile {
 // rejectLegacyKeys 拦截已改名的旧配置键(fail fast 即迁移指南)。
 func (p Profile) rejectLegacyKeys(where string) error {
 	if p.Loop.MaxStepsLegacy != nil {
-		return fmt.Errorf("%s: max_steps 已改名 max_rounds(语义本就是轮数:一轮=一次模型决策+一批工具)", where)
+		return fmt.Errorf("%s: max_steps has been renamed max_rounds (the semantics were always rounds: one round = one model decision + one batch of tools)", where)
 	}
 	return nil
 }
@@ -120,7 +120,7 @@ func (p Profile) rejectLegacyKeys(where string) error {
 // 不得声明 model。装配期调用,fail fast。
 func (p Profile) validateNoModel(where string) error {
 	if p.Model != nil {
-		return fmt.Errorf("%s: model 不能在此声明(能力不能自己指定模型;model 只由 app / agent自己 / agent给namespace指定 三处配置)", where)
+		return fmt.Errorf("%s: model cannot be declared here (a capability cannot pick its own model; model is configured in only three places: app / the agent itself / the agent giving one to a namespace)", where)
 	}
 	return nil
 }

@@ -192,7 +192,7 @@ func TestCardReplyMode(t *testing.T) {
 	h(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c9"}, Text: "问题", EventID: "ec1"})
 
 	waitFor(t, func() bool { return len(fc.updates()) >= 1 })
-	if msgs := fc.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], "处理中") {
+	if msgs := fc.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], "Working") {
 		t.Fatalf("placeholder expected, got %v", msgs)
 	}
 	if ups := fc.updates(); !strings.Contains(ups[0], "mid-1:最终答案") {
@@ -274,7 +274,7 @@ func TestDecoratorLifecycle(t *testing.T) {
 	if len(answerOut.Progress) == 0 || !strings.Contains(answerOut.Progress[0], "查库存") {
 		t.Fatalf("answer progress lines missing: %+v", answerOut.Progress)
 	}
-	if !strings.Contains(answerOut.Meta, "1 次工具调用") {
+	if !strings.Contains(answerOut.Meta, "1 tool calls") {
 		t.Fatalf("answer meta missing: %q", answerOut.Meta)
 	}
 	// Native 透传到通道

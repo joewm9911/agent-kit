@@ -12,6 +12,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/runtime/observe"
+	"github.com/joewm9911/agent-kit/runtime/suspend"
 )
 
 // Binding 把一个 channel.Channel 路由到一个 Agent。
@@ -27,8 +28,12 @@ type Binding struct {
 	ReplyMode string
 	// AskTimeout 是 ask_user / 审批等待用户回复的超时,默认 10 分钟。
 	AskTimeout time.Duration
-	// Placeholder 是 processing 占位文案,空 = 「⏳ 处理中...」。
+	// Placeholder 是 processing 占位文案的快捷覆盖,空 = 取 Texts.Placeholder
+	// (再空则英文默认「⏳ Working…」)。
 	Placeholder string
+	// Texts 覆盖面向用户的文案(nil = 全英文默认);部分填充即可,空字段
+	// 回落默认。IM 部署(如中文机器人)在此配中文。
+	Texts *Texts
 	// Decorator 装饰每条出站消息(nil = 不装饰,按 ReplyMode 默认策略)。
 	Decorator Decorator
 	// OnProgress 是第三方进度订阅(装了它,内置的卡片过程更新让位)。
@@ -128,13 +133,13 @@ func (d *Dispatcher) Handler(b Binding) channel.InboundHandler {
 			if isInterruptText(in.Text) {
 				d.mu.Unlock()
 				b.Agent.Interrupt(key)
-				_, _ = d.send(ctx, b, in.Conv, channel.Outbound{Text: "好的,正在停止当前任务。"})
+				_, _ = d.send(ctx, b, in.Conv, channel.Outbound{Text: b.texts().Stopped})
 				return
 			}
 			if steer, ok := steerText(in.Text); ok {
 				d.mu.Unlock()
 				b.Agent.Steer(key, steer)
-				_, _ = d.send(ctx, b, in.Conv, channel.Outbound{Text: "已把你的话带给正在运行的任务。"})
+				_, _ = d.send(ctx, b, in.Conv, channel.Outbound{Text: b.texts().Steered})
 				return
 			}
 		}
@@ -158,7 +163,7 @@ func (d *Dispatcher) enqueue(ctx context.Context, b Binding, in channel.Inbound,
 	select {
 	case q <- job{b: b, in: in, turnID: turnID}:
 	default:
-		_, _ = b.Channel.Send(ctx, in.Conv, channel.Outbound{Text: "消息太多啦,请稍后再试。"})
+		_, _ = b.Channel.Send(ctx, in.Conv, channel.Outbound{Text: b.texts().Overloaded})
 	}
 }
 
@@ -229,14 +234,14 @@ func (d *Dispatcher) run(key string, j job) {
 		_, suspended, err := turn.finish(ctx, key, j.in.Text, runErr)
 		if suspended {
 			// 问句已由 notify 送达;占位收口为等待态,不留悬挂的"处理中"。
-			lc.close(ctx, channel.KindQuestion, "⏸ 已向你提问,回复后继续。")
+			lc.close(ctx, channel.KindQuestion, j.b.texts().Suspended)
 			return
 		}
 		runErr = err // 善终清理已在 finish 内;挂起持久化失败按错误收口
 	}
 	if runErr != nil {
 		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", runErr.Error()))
-		lc.close(ctx, channel.KindError, "处理失败:"+runErr.Error())
+		lc.close(ctx, channel.KindError, fmt.Sprintf(j.b.texts().Failure, runErr.Error()))
 		return
 	}
 	lc.close(ctx, channel.KindAnswer, answer)
@@ -244,7 +249,7 @@ func (d *Dispatcher) run(key string, j job) {
 
 // streamReply 先发占位消息,拿流式增量按节流间隔刷新同一条消息。
 func (d *Dispatcher) streamReply(ctx context.Context, j job) error {
-	msgID, err := j.b.Channel.Send(ctx, j.in.Conv, channel.Outbound{Text: "思考中...", Markdown: true})
+	msgID, err := j.b.Channel.Send(ctx, j.in.Conv, channel.Outbound{Text: j.b.texts().Thinking, Markdown: true})
 	if err != nil {
 		return err
 	}
@@ -342,13 +347,11 @@ func (i *imInteractor) Ask(ctx context.Context, question string) (string, error)
 }
 
 func (i *imInteractor) Approve(ctx context.Context, req runctx.ApprovalRequest) (bool, error) {
-	q := fmt.Sprintf("需要你批准一个操作:\n%s\n参数:%s\n回复「同意」执行,回复其他内容取消。", req.Description, req.Arguments)
-	ans, err := i.await(ctx, q)
+	ans, err := i.await(ctx, fmt.Sprintf(i.b.texts().Approval, req.Description, req.Arguments))
 	if err != nil {
 		return false, err
 	}
-	ans = strings.TrimSpace(ans)
-	return ans == "同意" || strings.EqualFold(ans, "y") || strings.EqualFold(ans, "yes"), nil
+	return suspend.IsAffirmative(ans), nil
 }
 
 func (i *imInteractor) await(ctx context.Context, question string) (string, error) {
@@ -369,7 +372,7 @@ func (i *imInteractor) await(ctx context.Context, question string) (string, erro
 	case ans := <-ch:
 		return ans, nil
 	case <-time.After(i.b.AskTimeout):
-		return "", fmt.Errorf("等待用户回复超时")
+		return "", fmt.Errorf("%s", i.b.texts().AskTimeout)
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}

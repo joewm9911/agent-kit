@@ -87,7 +87,7 @@ func TestStepPromptArgsFailFast(t *testing.T) {
 	// 工具步骤带 prompt
 	if _, err := resolveStepArgs(context.Background(), []engine.Step{
 		{Name: "t", Use: "tools/a/b", Prompt: prompt.Value{Literal: "x"}}}, r); err == nil ||
-		!strings.Contains(err.Error(), "只用于 use: model") {
+		!strings.Contains(err.Error(), "use: model") {
 		t.Fatalf("prompt on tool step must fail, got %v", err)
 	}
 	// 无效参数键:模板没有对应占位符
@@ -101,7 +101,7 @@ func TestStepPromptArgsFailFast(t *testing.T) {
 	if _, err := resolveStepArgs(context.Background(), []engine.Step{
 		{Name: "m", Use: "model", Prompt: prompt.Value{Literal: "p"},
 			Args: engine.StepArgs{Literal: "误当提示词"}}}, r); err == nil ||
-		!strings.Contains(err.Error(), "参数映射") {
+		!strings.Contains(err.Error(), "parameter mapping") {
 		t.Fatalf("scalar args on model step must fail, got %v", err)
 	}
 

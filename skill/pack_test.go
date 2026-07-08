@@ -138,7 +138,7 @@ func TestEnsurePackHTTPSPinnedByIntegrity(t *testing.T) {
 
 	// 未 pin:默认拒绝
 	if _, err := EnsurePack(context.Background(), root, PackSpec{Use: url}, PackOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "未锁定") {
+		!strings.Contains(err.Error(), "not version-pinned") {
 		t.Fatalf("unpinned must fail fast, got %v", err)
 	}
 	// allow_unpinned:放行且 lock 锁死
@@ -170,7 +170,7 @@ func TestEnsurePackHTTPSPinnedByIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := EnsurePack(context.Background(), root, PackSpec{Use: url}, PackOptions{AllowUnpinned: true}); err == nil ||
-		!strings.Contains(err.Error(), "不符") {
+		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("tamper must fail fast, got %v", err)
 	}
 }
@@ -319,7 +319,7 @@ func TestPackReadJail(t *testing.T) {
 		t.Fatalf("read: %q", out)
 	}
 	out, _ = capability.Invoke(ctx, pr, `{"path":"../../etc/passwd"}`)
-	if !strings.Contains(out, "越界") {
+	if !strings.Contains(out, "out of bounds") {
 		t.Fatalf("jail escape not blocked: %q", out)
 	}
 }
@@ -427,7 +427,7 @@ func TestManifestFrontMatterCompat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadManifest(pd2); err == nil || !strings.Contains(err.Error(), "互斥") {
+	if _, err := LoadManifest(pd2); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("agent+model must be mutually exclusive, got %v", err)
 	}
 }

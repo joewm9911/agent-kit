@@ -117,11 +117,11 @@ func resultStoreFrom(ctx context.Context) *ResultStore {
 // digestMaxInput 是送入消化模型的原文上限(rune),防止消化本身打爆窗口。
 const digestMaxInput = 20000
 
-const digestSystem = `你是结果消化器。把工具返回的原始结果压缩为与当前任务相关的要点:
-- 保留关键数据的原文:ID、时间戳、错误码、数字、路径、名称,不要改写;
-- 只做提取与压缩,不要添加任何推断或建议;
-- 与任务无关的部分用一句话概括其存在即可;
-- 输出不超过 800 字。`
+const digestSystem = `You are a result digester. Compress the raw tool output into the points relevant to the current task:
+- keep key data verbatim: IDs, timestamps, error codes, numbers, paths, names — do not rewrite them;
+- extract and compress only; do not add any inference or suggestion;
+- for parts unrelated to the task, note their existence in one sentence;
+- output at most 800 characters.`
 
 // DigestResults 给能力集套上大结果消化(Ring 0):结果超过 over(rune)
 // 时,全文存入 run 级暂存,由模型带着当前任务提取要点,摘要+取回指针

@@ -210,7 +210,7 @@ func TestWorkflowComponentRejectsNeeds(t *testing.T) {
 	err := buildNamespace(context.Background(), ns, nsDeps{
 		global: global, defaultModel: testmodel.New(), maxRisk: capability.RiskMutating,
 	})
-	if err == nil || !strings.Contains(err.Error(), "不支持 needs") {
+	if err == nil || !strings.Contains(err.Error(), "does not support needs") {
 		t.Fatalf("expect workflow needs rejection, got %v", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestGraphComponentMutuallyExclusive(t *testing.T) {
 	err := buildNamespace(context.Background(), ns, nsDeps{
 		global: global, defaultModel: testmodel.New(), maxRisk: capability.RiskMutating,
 	})
-	if err == nil || !strings.Contains(err.Error(), "互斥") {
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("expect mutual-exclusion error, got %v", err)
 	}
 }
@@ -389,7 +389,7 @@ func TestComponentExportImport(t *testing.T) {
 	err = buildNamespace(context.Background(), early,
 		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
 			maxRisk: capability.RiskMutating, exports: fresh})
-	if err == nil || !strings.Contains(err.Error(), "顺序") {
+	if err == nil || !strings.Contains(err.Error(), "assembly/mount order") {
 		t.Fatalf("out-of-order import must fail, got %v", err)
 	}
 
@@ -399,7 +399,7 @@ func TestComponentExportImport(t *testing.T) {
 	if err := buildNamespace(context.Background(), self,
 		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
 			maxRisk: capability.RiskMutating, exports: newComponentExports()}); err == nil ||
-		!strings.Contains(err.Error(), "自己") {
+		!strings.Contains(err.Error(), "cannot import itself") {
 		t.Fatalf("self import must fail, got %v", err)
 	}
 }

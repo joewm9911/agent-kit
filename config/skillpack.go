@@ -36,7 +36,7 @@ func (sc SkillpacksConfig) options() (skill.PackOptions, error) {
 	case "require-local":
 		return skill.PackOptions{RequireLocal: true, AllowUnpinned: sc.AllowUnpinned}, nil
 	default:
-		return skill.PackOptions{}, fmt.Errorf("skillpacks.sync: 只支持 auto|require-local,got %q", sc.Sync)
+		return skill.PackOptions{}, fmt.Errorf("skillpacks.sync: only auto|require-local are supported, got %q", sc.Sync)
 	}
 }
 
@@ -96,10 +96,10 @@ func buildSkillpack(ctx context.Context, root string, opts skill.PackOptions,
 		deps.AgentHub = hubs.agents.lookup
 		deps.ModelHub = hubs.models
 		if m.Agent != "" && !hubs.known[m.Agent] {
-			return nil, fmt.Errorf("skillpack %s: frontmatter 指定的 agent %q 未在本 app 声明", spec.Use, m.Agent)
+			return nil, fmt.Errorf("skillpack %s: agent %q specified in frontmatter is not declared in this app", spec.Use, m.Agent)
 		}
 	} else if m.Agent != "" {
-		return nil, fmt.Errorf("skillpack %s: frontmatter 声明 agent: %q,但当前装配路径不支持按名引用 agent", spec.Use, m.Agent)
+		return nil, fmt.Errorf("skillpack %s: frontmatter declares agent: %q, but the current assembly path does not support referencing agents by name", spec.Use, m.Agent)
 	}
 	var extra []capability.Capability
 	if len(m.Runtimes) > 0 {
@@ -114,7 +114,7 @@ func buildSkillpack(ctx context.Context, root string, opts skill.PackOptions,
 		})
 		src, err := source.New(ctx, "exec", "pack", execConf)
 		if err != nil {
-			return nil, fmt.Errorf("skillpack %s 含脚本(%v),需要 exec 源(空导入 impl/source/exectool): %w", spec.Use, m.Runtimes, err)
+			return nil, fmt.Errorf("skillpack %s contains scripts (%v) and needs an exec source (blank-import impl/source/exectool): %w", spec.Use, m.Runtimes, err)
 		}
 		if extra, err = src.Sync(ctx); err != nil {
 			return nil, fmt.Errorf("skillpack %s: exec tools: %w", spec.Use, err)

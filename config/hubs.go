@@ -38,10 +38,10 @@ func newSkillHubs(models []NamedModelConfig, retry loop.RetryConfig, agentNames 
 	idx := map[string]NamedModelConfig{}
 	for _, mc := range models {
 		if mc.Name == "" || mc.Provider == "" {
-			return nil, fmt.Errorf("models: 每个具名模型需要 name 与 provider")
+			return nil, fmt.Errorf("models: each named model needs a name and a provider")
 		}
 		if _, dup := idx[mc.Name]; dup {
-			return nil, fmt.Errorf("models: 具名模型 %q 重复声明", mc.Name)
+			return nil, fmt.Errorf("models: named model %q declared more than once", mc.Name)
 		}
 		idx[mc.Name] = mc
 	}
@@ -65,7 +65,7 @@ func newSkillHubs(models []NamedModelConfig, retry loop.RetryConfig, agentNames 
 				declared = append(declared, n)
 			}
 			sort.Strings(declared)
-			return nil, fmt.Errorf("具名模型 %q 未声明(顶层 models: 块;已声明:%s)", name, strings.Join(declared, ", "))
+			return nil, fmt.Errorf("named model %q is not declared (top-level models: block; declared: %s)", name, strings.Join(declared, ", "))
 		}
 		m, err := model.Build(ctx, mc.Provider, mc.Config)
 		if err != nil {

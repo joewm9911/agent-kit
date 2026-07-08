@@ -44,7 +44,7 @@ func TestSummarizeConfigurablePrompt(t *testing.T) {
 	if !strings.Contains(sys, "错误码与工单号") {
 		t.Fatalf("custom content policy missing: %q", sys)
 	}
-	if !strings.Contains(sys, "[已有摘要]") {
+	if !strings.Contains(sys, "[Existing summary]") {
 		t.Fatalf("framework merge clause must survive override: %q", sys)
 	}
 	if _, err := Summarize(context.Background(), m, cfg, []*schema.Message{schema.UserMessage("x")}); err != nil {
@@ -52,7 +52,7 @@ func TestSummarizeConfigurablePrompt(t *testing.T) {
 	}
 	// 缺省:内置内容策略 + 归并指令
 	def := CompactionConfig{}
-	if !strings.Contains(def.summarizePrompt(), "用户目标") || !strings.Contains(def.summarizePrompt(), "[已有摘要]") {
+	if !strings.Contains(def.summarizePrompt(), "user's goal") || !strings.Contains(def.summarizePrompt(), "[Existing summary]") {
 		t.Fatalf("default prompt malformed: %q", def.summarizePrompt())
 	}
 }

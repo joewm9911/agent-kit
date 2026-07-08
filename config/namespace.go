@@ -45,7 +45,7 @@ func newComponentExports() *componentExports {
 func (e *componentExports) add(ns, name string, c capability.Capability) error {
 	key := ns + "/" + name
 	if _, dup := e.comps[key]; dup {
-		return fmt.Errorf("exported component %q 重复(同名 namespace 装配了两次?)", key)
+		return fmt.Errorf("exported component %q is duplicated (was a namespace of the same name assembled twice?)", key)
 	}
 	e.comps[key] = c
 	return nil
@@ -128,10 +128,10 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	imports := map[string]bool{}
 	for _, imp := range ns.Imports {
 		if imp == ns.Name {
-			return fmt.Errorf("namespace %s: 不能 import 自己", ns.Name)
+			return fmt.Errorf("namespace %s: cannot import itself", ns.Name)
 		}
 		if !deps.exports.built[imp] {
-			return fmt.Errorf("namespace %s: import %q 未在此前装配——imports 依赖按装配/挂载顺序可见,把 %q 提前声明/挂载", ns.Name, imp, imp)
+			return fmt.Errorf("namespace %s: import %q was not assembled earlier—imports are visible in assembly/mount order, declare/mount %q before this", ns.Name, imp, imp)
 		}
 		imports[imp] = true
 	}
@@ -152,7 +152,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		return err
 	}
 	if len(ns.ToolsLegacy) > 0 {
-		return fmt.Errorf("namespace %s: tools 已改名 sources(它声明的是能力供给源,与顶层 sources: 同构;引用工具面的 tools 语义不变)", ns.Name)
+		return fmt.Errorf("namespace %s: tools has been renamed sources (it declares capability sources, isomorphic to the top-level sources:; the tools that references the tool surface keeps its meaning)", ns.Name)
 	}
 	local := source.NewCatalog(deps.maxRisk, deps.logger)
 	for _, tc := range ns.Sources {
@@ -236,9 +236,9 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		// 调用,react N 次,plan-execute N×M 次),不做隐式默认。
 		switch cc.Engine {
 		case "":
-			return fmt.Errorf("namespace %s: component %s: engine 必须显式声明:direct(单发)| react(循环)| plan-execute(规划循环)| reflection(反思)| router(分诊)| rewoo(一次规划并行执行)| 已注册模板", ns.Name, cc.Name)
+			return fmt.Errorf("namespace %s: component %s: engine must be declared explicitly: direct (single shot) | react (loop) | plan-execute (planning loop) | reflection | router (triage) | rewoo (plan once, execute in parallel) | a registered template", ns.Name, cc.Name)
 		case "graph", "workflow":
-			return fmt.Errorf("namespace %s: component %s: engine %s 需要 steps 声明(编排族)", ns.Name, cc.Name, cc.Engine)
+			return fmt.Errorf("namespace %s: component %s: engine %s requires a steps declaration (orchestration family)", ns.Name, cc.Name, cc.Engine)
 		}
 		caps, err := resolveToolFace(ns.Name, cc.Tools, local, comps, imports, deps.exports, deps.global)
 		if err != nil {
@@ -286,17 +286,17 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 	for i := range ns.Skills {
 		sc := &ns.Skills[i]
 		if sc.Use != "" && isExternalRef(sc.Use) {
-			return fmt.Errorf(`namespace %s: skill %s: 外部链接已改用 from(use 只保留能力引用语义):from: %q`, ns.Name, sc.Name, sc.Use)
+			return fmt.Errorf(`namespace %s: skill %s: external links now use from (use only keeps capability-reference semantics): from: %q`, ns.Name, sc.Name, sc.Use)
 		}
 		if sc.From != "" {
 			if !isExternalRef(sc.From) {
-				return fmt.Errorf("namespace %s: skill %s: from 只接受外部链接(github.com/...|https://...|file:...);内部引用用 use", ns.Name, sc.Name)
+				return fmt.Errorf("namespace %s: skill %s: from only accepts external links (github.com/...|https://...|file:...); use use for internal references", ns.Name, sc.Name)
 			}
 			if len(sc.Steps) > 0 {
-				return fmt.Errorf("namespace %s: skill %s: from 与 steps 互斥", ns.Name, sc.Name)
+				return fmt.Errorf("namespace %s: skill %s: from and steps are mutually exclusive", ns.Name, sc.Name)
 			}
 			if sc.Name == "" {
-				return fmt.Errorf("namespace %s: 外部 skillpack(%s)必须显式 name(命名归属域团队)", ns.Name, sc.From)
+				return fmt.Errorf("namespace %s: external skillpack (%s) must have an explicit name (to name the owning team)", ns.Name, sc.From)
 			}
 			c, err := buildSkillpack(ctx, deps.packRoot, deps.packOpts,
 				skill.PackSpec{Use: sc.From, Integrity: sc.Integrity, Name: ns.Name + "/" + sc.Name},
@@ -316,7 +316,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		steps := sc.Steps
 		if sc.Use != "" { // 入口引用形态:单步透传,skill 只是接口
 			if len(steps) > 0 {
-				return fmt.Errorf("namespace %s: skill %s: use 与 steps 互斥", ns.Name, sc.Name)
+				return fmt.Errorf("namespace %s: skill %s: use and steps are mutually exclusive", ns.Name, sc.Name)
 			}
 			steps = []engine.Step{{Name: "main", Use: sc.Use}}
 		}
@@ -352,10 +352,10 @@ func resolveStepArgs(ctx context.Context, steps []engine.Step, prompts *prompt.R
 	for i, s := range steps {
 		if s.Use == "model" {
 			if s.Prompt.IsZero() {
-				return nil, fmt.Errorf(`step %q: use: model 需要 prompt:(提示词;args 只放参数绑定)`, s.Name)
+				return nil, fmt.Errorf(`step %q: use: model requires prompt: (the prompt; args only holds parameter bindings)`, s.Name)
 			}
 			if s.Args.Literal != "" {
-				return nil, fmt.Errorf(`step %q: model 步骤的提示词写 prompt:,args 只接受参数映射`, s.Name)
+				return nil, fmt.Errorf(`step %q: a model step writes its prompt in prompt:, args only accepts a parameter mapping`, s.Name)
 			}
 			tpl, err := s.Prompt.Resolve(ctx, prompts)
 			if err != nil {
@@ -367,7 +367,7 @@ func resolveStepArgs(ctx context.Context, steps []engine.Step, prompts *prompt.R
 			for k, v := range s.Args.Fields {
 				ph := "{" + k + "}"
 				if !strings.Contains(text, ph) {
-					return nil, fmt.Errorf("step %q: 参数 %q 在 prompt 模板中没有对应占位符 {%s}", s.Name, k, k)
+					return nil, fmt.Errorf("step %q: parameter %q has no matching placeholder {%s} in the prompt template", s.Name, k, k)
 				}
 				text = strings.ReplaceAll(text, ph, v)
 			}
@@ -375,7 +375,7 @@ func resolveStepArgs(ctx context.Context, steps []engine.Step, prompts *prompt.R
 			s.Args = engine.StepArgs{Literal: text}
 		} else {
 			if !s.Prompt.IsZero() {
-				return nil, fmt.Errorf(`step %q: prompt 只用于 use: model 步骤(工具/component 的入参写 args)`, s.Name)
+				return nil, fmt.Errorf(`step %q: prompt is only for use: model steps (tool/component inputs go in args)`, s.Name)
 			}
 			if s.Args.Fields != nil {
 				b, err := json.Marshal(s.Args.Fields)
@@ -425,20 +425,20 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 	deps nsDeps, eff Profile) (capability.Capability, error) {
 
 	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.Loop.MaxSteps != nil || cc.Todo {
-		return nil, fmt.Errorf("steps 与 prompt/tools/engine_config/max_steps/todo 互斥(编排族没有大脑,计划就是 steps 本身)")
+		return nil, fmt.Errorf("steps is mutually exclusive with prompt/tools/engine_config/max_steps/todo (the orchestration family has no brain; the plan is the steps themselves)")
 	}
 	switch cc.Engine {
 	case "graph":
 	case "workflow": // 顺序简化形态:只允许缺省的"依赖上一步"链
 		for _, s := range cc.Steps {
 			if s.Needs != nil {
-				return nil, fmt.Errorf("step %q: workflow 是顺序简化形态,不支持 needs(要 DAG 用 engine: graph)", s.Name)
+				return nil, fmt.Errorf("step %q: workflow is the simplified sequential form and does not support needs (for a DAG use engine: graph)", s.Name)
 			}
 		}
 	case "":
-		return nil, fmt.Errorf("engine 必须显式声明:graph(DAG,可并行)| workflow(纯顺序)——执行形态是读配置的人最需要一眼看到的事实")
+		return nil, fmt.Errorf("engine must be declared explicitly: graph (DAG, can run in parallel) | workflow (strictly sequential)—the execution shape is the fact a config reader most needs to see at a glance")
 	default:
-		return nil, fmt.Errorf("steps 只能与 engine: graph|workflow 搭配,当前 %q", cc.Engine)
+		return nil, fmt.Errorf("steps can only pair with engine: graph|workflow, got %q", cc.Engine)
 	}
 	resolver := stepResolver(nsName, local, comps, imports, deps.exports, deps.global, deps.defaultModel)
 	steps, err := resolveStepArgs(ctx, cc.Steps, deps.prompts)
@@ -482,7 +482,7 @@ func resolveRef(nsName, ref string, local, global *source.Catalog,
 			return nil, err
 		}
 		if len(caps) == 0 {
-			return nil, fmt.Errorf("%s matches no tool in this namespace (工具不跨命名空间)", ref)
+			return nil, fmt.Errorf("%s matches no tool in this namespace (tools do not cross namespaces)", ref)
 		}
 		return caps, nil
 	case strings.HasPrefix(ref, "components/"):
@@ -502,14 +502,14 @@ func resolveRef(nsName, ref string, local, global *source.Catalog,
 		}
 		depNS, depName := parts[0], parts[1]
 		if !imports[depNS] {
-			return nil, fmt.Errorf("%s: namespace %s 未声明 imports: [%s](依赖必须显式)", ref, nsName, depNS)
+			return nil, fmt.Errorf("%s: namespace %s does not declare imports: [%s] (dependencies must be explicit)", ref, nsName, depNS)
 		}
 		if exports == nil {
-			return nil, fmt.Errorf("%s: 无导出注册表(装配序列未启用 imports)", ref)
+			return nil, fmt.Errorf("%s: no export registry (the assembly sequence did not enable imports)", ref)
 		}
 		c, ok := exports.lookup(depNS, depName)
 		if !ok {
-			return nil, fmt.Errorf("%s: namespace %s 没有导出 component %q(需在对方声明 export: true)", ref, depNS, depName)
+			return nil, fmt.Errorf("%s: namespace %s does not export component %q (declare export: true on it)", ref, depNS, depName)
 		}
 		return []capability.Capability{c}, nil
 	case strings.HasPrefix(ref, "cap://"):
@@ -576,7 +576,7 @@ func crossNamespaceSkill(refStr string, global *source.Catalog) (capability.Capa
 		return nil, err
 	}
 	if ref.Kind != "skill" {
-		return nil, fmt.Errorf("%s: only cap://skill refs may cross namespaces (工具与 component 不出命名空间)", refStr)
+		return nil, fmt.Errorf("%s: only cap://skill refs may cross namespaces (tools and components do not leave the namespace)", refStr)
 	}
 	return global.Get(refStr)
 }

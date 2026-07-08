@@ -57,12 +57,12 @@ var (
 // 生命周期归注册方:框架不做连通性自检、不负责关闭。
 func RegisterClient(name string, client Client) {
 	if name == "" || client == nil {
-		panic("redisconn: RegisterClient 需要非空 name 与 client")
+		panic("redisconn: RegisterClient requires a non-empty name and client")
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if _, dup := clients[name]; dup {
-		panic(fmt.Sprintf("redisconn: client %q 重复注册", name))
+		panic(fmt.Sprintf("redisconn: client %q registered more than once", name))
 	}
 	clients[name] = client
 }
@@ -78,13 +78,13 @@ func Dial(conf map[string]any) (Client, string, error) {
 	prefix, _ := conf["prefix"].(string)
 	if name, _ := conf["client"].(string); name != "" {
 		if conf["addr"] != nil || conf["password"] != nil || conf["db"] != nil {
-			return nil, "", fmt.Errorf("redis: client 与 addr/password/db 互斥(client 引用已注册实现,连接参数由注册方决定)")
+			return nil, "", fmt.Errorf("redis: client is mutually exclusive with addr/password/db (client references a registered implementation; connection parameters belong to the registrar)")
 		}
 		mu.RLock()
 		c, ok := clients[name]
 		mu.RUnlock()
 		if !ok {
-			return nil, "", fmt.Errorf("redis: client %q 未注册(宿主启动期调用 redisconn.RegisterClient(%q, <Client 实现>);已注册:%s)",
+			return nil, "", fmt.Errorf("redis: client %q is not registered (call redisconn.RegisterClient(%q, <Client implementation>) during host startup; registered: %s)",
 				name, name, registeredNames())
 		}
 		return c, prefix, nil
@@ -113,7 +113,7 @@ func registeredNames() string {
 	mu.RLock()
 	defer mu.RUnlock()
 	if len(clients) == 0 {
-		return "(无)"
+		return "(none)"
 	}
 	names := make([]string, 0, len(clients))
 	for n := range clients {

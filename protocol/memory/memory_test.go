@@ -128,7 +128,7 @@ func TestNoUserIdentityFailsFast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "终端用户身份") {
+	if !strings.Contains(out, "end-user identity") {
 		t.Fatalf("expect fail-fast message, got %q", out)
 	}
 	// 确认没有落进任何桶(共享池也没有)

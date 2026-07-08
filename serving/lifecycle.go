@@ -19,9 +19,6 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/channel"
 )
 
-// defaultPlaceholder 是 processing 占位的默认文案(Binding.Placeholder 可配)。
-const defaultPlaceholder = "⏳ 处理中..."
-
 // progressFlushEvery 是内置订阅者的过程更新节流间隔(IM PATCH 有频控)。
 const progressFlushEvery = 2 * time.Second
 
@@ -76,7 +73,7 @@ func (lc *lifecycle) placeholderText() string {
 	if lc.b.Placeholder != "" {
 		return lc.b.Placeholder
 	}
-	return defaultPlaceholder
+	return lc.b.texts().Placeholder
 }
 
 // openProcessing 发 processing 占位。装饰器在场时全模式统一发起
@@ -118,16 +115,17 @@ func (lc *lifecycle) onEvent(ctx context.Context, ev runctx.ProgressEvent) {
 		lc.mu.Unlock()
 		return
 	}
+	txt := lc.b.texts()
 	switch ev.Status {
 	case "start":
-		lc.inflight = fmt.Sprintf("⚙ %s 执行中", ev.Name)
+		lc.inflight = fmt.Sprintf(txt.StepRunning, ev.Name)
 	case "done":
 		lc.inflight = ""
 		lc.tools++
-		lc.done = append(lc.done, fmt.Sprintf("✓ %s (%.1fs)", ev.Name, ev.Dur.Seconds()))
+		lc.done = append(lc.done, fmt.Sprintf(txt.StepDone, ev.Name, ev.Dur.Seconds()))
 	case "error":
 		lc.inflight = ""
-		lc.done = append(lc.done, fmt.Sprintf("✗ %s (%.1fs) 失败", ev.Name, ev.Dur.Seconds()))
+		lc.done = append(lc.done, fmt.Sprintf(txt.StepFailed, ev.Name, ev.Dur.Seconds()))
 	}
 	flush := lc.msgID != "" && time.Since(lc.lastFlush) >= progressFlushEvery
 	if flush {
@@ -162,7 +160,7 @@ func (lc *lifecycle) close(ctx context.Context, kind, text string) {
 
 	out := channel.Outbound{Kind: kind, Text: text, Markdown: true, Progress: lines}
 	if kind == channel.KindAnswer || kind == channel.KindError {
-		out.Meta = fmt.Sprintf("耗时 %.1fs · %d 次工具调用", time.Since(lc.start).Seconds(), tools)
+		out.Meta = fmt.Sprintf(lc.b.texts().Summary, time.Since(lc.start).Seconds(), tools)
 	}
 	if msgID != "" {
 		if err := lc.d.update(ctx, lc.b, lc.conv, msgID, out); err == nil {
