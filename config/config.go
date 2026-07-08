@@ -7,8 +7,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"gopkg.in/yaml.v3"
@@ -19,6 +19,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/protocol/resource"
 	"github.com/joewm9911/agent-kit/protocol/secrets"
 	"github.com/joewm9911/agent-kit/protocol/source"
 	"github.com/joewm9911/agent-kit/runtime/loop"
@@ -31,21 +32,28 @@ import (
 //   session → 会话短期记忆   memory → 长期记忆
 //   todo    → 计划清单        digest → 大结果消化/暂存
 
-// Load 读取配置文件:先解析 secrets 段构建凭证 provider(该段本身
-// 不得含占位符),再展开 ${ENV} 与 ${secret:NAME},最后解析全文。
-func Load(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
+// Load 读取单文件配置。与 LoadApp 同源经 resource 解析(file/embed/...):
+// os 只出现在 file scheme 解析器与可写状态(state_dir)里,配置读取一律
+// 走资源 FS。先解析 secrets 段构建凭证 provider(该段本身不得含占位符),
+// 再展开 ${ENV} 与 ${secret:NAME},最后解析全文。
+func Load(ref string) (*Config, error) {
+	root, entry, err := resource.Resolve(ref)
 	if err != nil {
 		return nil, err
 	}
-	sp, err := secretsProviderFor(raw, path)
+	raw, err := fs.ReadFile(root, entry)
+	if err != nil {
+		return nil, fmt.Errorf("config file %s: %w", entry, err)
+	}
+	sp, err := secretsProviderFor(raw, entry)
 	if err != nil {
 		return nil, err
 	}
 	var cfg Config
-	if err := expandParse(raw, sp, path, &cfg); err != nil {
+	if err := expandParse(raw, sp, entry, &cfg); err != nil {
 		return nil, err
 	}
+	cfg.root = root
 	return &cfg, nil
 }
 
@@ -122,7 +130,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	if len(cfg.Prompts.Sources) > 0 {
 		prompts = prompt.NewResolver(cfg.Prompts.DefaultLabel)
 		for _, ps := range cfg.Prompts.Sources {
-			p, err := prompt.NewProvider(ps.Type, ps.Config)
+			p, err := buildPromptProvider(ps, cfg.root)
 			if err != nil {
 				return nil, fmt.Errorf("prompt source %s: %w", ps.Name, err)
 			}

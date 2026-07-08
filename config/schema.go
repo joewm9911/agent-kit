@@ -8,6 +8,8 @@
 package config
 
 import (
+	"io/fs"
+
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
 	"github.com/joewm9911/agent-kit/runtime/engine"
@@ -276,6 +278,11 @@ type ObservabilityConfig struct {
 // app.yaml + 每 agent/namespace 一个文件)。顶层执行画像(model/loop/
 // reliability/digest/steps)内嵌自 Profile,是所有 agent/component 的基线。
 type Config struct {
+	// root 是加载它的只读资源 FS(由 Load 设置;prompt 等只读子资源同源
+	// 解析)。非 YAML 字段——直接构造 Config 的调用方(测试)可为 nil,
+	// prompt file 源回落 os.DirFS。
+	root fs.FS
+
 	Secrets SecretsConfig `yaml:"secrets"`
 
 	Prompts PromptsConfig `yaml:"prompts"`
