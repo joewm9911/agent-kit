@@ -26,9 +26,9 @@ package config
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
+	"path"
 	"strings"
 
 	einomodel "github.com/cloudwego/eino/components/model"
@@ -38,6 +38,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/model"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
+	"github.com/joewm9911/agent-kit/protocol/resource"
 	"github.com/joewm9911/agent-kit/protocol/source"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/serving"
@@ -95,34 +96,49 @@ type NamespaceSpec struct {
 }
 
 // AppSpec 是 LoadApp 的产物:全部文件解析完毕、名字与路径校验通过。
+// Root 是加载它的只读资源 FS(prompt/skill 等只读子资源从此解析,与配置
+// 同源;见 docs/resource-loading-design.md)。
 type AppSpec struct {
 	App    AppConfig
 	Agents []*AgentSpec
+	Root   fs.FS
 }
 
 // LoadApp 读取多文件形态的应用声明。secrets provider 由 app.yaml 声明,
 // 对全部文件的 ${ENV}/${secret:NAME} 占位符统一生效。
-func LoadApp(path string) (*AppSpec, error) {
-	raw, err := os.ReadFile(path)
+func LoadApp(ref string) (*AppSpec, error) {
+	root, entry, err := resource.Resolve(ref)
 	if err != nil {
 		return nil, err
 	}
-	sp, err := secretsProviderFor(raw, path)
+	return LoadAppFS(root, entry)
+}
+
+// LoadAppFS 从只读资源 FS 加载多文件声明。entry 是 FS 内的入口路径
+// (fs.FS 语义:'/' 分隔、无 '..' 逃逸);agent/namespace 的相对引用一律
+// 在这个 FS 内解析,唯一锚点是 FS 根,不依赖进程 CWD。本地盘走
+// LoadApp(path);内嵌走 LoadAppFS(embed.FS, "config/app.yaml")。
+func LoadAppFS(root fs.FS, entry string) (*AppSpec, error) {
+	raw, err := fs.ReadFile(root, entry)
+	if err != nil {
+		return nil, fmt.Errorf("app file %s: %w", entry, err)
+	}
+	sp, err := secretsProviderFor(raw, entry)
 	if err != nil {
 		return nil, err
 	}
 	var app AppConfig
-	if err := expandParse(raw, sp, path, &app); err != nil {
+	if err := expandParse(raw, sp, entry, &app); err != nil {
 		return nil, err
 	}
-	appDir := filepath.Dir(path)
-	spec := &AppSpec{App: app}
-	nsCache := map[string]*NamespaceSpec{} // 绝对路径 → 解析结果(多 agent 共享解析)
+	appDir := path.Dir(entry)
+	spec := &AppSpec{App: app, Root: root}
+	nsCache := map[string]*NamespaceSpec{} // FS 内路径 → 解析结果(多 agent 共享解析)
 	seen := map[string]string{}            // agent 名 → 文件,重名报错
 
 	for _, rel := range app.Agents {
-		agentPath := filepath.Join(appDir, rel)
-		araw, err := os.ReadFile(agentPath)
+		agentPath := path.Join(appDir, rel)
+		araw, err := fs.ReadFile(root, agentPath)
 		if err != nil {
 			return nil, fmt.Errorf("agent file %s: %w", rel, err)
 		}
@@ -139,21 +155,18 @@ func LoadApp(path string) (*AppSpec, error) {
 		seen[af.Name] = agentPath
 
 		as := &AgentSpec{AgentFile: af, Path: agentPath}
-		agentDir := filepath.Dir(agentPath)
+		agentDir := path.Dir(agentPath)
 		for _, mnt := range af.Namespaces {
 			if mnt.Path == "" {
 				return nil, fmt.Errorf("agent %s: namespace mount missing path", af.Name)
 			}
-			nsPath, err := filepath.Abs(filepath.Join(agentDir, mnt.Path))
-			if err != nil {
-				return nil, err
-			}
+			nsPath := path.Join(agentDir, mnt.Path) // FS 内路径,不逃出根
 			// per-mount 覆盖是集成方(agent)对该 namespace 的显式指定,
 			// 属执行画像 A 类;若误写 session/approval 等非 A 类字段,
 			// yaml inline 会静默忽略——这里不额外校验(A 类字段之外无处安放)。
 			ns, ok := nsCache[nsPath]
 			if !ok {
-				nraw, err := os.ReadFile(nsPath)
+				nraw, err := fs.ReadFile(root, nsPath)
 				if err != nil {
 					return nil, fmt.Errorf("agent %s: namespace file %s: %w", af.Name, mnt.Path, err)
 				}
@@ -175,15 +188,15 @@ func LoadApp(path string) (*AppSpec, error) {
 }
 
 // applyFileName 落实"文件名即名字":name 为空取文件名,显式声明则必须一致。
-func applyFileName(name *string, path, kind string) error {
-	base := filepath.Base(path)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
+func applyFileName(name *string, fsPath, kind string) error {
+	base := path.Base(fsPath)
+	base = strings.TrimSuffix(base, path.Ext(base))
 	if *name == "" {
 		*name = base
 		return nil
 	}
 	if *name != base {
-		return fmt.Errorf("%s file %s: declared name %q does not match file name %q", kind, path, *name, base)
+		return fmt.Errorf("%s file %s: declared name %q does not match file name %q", kind, fsPath, *name, base)
 	}
 	return nil
 }

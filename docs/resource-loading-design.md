@@ -180,11 +180,10 @@ volume 指过来。
 批 2/4 动核心装配与能力路径;其余增量。全程 fstest.MapFS + 临时目录做
 端到端(内嵌路径、远程 FS、可写校验、pack_read 穿越),不涉及模型。
 
-## 6. 需要裁决的点
+## 6. 裁决(已定)
 
-1. `work_dir`→`state_dir` 改名:硬切(推荐,名实相符 + 只读/可写分野)vs 保留 work_dir 只加只读抽象;
-2. http/oci loader 本批做 vs 先只做 file+embed(推荐,覆盖 99%,远程后置);
-3. 入口搜索路径要不要(推荐要);
-4. fs cap 是否扩展为**通用文件工具**(不止 pack_read,给 agent 一个受
-   root FS 约束的读文件能力)——推荐先只把 pack_read 归入抽象,通用
-   fs 工具作为登记项(有需求再开,天然复用同一 fs.FS 沙箱)。
+1. **`work_dir`→`state_dir` 硬切**——采纳,名实相符 + 只读/可写分野。
+2. **只做 file + embed loader**——http/oci 后置为登记项。
+3. **入口搜索路径**——要:`AGENTKIT_CONFIG` → CWD → 可执行文件目录 → `/etc/agentkit`。
+4. **fs cap 只归入 pack_read**——通用文件工具作为**登记项**,不在本方案实现
+   (有需求再开,天然复用同一 fs.FS 沙箱)。
