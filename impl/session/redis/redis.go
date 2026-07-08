@@ -27,7 +27,7 @@ func init() {
 // ---- session 会话历史 ----
 
 type sessStore struct {
-	rdb    *goredis.Client
+	rdb    goredis.UniversalClient
 	prefix string
 	window int
 }

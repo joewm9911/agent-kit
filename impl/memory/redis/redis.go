@@ -25,7 +25,7 @@ func init() {
 }
 
 type memStore struct {
-	rdb    *goredis.Client
+	rdb    goredis.UniversalClient
 	prefix string
 }
 

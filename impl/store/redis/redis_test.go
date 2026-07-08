@@ -58,6 +58,32 @@ func TestRedisScan(t *testing.T) {
 	}
 }
 
+// TestRedisRegisteredClient:宿主注册的客户端(公司自有封装场景)经
+// client: <name> 引用,后端功能与直连等价——读写走同一实例、prefix 照拼。
+func TestRedisRegisteredClient(t *testing.T) {
+	conf := testConf(t) // 直连探活,不可达即跳过
+	rdb, _, err := redisconn.Dial(conf)
+	if err != nil {
+		t.Skipf("redis 不可达,跳过: %v", err)
+	}
+	redisconn.RegisterClient("corp-kv-test", rdb)
+
+	kv, err := store.NewBackend("redis", map[string]any{"client": "corp-kv-test", "prefix": "akkv:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	must(t, kv.Update(ctx, "reg", func(_ []byte, _ bool) ([]byte, error) { return []byte("v"), nil }, 0))
+	if v, ok, _ := kv.Get(ctx, "reg"); !ok || string(v) != "v" {
+		t.Fatalf("roundtrip via registered client: %q %v", v, ok)
+	}
+	// 与直连后端同 prefix 互视:注册客户端不是隔离世界,只是连接来源不同
+	direct, _ := store.NewBackend("redis", conf)
+	if v, ok, _ := direct.Get(ctx, "reg"); !ok || string(v) != "v" {
+		t.Fatalf("direct backend should see the same key: %q %v", v, ok)
+	}
+}
+
 // TestRedisAtomicUpdate 是 redis 后端的 #1 验收:WATCH/MULTI 乐观锁下
 // 多 goroutine 并发自增同键无丢更新(裸 GET+SET 会因竞态失败)。
 func TestRedisAtomicUpdate(t *testing.T) {

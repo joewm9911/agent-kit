@@ -2,7 +2,8 @@
 // Update 的原子读改写。todo/digest/suspend/budget/approval 等一切落在
 // store.KV 上的状态,空导入本包即获得多副本分布式一致性;会话历史的
 // redis 在 impl/session/redis,长期记忆的在 impl/memory/redis(三者共用
-// impl/utils/redisconn 的连接构造)。
+// impl/utils/redisconn 的连接构造;公司自有客户端封装经
+// redisconn.RegisterClient 注册后,配置以 client: <name> 引用)。
 package redis
 
 import (
@@ -31,7 +32,7 @@ func init() {
 // ---- KV 家族(todo/result）----
 
 type kv struct {
-	rdb    *goredis.Client
+	rdb    goredis.UniversalClient
 	prefix string
 }
 
