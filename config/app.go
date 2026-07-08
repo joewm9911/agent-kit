@@ -235,6 +235,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	if err := installObservability(ac.Observability, logger); err != nil {
 		return nil, err
 	}
+	if err := rejectWorkDir(ac.WorkDirLegacy, "app.yaml"); err != nil {
+		return nil, err
+	}
 
 	// 2. 提示词
 	var prompts *prompt.Resolver
@@ -393,7 +396,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	if err != nil {
 		return nil, nil, err
 	}
-	packRoot := app.Skillpacks.root(app.WorkDir)
+	packRoot := app.Skillpacks.root(app.StateDir)
 
 	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
 	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。

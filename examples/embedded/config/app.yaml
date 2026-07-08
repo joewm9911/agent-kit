@@ -1,0 +1,16 @@
+# Single-binary deploy: this whole config tree is compiled into the binary
+# via //go:embed (see main.go). No files need to exist on disk at runtime —
+# LoadAppFS resolves every relative reference within the embedded FS.
+secrets:
+  provider: env
+
+# Prompt files load from the same embedded FS (prompts/ resolves against the
+# config root, not the process working directory).
+prompts:
+  sources:
+    - name: pp
+      type: file
+      config: {dir: prompts}
+
+agents:
+  - agents/assistant.yaml

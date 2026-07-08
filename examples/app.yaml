@@ -63,7 +63,7 @@ agents:
 
 # ---- 外部技能包:skills 列表直接引用链接,启动期下载安装(vendoring)----
 # 安装目录固定:<work_dir>/agent-kit/.skills(work_dir 默认进程 cwd,可配)
-# work_dir: "."
+# state_dir: "."
 # skillpacks:
 #   sync: auto                   # auto=缺失即下载 | require-local=生产收紧
 # skills:

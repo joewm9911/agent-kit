@@ -572,7 +572,7 @@ func TestLiveRealSkillpack(t *testing.T) {
 	projectRoot, _ := filepath.Abs("..") // 宿主项目根;安装到 <root>/agent-kit/.skills
 	skillsRoot := filepath.Join(projectRoot, "agent-kit", ".skills")
 	cfg := &Config{
-		WorkDir: projectRoot,
+		StateDir: projectRoot,
 		Profile: Profile{Model: &ModelConfig{Provider: "minimax", Config: map[string]any{
 			"api_key": os.Getenv("MINIMAX_API_KEY"), "base_url": os.Getenv("SMOKE_MODEL_BASE"),
 		}}},

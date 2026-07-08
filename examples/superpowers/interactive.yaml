@@ -19,7 +19,7 @@ model:
 catalog:
   max_risk: dangerous            # 带脚本的技能需要显式准入
 
-work_dir: "${SP_WORK_DIR}"
+state_dir: "${SP_WORK_DIR}"
 
 skillpacks:
   sync: auto

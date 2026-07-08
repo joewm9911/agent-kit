@@ -309,10 +309,14 @@ type Config struct {
 
 	Observability ObservabilityConfig `yaml:"observability"`
 
-	// WorkDir 是宿主项目工作目录(PROJECT_WORK_DIR):agent-kit 作为 SDK
-	// 的落盘产物(.skills 等)收口在 <work_dir>/agent-kit/ 之下。
-	// 默认进程 cwd;相对值也以 cwd 解析。
-	WorkDir string `yaml:"work_dir"`
+	// StateDir 是可写运行状态目录:skill 安装、file 后端落盘、轨迹等收口
+	// 于 <state_dir>/agent-kit/ 之下。只读资源(配置/提示词/skill 包)不走
+	// 这里——它们由资源 FS 承载(见 docs/resource-loading-design.md)。
+	// 默认链:state_dir → 环境 AGENTKIT_STATE_DIR → $XDG_STATE_HOME/agentkit。
+	StateDir string `yaml:"state_dir"`
+	// WorkDirLegacy:work_dir 已拆义为只读根(资源 FS)+ 可写状态(state_dir),
+	// 旧键装配期报错指路。
+	WorkDirLegacy *string `yaml:"work_dir"`
 }
 
 // AppConfig 是应用级入口(app.yaml):进程级资源与接线板 + 全局默认。
@@ -358,8 +362,10 @@ type AppConfig struct {
 
 	Observability ObservabilityConfig `yaml:"observability"`
 
-	// WorkDir 是宿主项目工作目录(PROJECT_WORK_DIR),同单文件 Config.WorkDir。
-	WorkDir string `yaml:"work_dir"`
+	// StateDir 同单文件 Config.StateDir:可写运行状态目录。
+	StateDir string `yaml:"state_dir"`
+	// WorkDirLegacy:旧键 work_dir 装配期报错指路 state_dir。
+	WorkDirLegacy *string `yaml:"work_dir"`
 }
 
 // AgentFile 是 agent 维度的配置文件(agents/<name>.yaml)。

@@ -8,6 +8,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -40,10 +41,10 @@ func (sc SkillpacksConfig) options() (skill.PackOptions, error) {
 	}
 }
 
-// root 解析安装目录:默认 <work_dir>/agent-kit/.skills(固定约定);
-// dir 显式覆盖时,相对值同样以 work_dir 为基准。
-func (sc SkillpacksConfig) root(workDir string) string {
-	base := resolveWorkDir(workDir)
+// root 解析安装目录:默认 <state_dir>/agent-kit/.skills(固定约定);
+// dir 显式覆盖时,相对值同样以 state_dir 为基准。
+func (sc SkillpacksConfig) root(stateDir string) string {
+	base := resolveStateDir(stateDir)
 	if sc.Dir == "" {
 		return filepath.Join(base, "agent-kit", ".skills")
 	}
@@ -53,15 +54,34 @@ func (sc SkillpacksConfig) root(workDir string) string {
 	return filepath.Join(base, sc.Dir)
 }
 
-// resolveWorkDir 解析项目工作目录:空 = 进程 cwd;相对值以 cwd 解析。
-func resolveWorkDir(workDir string) string {
-	if workDir == "" {
-		workDir = "."
+// resolveStateDir 解析可写状态目录。默认链:显式 state_dir → 环境
+// AGENTKIT_STATE_DIR → $XDG_STATE_HOME/agentkit → ~/.local/state/agentkit。
+// 相对值以 cwd 解析为绝对。
+func resolveStateDir(stateDir string) string {
+	if stateDir == "" {
+		stateDir = os.Getenv("AGENTKIT_STATE_DIR")
 	}
-	if abs, err := filepath.Abs(workDir); err == nil {
+	if stateDir == "" {
+		if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+			stateDir = filepath.Join(xdg, "agentkit")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			stateDir = filepath.Join(home, ".local", "state", "agentkit")
+		} else {
+			stateDir = "."
+		}
+	}
+	if abs, err := filepath.Abs(stateDir); err == nil {
 		return abs
 	}
-	return workDir
+	return stateDir
+}
+
+// rejectWorkDir 拦截已拆义的旧键 work_dir(fail fast 即迁移指南)。
+func rejectWorkDir(legacy *string, where string) error {
+	if legacy != nil {
+		return fmt.Errorf("%s: work_dir has been split — read-only resources (config/prompts/skill packs) are carried by the resource loader (local dir / embed.FS), and writable runtime state moves under state_dir (skill installs, file backends, trajectory). Set state_dir instead", where)
+	}
+	return nil
 }
 
 // isExternalRef 判定 use: 值是否外部链接(与内部 component 引用值域天然

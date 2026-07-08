@@ -1,0 +1,5 @@
+name: assistant
+namespaces:
+  - ../namespaces/basic.yaml
+prompt:
+  system: "cap://prompt/pp/persona"

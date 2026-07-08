@@ -31,7 +31,7 @@ reliability:
 
 # 外部技能包:安装到 <work_dir>/agent-kit/.skills;pdf 技能带脚本
 # (Risk=Dangerous),准入需显式提升。
-work_dir: "${OPS_DATA_DIR}"
+state_dir: "${OPS_DATA_DIR}"
 catalog:
   max_risk: dangerous
 skillpacks:

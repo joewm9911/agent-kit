@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -53,5 +54,16 @@ func TestLoadAppFSMissing(t *testing.T) {
 	}
 	if _, err := LoadAppFS(fsys, "app.yaml"); err == nil {
 		t.Fatal("missing agent file must fail")
+	}
+}
+
+// TestWorkDirRejected: the removed work_dir key fails fast at build, pointing
+// to state_dir (read-only vs writable split).
+func TestWorkDirRejected(t *testing.T) {
+	legacy := "/tmp/x"
+	cfg := &Config{WorkDirLegacy: &legacy}
+	_, err := Build(nil, cfg, BuildOptions{})
+	if err == nil || !strings.Contains(err.Error(), "state_dir") {
+		t.Fatalf("work_dir must fail fast pointing to state_dir, got %v", err)
 	}
 }

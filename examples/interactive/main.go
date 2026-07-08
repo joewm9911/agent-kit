@@ -65,6 +65,7 @@ import (
 
 	"github.com/joewm9911/agent-kit/config"
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
+	"github.com/joewm9911/agent-kit/protocol/resource"
 	"github.com/joewm9911/agent-kit/runtime/observe"
 )
 
@@ -137,12 +138,13 @@ func main() {
 			os.Getenv("OPS_SANDBOX"), os.Getenv("OPS_SANDBOX_IMAGE"))
 	}
 
-	// 配置树相对仓库根;也支持从本目录运行
-	appPath := "examples/interactive/app.yaml"
-	if _, err := os.Stat(appPath); err != nil {
-		appPath = "app.yaml"
+	// 入口经 resource.Find 搜索:AGENTKIT_CONFIG → CWD → 可执行文件目录
+	// → /etc/agentkit(消灭"从哪跑就得算相对路径")。默认从仓库根跑。
+	ref, err := resource.Find("examples/interactive/app.yaml")
+	if err != nil {
+		ref = "app.yaml" // 从本目录跑的回落
 	}
-	spec, err := config.LoadApp(appPath)
+	spec, err := config.LoadApp(ref)
 	if err != nil {
 		log.Fatal(err)
 	}

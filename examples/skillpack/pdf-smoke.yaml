@@ -28,7 +28,7 @@ catalog:
 
 # 宿主项目工作目录(PROJECT_WORK_DIR):skills 安装到固定约定位置
 # <work_dir>/agent-kit/.skills;不配 work_dir 时默认进程 cwd。
-work_dir: "${SKILLPACK_WORK_DIR}"
+state_dir: "${SKILLPACK_WORK_DIR}"
 
 skillpacks:
   sync: auto

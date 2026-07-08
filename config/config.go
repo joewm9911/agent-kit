@@ -113,6 +113,9 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	if err := cfg.Profile.rejectLegacyKeys("app"); err != nil {
 		return nil, err
 	}
+	if err := rejectWorkDir(cfg.WorkDirLegacy, "app"); err != nil {
+		return nil, err
+	}
 
 	// 2. 提示词
 	var prompts *prompt.Resolver
@@ -184,7 +187,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	packRoot := cfg.Skillpacks.root(cfg.WorkDir)
+	packRoot := cfg.Skillpacks.root(cfg.StateDir)
 	for _, entry := range cfg.Skills {
 		skillDeps := skill.Deps{
 			Todo:    componentTodo(),
