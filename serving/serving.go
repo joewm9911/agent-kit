@@ -8,7 +8,6 @@ package serving
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -126,54 +125,33 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"session": req.Session, "status": "done", "answer": answer})
 }
 
-// suspendableMessage 以挂起模式执行一轮,机制与 dispatcher 的 IM 路径
-// 完全同构("卸载重放",见 runtime/suspend 包注释),只是传输面不同:
-// IM 的问句要主动送达会话,HTTP 的"送达"就是本次响应体——
-//   - 会话存在挂起轮次 → 本条输入是答案:记入交互日志,以原输入 + 原
-//     轮次 ID 重放(交互点命中日志越过挂起,mutating 工具命中效果日志
-//     不二次执行),进程重启/换副本后同样成立;
-//   - 运行在交互点挂起(ErrSuspended)→ 持久化待答轮次,响应
-//     {status: "waiting", question};正常完成 → {status: "done", answer}。
+// suspendableMessage 以挂起模式执行一轮:编排(认领答案/重放/挂起收口)
+// 与 dispatcher 的 IM 路径共用 suspendturn.go 的同一份机制,这里只做
+// HTTP 的传输策略——问句不独立投递(notify 置空),挂起后落响应体
+// {status: "waiting", question};正常完成 {status: "done", answer}。
 //
 // 同会话并发请求没有串行保护(dispatcher 的会话队列是 IM 语义,不在
 // HTTP 路径重造),调用方须按会话串行调用。
 func (s *Server) suspendableMessage(w http.ResponseWriter, ctx context.Context, a Runnable, session, input string) {
 	turnInput, turnID := input, ""
-	if rec, ok, err := suspend.TakePendingTurn(ctx, s.suspendKV, session); err != nil {
+	if rec, resumed, err := resumePending(ctx, s.suspendKV, session, input); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	} else if ok {
-		if err := suspend.AnswerPending(ctx, s.suspendKV, rec.WaitingID, input); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	} else if resumed {
 		turnInput, turnID = rec.Input, rec.TurnID
 	}
-	if turnID == "" {
-		turnID = suspend.NewTurnID()
-	}
-	journal := suspend.NewJournal(s.suspendKV, turnID)
-	ctx = suspend.WithJournal(ctx, journal)
-	// notify 置空:问题不需要独立投递,挂起后直接写进响应体。
-	ctx = runctx.WithInteractor(ctx, suspend.Interactor(journal, func(context.Context, string) error { return nil }))
+	ctx, turn := beginSuspendTurn(ctx, s.suspendKV, turnID, nil)
 
-	answer, err := a.Run(ctx, session, turnInput)
+	answer, runErr := a.Run(ctx, session, turnInput)
+	question, suspended, err := turn.finish(ctx, session, turnInput, runErr)
 	if err != nil {
-		var suspended *suspend.ErrSuspended
-		if errors.As(err, &suspended) {
-			if err := suspend.SavePendingTurn(ctx, s.suspendKV, session, suspend.PendingTurn{
-				TurnID: turnID, Input: turnInput, WaitingID: suspended.InteractionID,
-			}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, map[string]string{"session": session, "status": "waiting", "question": suspended.Question})
-			return
-		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	journal.CompleteTurn(ctx)
+	if suspended {
+		writeJSON(w, map[string]string{"session": session, "status": "waiting", "question": question})
+		return
+	}
 	writeJSON(w, map[string]string{"session": session, "status": "done", "answer": answer})
 }
 
@@ -183,6 +161,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 // handleControl 处理运行控制:{session, action: interrupt|steer, message}。
+// 与 IM 会话里的「停止」「插话:」文本指令是同一 Agent.Interrupt/Steer
+// 机制的两个传输入口,语义完全一致(不经会话队列,对进行中的运行即时生效)。
 func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	a, ok := s.agents[r.PathValue("name")]
 	if !ok {

@@ -2,7 +2,6 @@ package serving
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/channel"
 	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/runtime/observe"
-	"github.com/joewm9911/agent-kit/runtime/suspend"
 )
 
 // Binding 把一个 channel.Channel 路由到一个 Agent。
@@ -112,18 +110,20 @@ func (d *Dispatcher) Handler(b Binding) channel.InboundHandler {
 		// 挂起模式:会话有持久化的挂起轮次 → 这条消息是答案,
 		// 记入交互日志并以原输入重放该轮(进程重启后同样走这里)。
 		if d.suspendKV != nil {
-			if rec, ok, err := suspend.TakePendingTurn(ctx, d.suspendKV, key); err == nil && ok {
+			if rec, resumed, err := resumePending(ctx, d.suspendKV, key, in.Text); err != nil {
+				// 认领失败已回滚挂起记录,用户重发答案还接得上。
 				d.mu.Unlock()
-				if err := suspend.AnswerPending(ctx, d.suspendKV, rec.WaitingID, in.Text); err != nil {
-					d.logger.Error("record answer failed", slog.String("session", key), slog.String("err", err.Error()))
-					return
-				}
+				d.logger.Error("resume pending failed", slog.String("session", key), slog.String("err", err.Error()))
+				return
+			} else if resumed {
+				d.mu.Unlock()
 				d.enqueue(ctx, b, channel.Inbound{Conv: in.Conv, Text: rec.Input}, rec.TurnID)
 				return
 			}
 		}
 		// 运行进行中:控制类消息旁路串行队列,即时生效——
-		// "停止"不能排在它要停止的任务后面。
+		// "停止"不能排在它要停止的任务后面。文本指令与 HTTP 的
+		// /control 端点是同一 Agent.Interrupt/Steer 机制的两个传输入口。
 		if d.running[key] {
 			if isInterruptText(in.Text) {
 				d.mu.Unlock()
@@ -184,22 +184,16 @@ func (d *Dispatcher) run(key string, j job) {
 	// 终端用户身份(IM 的发送者)装入 ctx:长期记忆用户级作用域据此隔离。
 	ctx = runctx.WithUser(ctx, j.in.Conv.User)
 
-	// 挂起模式:可挂起的交互通道 + 效果/交互日志随 ctx 下发。
+	// 挂起模式:共享编排(suspendturn.go)装配可挂起交互通道与效果/
+	// 交互日志,IM 的传输策略是问句发进会话(带 question 语义过装饰器)。
 	// 非挂起模式:进程内阻塞等待的 HITL 桥接(原行为)。
-	// 问句(ask_user/审批)统一带 question 语义过装饰器。
-	var journal *suspend.Journal
+	var turn *suspendTurn
 	if d.suspendKV != nil {
-		turnID := j.turnID
-		if turnID == "" {
-			turnID = suspend.NewTurnID()
-		}
-		journal = suspend.NewJournal(d.suspendKV, turnID)
-		ctx = suspend.WithJournal(ctx, journal)
 		conv := j.in.Conv
-		ctx = runctx.WithInteractor(ctx, suspend.Interactor(journal, func(ctx context.Context, q string) error {
+		ctx, turn = beginSuspendTurn(ctx, d.suspendKV, j.turnID, func(ctx context.Context, q string) error {
 			_, err := d.send(ctx, j.b, conv, channel.Outbound{Kind: channel.KindQuestion, Text: q})
 			return err
-		}))
+		})
 	} else {
 		ctx = runctx.WithInteractor(ctx, &imInteractor{d: d, b: j.b, conv: j.in.Conv, key: key})
 	}
@@ -230,27 +224,20 @@ func (d *Dispatcher) run(key string, j job) {
 		ctx = runctx.WithProgress(ctx, lc.onEvent)
 	}
 
-	answer, err := j.b.Agent.Run(ctx, key, j.in.Text)
-	if err != nil {
-		var suspended *suspend.ErrSuspended
-		if journal != nil && errors.As(err, &suspended) {
-			// 问题已送达用户;持久化挂起轮次后整轮退栈,不占任何资源。
-			saveErr := suspend.SavePendingTurn(ctx, d.suspendKV, key, suspend.PendingTurn{
-				TurnID: journal.TurnID(), Input: j.in.Text, WaitingID: suspended.InteractionID,
-			})
-			if saveErr != nil {
-				d.logger.Error("save pending turn failed", slog.String("session", key), slog.String("err", saveErr.Error()))
-			}
-			// 占位收口为等待态,不留悬挂的"处理中"(无占位则问句已独立送达)。
+	answer, runErr := j.b.Agent.Run(ctx, key, j.in.Text)
+	if turn != nil {
+		_, suspended, err := turn.finish(ctx, key, j.in.Text, runErr)
+		if suspended {
+			// 问句已由 notify 送达;占位收口为等待态,不留悬挂的"处理中"。
 			lc.close(ctx, channel.KindQuestion, "⏸ 已向你提问,回复后继续。")
 			return
 		}
-		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", err.Error()))
-		lc.close(ctx, channel.KindError, "处理失败:"+err.Error())
-		return
+		runErr = err // 善终清理已在 finish 内;挂起持久化失败按错误收口
 	}
-	if journal != nil {
-		journal.CompleteTurn(ctx) // 一轮善终,清理该轮日志
+	if runErr != nil {
+		d.logger.Error("agent run failed", slog.String("session", key), slog.String("err", runErr.Error()))
+		lc.close(ctx, channel.KindError, "处理失败:"+runErr.Error())
+		return
 	}
 	lc.close(ctx, channel.KindAnswer, answer)
 }
