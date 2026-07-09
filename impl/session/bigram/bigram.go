@@ -11,7 +11,6 @@ package bigram
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -28,14 +27,22 @@ func init() {
 
 // Options 是召回的可配参数。
 type Options struct {
-	SnippetLen int // 片段 rune 上限(默认 defaultSnippetLen)
-	MaxChars   int // 召回总字符预算,0 = 不限
+	SnippetLen   int  // 片段 rune 上限(默认 defaultSnippetLen)
+	MaxChars     int  // 召回总字符预算,0 = 不限
+	IncludeTools bool // U1.4d:纳入执行记录([执行记录] system 摘要),默认关
 }
 
 const (
 	defaultSnippetLen = 160
 	minRawOverlap     = 2 // 少于这么多共享 bigram 视为未命中(粗过滤,消噪)
+	maxToolHits       = 1 // U1.4d:执行记录命中单独限额,防淹没对话召回
+	execRecordMarker  = "[执行记录]"
+	referentialGrams  = 3 // U1.1:query 内容 bigram 少于此视为可能指代
 )
+
+// pronouns 是指代/回指词:命中即触发近因兜底(U1.1),这类查询与目标轮次
+// 几乎零词法重叠,bigram 结构上救不了。
+var pronouns = []string{"那个", "这个", "那些", "这些", "上面", "刚才", "前面", "上述", "上一", "它", "该"}
 
 func optsFromConf(conf map[string]any) Options {
 	o := Options{SnippetLen: defaultSnippetLen}
@@ -47,7 +54,23 @@ func optsFromConf(conf map[string]any) Options {
 	if v, ok := conf["max_chars"]; ok {
 		o.MaxChars = toInt(v)
 	}
+	if v, ok := conf["include_tools"].(bool); ok {
+		o.IncludeTools = v
+	}
 	return o
+}
+
+// isReferential 判断 query 是否指代型(内容 bigram 太少,或含指代词)。
+func isReferential(query string, qgrams map[string]struct{}) bool {
+	if len(qgrams) < referentialGrams {
+		return true
+	}
+	for _, p := range pronouns {
+		if strings.Contains(query, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func toInt(v any) int {
@@ -90,14 +113,14 @@ func SearchOpts(msgs []*schema.Message, query string, topK int, opts Options) []
 	type hit struct {
 		score float64
 		text  string
+		tool  bool
+		idx   int
 	}
 	var hits []hit
 	n := len(msgs)
 	for i, m := range msgs {
-		if m.Role != schema.User && m.Role != schema.Assistant {
-			continue
-		}
-		if m.Content == "" {
+		label, isTool, ok := recallRole(m, opts.IncludeTools)
+		if !ok || m.Content == "" {
 			continue
 		}
 		mg := bigrams(m.Content)
@@ -113,22 +136,69 @@ func SearchOpts(msgs []*schema.Message, query string, topK int, opts Options) []
 			rec = 0.5 + 0.5*float64(i)/float64(n-1)
 		}
 		snippet := snippetAround(m.Content, qgrams, opts.SnippetLen) // U1.4a
-		hits = append(hits, hit{score: jac * rec, text: fmt.Sprintf("%s: %s", m.Role, snippet)})
+		hits = append(hits, hit{score: jac * rec, text: label + ": " + snippet, tool: isTool, idx: i})
 	}
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
-	if len(hits) > topK {
-		hits = hits[:topK]
-	}
-	out := make([]string, 0, len(hits))
-	used := 0
+
+	out := make([]string, 0, topK)
+	used, toolHits := 0, 0
+	picked := map[int]bool{}
 	for _, h := range hits {
+		if len(out) >= topK {
+			break
+		}
+		if h.tool && toolHits >= maxToolHits {
+			continue // U1.4d 执行记录单独限额
+		}
 		if opts.MaxChars > 0 && used+len([]rune(h.text)) > opts.MaxChars && len(out) > 0 {
 			break // U1.4c 总量预算:超预算即停(至少留一条)
 		}
 		out = append(out, h.text)
 		used += len([]rune(h.text))
+		picked[h.idx] = true
+		if h.tool {
+			toolHits++
+		}
+	}
+
+	// U1.1 指代近因兜底:指代型 query 词法救不了,用最近的对话轮次补足。
+	if len(out) < topK && isReferential(query, qgrams) {
+		for i := n - 1; i >= 0 && len(out) < topK; i-- {
+			if picked[i] {
+				continue
+			}
+			m := msgs[i]
+			if m.Role != schema.User && m.Role != schema.Assistant || m.Content == "" {
+				continue
+			}
+			out = append(out, string(m.Role)+"(近因): "+clip(m.Content, opts.SnippetLen))
+			picked[i] = true
+		}
 	}
 	return out
+}
+
+// recallRole 决定一条消息是否参与召回及其展示标签。user/assistant 恒参与;
+// 执行记录([执行记录] system 摘要)仅 includeTools 时参与(U1.4d)。
+func recallRole(m *schema.Message, includeTools bool) (label string, isTool, ok bool) {
+	switch m.Role {
+	case schema.User, schema.Assistant:
+		return string(m.Role), false, true
+	case schema.System:
+		if includeTools && strings.HasPrefix(m.Content, execRecordMarker) {
+			return "execution record", true, true
+		}
+	}
+	return "", false, false
+}
+
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // snippetAround 返回内容中命中 query bigram 最密集区段为中心的窗口(U1.4a),

@@ -66,3 +66,39 @@ func indexOfContaining(hits []string, sub string) int {
 	}
 	return -1
 }
+
+// TestReferentialFallback(U1.1):指代型 query("那个订单")词法救不了,
+// 近因兜底补回最近的对话轮次。
+func TestReferentialFallback(t *testing.T) {
+	msgs := []*schema.Message{
+		schema.AssistantMessage("订单 O-1042 卡在发货环节,已付款 12 天未发货", nil),
+		schema.UserMessage("好的知道了"),
+	}
+	// "那个订单啥情况" 与上文几乎零词法重叠,纯 bigram 会返回空。
+	hits := Search(msgs, "那个订单啥情况", 2)
+	if len(hits) == 0 {
+		t.Fatal("referential query should fall back to recent turns, got none")
+	}
+	joined := strings.Join(hits, "\n")
+	if !strings.Contains(joined, "近因") {
+		t.Fatalf("fallback hits should be recency-tagged: %v", hits)
+	}
+}
+
+// TestIncludeTools(U1.4d):默认不召回执行记录;开启后可召回([执行记录]
+// system 摘要),且单独限额。
+func TestIncludeTools(t *testing.T) {
+	msgs := []*schema.Message{
+		schema.SystemMessage("[执行记录](本轮工具调用)\n- get_inventory(P103) => P103 当前库存 42 件"),
+		schema.UserMessage("闲聊无关"),
+	}
+	// 默认关:执行记录不召回
+	if hits := Search(msgs, "P103 库存 42", 2); indexOfContaining(hits, "库存 42") >= 0 {
+		t.Fatalf("execution record must not be recalled by default: %v", hits)
+	}
+	// 开启:执行记录可召回
+	hits := SearchOpts(msgs, "P103 库存 42", 2, Options{SnippetLen: 160, IncludeTools: true})
+	if indexOfContaining(hits, "库存 42") < 0 {
+		t.Fatalf("include_tools should recall the execution record: %v", hits)
+	}
+}
