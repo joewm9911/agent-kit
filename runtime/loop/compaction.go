@@ -214,6 +214,10 @@ func Compactor(m model.ToolCallingChatModel, cfg CompactionConfig) engine.Messag
 		}
 		// 首次压缩:切割点不拆散 tool_call 配对
 		cut := SafeCut(msgs, len(msgs)-cfg.Keep())
+		// U5.1 泄压阀:keep_recent 是硬保护,但"最近即膨胀源"时(保留窗
+		// 本身就超 token 预算)会让压缩后仍然超限、逼近上下文上限。仅在
+		// 真顶到 MaxTokens 时突破保护、把切割点前移,直到最近窗口装得下。
+		cut = pressureCut(msgs, cut, cfg.MaxTokens)
 		if cut <= 0 || cut >= len(msgs) {
 			return msgs
 		}
@@ -297,6 +301,27 @@ func Summarize(ctx context.Context, m model.ToolCallingChatModel, cfg Compaction
 func SafeCut(msgs []*schema.Message, cut int) int {
 	for cut < len(msgs) && cut >= 0 && msgs[cut].Role == schema.Tool {
 		cut++
+	}
+	return cut
+}
+
+// minKeepFloor 是泄压阀下探的保留下限:再顶也至少留这么多条最近消息。
+const minKeepFloor = 2
+
+// pressureCut 是 U5.1 泄压阀:标准切割(keep_recent)后若保留窗
+// msgs[cut:] 的 token 估算仍超预算(留 1/4 给摘要),把切割点前移(不拆
+// tool 配对),直到装得下或触到 minKeepFloor 下限。maxTokens<=0 不介入。
+func pressureCut(msgs []*schema.Message, cut, maxTokens int) int {
+	if maxTokens <= 0 {
+		return cut
+	}
+	budget := int64(maxTokens) * 3 / 4
+	for cut < len(msgs)-minKeepFloor && estimate(msgs[cut:]) > budget {
+		next := SafeCut(msgs, cut+1)
+		if next <= cut || next >= len(msgs)-minKeepFloor {
+			break
+		}
+		cut = next
 	}
 	return cut
 }

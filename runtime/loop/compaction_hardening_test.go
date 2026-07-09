@@ -183,3 +183,30 @@ func TestCompactorClearOnlyMode(t *testing.T) {
 		t.Fatalf("no summarize call expected, got %d", m.Calls)
 	}
 }
+
+// TestPressureCut(U5.1)验证泄压阀:当最近保留窗自身超 token 预算时,
+// 切割点在 MaxTokens 压力下前移(突破 keep_recent 硬保护);无 MaxTokens
+// 时不介入;下探不越过 minKeepFloor。
+func TestPressureCut(t *testing.T) {
+	// 6 条,每条 ~4000 个 ASCII 字符 ≈ 1000 token/条。
+	big := strings.Repeat("x", 4000)
+	msgs := make([]*schema.Message, 6)
+	for i := range msgs {
+		msgs[i] = schema.UserMessage(big)
+	}
+	stdCut := 2 // 标准切割:保留最近 4 条(msgs[2:]),约 4000 token
+
+	// 无 MaxTokens:不介入,切割点不动。
+	if got := pressureCut(msgs, stdCut, 0); got != stdCut {
+		t.Fatalf("no MaxTokens must not move cut: got %d", got)
+	}
+	// MaxTokens=2000:保留窗(4 条≈4000)超预算(1500=2000×3/4),切割点应前移。
+	if got := pressureCut(msgs, stdCut, 2000); got <= stdCut {
+		t.Fatalf("pressure should deepen cut: got %d want > %d", got, stdCut)
+	}
+	// 下探不越过 minKeepFloor:极小预算也至少留 minKeepFloor 条。
+	got := pressureCut(msgs, stdCut, 1)
+	if len(msgs)-got < minKeepFloor {
+		t.Fatalf("must keep at least minKeepFloor: cut=%d keeps %d", got, len(msgs)-got)
+	}
+}
