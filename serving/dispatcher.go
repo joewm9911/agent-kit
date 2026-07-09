@@ -199,6 +199,9 @@ func (d *Dispatcher) run(key string, j job) {
 	defer cancel()
 	// 终端用户身份(IM 的发送者)装入 ctx:长期记忆用户级作用域据此隔离。
 	ctx = runctx.WithUser(ctx, j.in.Conv.User)
+	// 入口层拦截:第三方可在此把传输 baggage 提升/派生进 ctx,与 HTTP/A2A
+	// 统一。此刻 origin 的 baggage 已由 WithoutCancel 保活。
+	ctx = applyContextHooks(ctx, InboundInfo{Channel: j.in.Conv.Channel, User: j.in.Conv.User, Session: key})
 
 	// 挂起模式:共享编排(suspendturn.go)装配可挂起交互通道与效果/
 	// 交互日志,IM 的传输策略是问句发进会话(带 question 语义过装饰器)。

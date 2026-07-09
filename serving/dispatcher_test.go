@@ -185,6 +185,66 @@ func (r echoRunner) Stream(ctx context.Context, msgs []*schema.Message) (*schema
 // 因此无法按 Conv.User 那样显式重织,只能靠 WithoutCancel 整体保值)。
 type traceKey struct{}
 
+// hookKey 是入口拦截钩子写入的键(模拟第三方派生并注入的数据)。
+type hookKey struct{}
+
+// withHooksReset 快照并清空全局钩子注册表,返回 restore;隔离测试污染。
+func withHooksReset() func() {
+	hookMu.Lock()
+	saved := hooks
+	hooks = nil
+	hookMu.Unlock()
+	return func() {
+		hookMu.Lock()
+		hooks = saved
+		hookMu.Unlock()
+	}
+}
+
+// TestContextHookInjects 验证入口拦截:第三方注册的 ContextHook 在执行 agent
+// 前运行,拿到 InboundInfo,注入的数据一路流到 decorator。
+func TestContextHookInjects(t *testing.T) {
+	defer withHooksReset()()
+
+	var mu sync.Mutex
+	var gotInfo InboundInfo
+	RegisterContextHook(func(ctx context.Context, info InboundInfo) context.Context {
+		mu.Lock()
+		gotInfo = info
+		mu.Unlock()
+		// 派生数据注入 ctx(如据 user 查租户、或提升 trace logid)。
+		return context.WithValue(ctx, hookKey{}, "tenant:"+info.User)
+	})
+
+	fc := &fakeChannel{}
+	ag := agent.New("a", "", echoRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+
+	var seen string
+	dec := func(ctx context.Context, _ channel.ConvRef, out channel.Outbound) channel.Outbound {
+		if out.Kind == channel.KindAnswer {
+			mu.Lock()
+			if v, ok := ctx.Value(hookKey{}).(string); ok {
+				seen = v
+			}
+			mu.Unlock()
+		}
+		return out
+	}
+	h := d.Handler(Binding{Channel: fc, Agent: ag, ReplyMode: "text", Decorator: dec})
+	h(context.Background(), channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c1", User: "u7"}, Text: "q", EventID: "hk1"})
+
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return seen != "" })
+	mu.Lock()
+	defer mu.Unlock()
+	if seen != "tenant:u7" {
+		t.Fatalf("hook-injected value should reach decorator, got %q", seen)
+	}
+	if gotInfo.Channel != "fake" || gotInfo.User != "u7" || gotInfo.Session != "fake-c1" {
+		t.Fatalf("hook got wrong InboundInfo: %+v", gotInfo)
+	}
+}
+
 // TestBaggageReachesDecorator 验证:入站 ctx 上的第三方 baggage(如 trace
 // logid)穿过 enqueue→worker→run 的"生命周期解耦"边界,抵达 decorator。
 // run 以 WithoutCancel(origin) 起根——只切取消、留值。测试特意在入站 ctx

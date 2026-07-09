@@ -108,6 +108,7 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		req.Session = "http-" + suspend.NewTurnID() // 时间+随机,并发不碰撞、可读可排序
 	}
 	ctx := runctx.WithUser(r.Context(), req.User)
+	ctx = applyContextHooks(ctx, InboundInfo{Channel: "http", User: req.User, Session: req.Session})
 
 	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 		s.stream(w, ctx, a, req.Session, req.Input)
@@ -254,7 +255,8 @@ func (s *Server) handleA2ATask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	// A2A 任务无会话延续:每次独立会话,与子 agent 语义一致。
 	session := "a2a-" + suspend.NewTurnID()
-	result, err := a.Run(r.Context(), session, req.Task)
+	ctx := applyContextHooks(r.Context(), InboundInfo{Channel: "a2a", Session: session})
+	result, err := a.Run(ctx, session, req.Task)
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
