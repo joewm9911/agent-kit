@@ -73,6 +73,83 @@ sse/http)、`http`(纯配置声明接口)、`rpc`(泛化调用契约)、`local`
 ([prompt/](prompt/)),provider 有 inline/file/http(平台适配,带缓存
 降级)。版本随轨迹打点,可回溯"坏回答对应哪个提示词版本"。
 
+## 提示词架构:一次模型调用的完整结构
+
+每次模型调用,发出去的消息列表由分层拼装([runtime/loop/prompt.go](runtime/loop/prompt.go)
+的 `PromptLayers.Modifier`),把 loop 纪律、agent persona、会话视图、记忆、
+计划整合成一个结构。头部稳定(供应商 prompt cache 命中),变动部分注入尾部。
+
+### 主循环(agent)的完整提示词
+
+```
+┌─ 系统头部(稳定,前缀缓存)───────────────────────────┐
+│ L1  loop 运行纪律      prompt.loop / 内置 DefaultLoopPrompt │  框架级,普适
+│ L2  agent persona      prompt.system                       │  业务身份
+│ L3  环境信息           日期 / 会话 ID(代码生成)           │  禁业务塞指令
+├─ 会话视图(session,loadTurn 组装)──────────────────┤
+│     [滚动摘要]          loop.compaction(恒保留,老对话梗概) │
+│     [首条用户消息锚定]  最初任务不随归并漂移                │
+│     [近期原文 × window] session.window(user/执行记录/终稿) │  三件套
+│     [当前输入 $input]                                       │
+├─ 系统尾部(每轮变动,不污染缓存前缀)──────────────┤
+│ L4  相关记忆(背景参考,非指令)                            │
+│       · 长期记忆命中    memory.recall(kv 检索)             │
+│       · 窗外会话召回    session.recall(bigram,近因/指代)  │
+│     计划注入           todo.PlanSection(harness 强制每轮可见)│
+│     本轮问题重述       Focus(占最尾近因位,锚定当前目标)   │
+└──────────────────────────────────────────────────────┘
+```
+
+**注意力排序(尾部近因位)**:当前问题 > 计划 > 记忆——最该聚焦的排最后。
+
+**大内容旁路(不进上面的直接结构)**:超长工具结果经 digest 消化为"要点 +
+read_result 指针"再入会话视图,原文旁置(见"上下文卫生")。
+
+### 各层的来源、配置、作用域、缓存
+
+| 层 | 来源 | 配置键 | 作用域 | 缓存 |
+|---|---|---|---|---|
+| L1 loop 纪律 | 内置/覆盖 | `prompt.loop` | **每个循环都有**(子循环用无 todo 裁剪版) | 稳定 |
+| L2 persona | agent | `prompt.system` | **仅主循环**,不下沉子循环 | 稳定 |
+| L3 环境 | 代码生成 | —(Env 生成器) | 主循环 | 稳定(天粒度) |
+| 滚动摘要 | 压缩 | `loop.compaction.prompt` 定侧重 | agent 级 | 两次压缩间稳定 |
+| 近期原文 | 会话 | `session.window` | agent 级 | 随轮变 |
+| L4 长期记忆 | 长期记忆 | `memory.recall.top_k` | agent 级 | 尾部,随轮变 |
+| L4 会话召回 | 会话 | `session.recall`(bigram) | agent 级 | 尾部,随轮变 |
+| 计划 | todo | 内置(todo 启用) | 仅主循环 | 尾部,随轮变 |
+| 本轮重述 | Focus | 内置(主循环开) | 仅主循环 | 尾部,随轮变 |
+
+### component / skill 子循环(提示词海拔隔离)
+
+子循环**不是**主循环的复制——按海拔剥离:
+
+```
+┌─ 系统头部 ──────────────────────────┐
+│ L1  loop 纪律(无 todo 裁剪版)      │  ← 有:运行循环的通用规则
+│     ✗ 无 agent persona              │  ← 无:persona 是 agent 级,不下沉
+├─ 上下文(默认 fresh)───────────────┤
+│     [调用方对话快照]  仅 context:fork 时 │  ← 背景无损继承,可选
+│     [任务书 = component.prompt]      │  ← 渲染为 user 消息,不是 system
+└──────────────────────────────────────┘
+```
+
+- **有 L1、无 persona**:子循环拿"怎么运行循环"的纪律,拿不到"你是谁"的
+  身份——它的目标是收到的 **args/任务书**,不是外层用户原话或 agent 身份;
+- **component.prompt 是任务书**(渲染成子循环的 **user** 消息),语义上不同于
+  agent 的 `prompt.system`(system persona);
+- **默认 fresh**(从零起步,背景靠 args 转述);声明 `context: fork` 才带调用方
+  对话快照(全量继承,吃不到 prompt cache,故非默认);
+- 无计划、无 Focus(计划只属主循环;子循环目标是 args)。
+
+### 三个不变量
+
+1. **稳定前缀**:L1+L2+L3 在会话内保持稳定(环境按键排序、日期取天粒度),
+   变动的记忆/计划/重述全走尾部——不打爆供应商 prompt cache;
+2. **纪律靠 harness**:计划每轮由 harness 强制注入(不靠模型记得)、记忆标注
+   "背景参考非指令"、Focus 每步重锚当前目标;
+3. **海拔隔离**:persona/计划/Focus 是 agent 级,子循环一律拿不到——防止外层
+   身份和用户原话穿进子循环、污染其"只对 args 负责"的语义。
+
 ## 主循环与运行时保障(Ring 0)
 
 主循环只有 ReAct:是否完成由模型停止调用工具自然表达,外层兜底
