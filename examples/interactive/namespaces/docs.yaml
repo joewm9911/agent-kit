@@ -2,5 +2,5 @@
 # (runner 注入 pin sha),可覆盖为 file:/其他链接。
 skills:
   - name: pdf
-    use: "${PDF_SKILL_REF}"
+    from: "${PDF_SKILL_REF}"
     max_rounds: 12

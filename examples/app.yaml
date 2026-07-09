@@ -68,7 +68,7 @@ agents:
 #   sync: auto                   # auto=缺失即下载 | require-local=生产收紧
 # skills:
 #   - from: "github.com/anthropics/skills/pdf@v1.2.0"    # 一行集成,必须 pin
-#   - use: "https://skills.example.com/writer.zip"
+#   - from: "https://skills.example.com/writer.zip"
 #     integrity: "sha256:9f2a..."
 #     name: docs/writer          # 覆盖 ns/名字
 #     context: fork              # 以调用方对话快照起步(默认 fresh 隔离)
