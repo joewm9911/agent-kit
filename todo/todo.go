@@ -43,9 +43,11 @@ const (
 	sep               = "\x1f"
 
 	// 轮内状态袋(runctx.TurnState)的键前缀,拼上执行域键隔离:
-	// written = 本轮写过计划;nagged = 本轮收口检查已催办过(每轮最多一次)。
-	turnWritten = "todo.written" + sep
-	turnNagged  = "todo.nagged" + sep
+	// written = 本轮写过计划;nagged = 本轮收口检查已催办过(每轮最多一次);
+	// goalChecked = 本轮目标达成核对已做过(每轮最多一次)。
+	turnWritten     = "todo.written" + sep
+	turnNagged      = "todo.nagged" + sep
+	turnGoalChecked = "todo.goalchecked" + sep
 )
 
 // todoState 是一个执行域的完整计划状态,整体作为一个 KV 值原子读改写:
@@ -270,6 +272,37 @@ func (t *Todo) FinishCheck(ctx context.Context) string {
 	return fmt.Sprintf("[计划收口] 你即将结束本轮回答,但任务计划还有 %d 项未收口。"+
 		"先用 todo_write 提交与实际一致的完整清单:已完成的标 completed;不再做或与本轮无关的直接删掉;"+
 		"确实要后续轮次继续的保持原状,并在回答里说明进展到哪。然后再给出最终回答。", open)
+}
+
+// GoalCheck 是主循环的目标达成核对(U4.1,轻量自检):模型即将以纯文本收尾
+// 且本轮用过计划(=多步任务)时,强制一次"对照原始目标逐条核对答案"的
+// 自检——把"计划都标完成了、答案却答偏/漏了原问题一部分"的静默失败在轮内
+// 抹平。每轮最多一次(经轮内状态袋去重),故最多多一次重生成,不会死循环。
+// 诚实说明做不到/部分完成+原因被视为达成,不弹回——避免对本就完不成的
+// 目标空转。纯问答轮(没用过计划)不介入,不给简单问答加负担。
+func (t *Todo) GoalCheck(ctx context.Context) string {
+	bag := runctx.TurnState(ctx)
+	if bag == nil {
+		return "" // 无轮语义,不介入
+	}
+	key := sessionKey(ctx)
+	// 触发面:本轮用过计划(多步任务信号);纯问答轮跳过。
+	if _, written := bag.Load(turnWritten + key); !written {
+		return ""
+	}
+	if _, checked := bag.Load(turnGoalChecked + key); checked {
+		return "" // 每轮至多核对一次(硬边界,防死循环)
+	}
+	goal := runctx.Input(ctx)
+	if goal == "" {
+		return ""
+	}
+	bag.Store(turnGoalChecked+key, true)
+	return "[目标达成核对] 在给出最终回答前,对照用户本轮的原始目标逐条自查:\n" +
+		"「" + goal + "」\n" +
+		"逐条确认目标的每一部分是否都被真实覆盖(每个子问题都有工具数据支撑、多部分要求无一遗漏、" +
+		"改动性操作确已执行而非只是声称)。若发现遗漏或未执行:现在就发起真实的工具调用补上,再给完整回答。" +
+		"若某部分确实做不到:如实说明原因和已完成的部分(诚实的部分完成也是合格回答)。若全部已覆盖:直接给出最终回答。"
 }
 
 // Nudge 给能力集套上计划卡住提醒(Ring 0):存在进行中任务时,连续

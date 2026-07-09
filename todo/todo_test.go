@@ -249,6 +249,35 @@ func TestTodoFinishCheck(t *testing.T) {
 	}
 }
 
+// TestGoalCheck 验证目标达成核对(U4.1):用过计划的轮次收尾时核对一次,
+// 提示带原始目标;每轮至多一次;纯问答轮(没写过计划)不介入。
+func TestGoalCheck(t *testing.T) {
+	// 纯问答轮:本轮没写过计划 → 不介入(不给简单问答加负担)
+	noplan := runctx.WithInput(runctx.WithTurnState(testCtx("a", "gc0")), "简单问题")
+	if msg := td.GoalCheck(noplan); msg != "" {
+		t.Fatalf("no-plan turn must skip goal check, got %q", msg)
+	}
+
+	// 用过计划 + 有原始目标:核对一次,提示带目标原文
+	ctx := runctx.WithInput(runctx.WithTurnState(testCtx("a", "gc1")), "查 A 再核对全覆盖")
+	writeTodos(t, ctx, `{"todos":[{"content":"查A","status":"completed"}]}`)
+	msg := td.GoalCheck(ctx)
+	if !strings.Contains(msg, "目标达成核对") || !strings.Contains(msg, "查 A 再核对全覆盖") {
+		t.Fatalf("goal check must carry the original goal, got %q", msg)
+	}
+	// 每轮至多一次(硬边界,防死循环)
+	if again := td.GoalCheck(ctx); again != "" {
+		t.Fatalf("goal check must fire at most once per turn, got %q", again)
+	}
+
+	// 无轮语义:不介入
+	bare := runctx.WithInput(testCtx("a", "gc2"), "x")
+	writeTodos(t, bare, `{"todos":[{"content":"x","status":"completed"}]}`)
+	if msg := td.GoalCheck(bare); msg != "" {
+		t.Fatalf("no turn state must not check, got %q", msg)
+	}
+}
+
 // TestTodoPlanSectionStale 验证遗留计划标注:同轮写入后是"当前任务计划",
 // 新轮未写入时降为"遗留任务计划"并指示清理;写入后恢复。
 func TestTodoPlanSectionStale(t *testing.T) {

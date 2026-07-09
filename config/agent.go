@@ -181,6 +181,12 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		td = todo.New(kv, ttl)
 		caps = append(caps, td.Capabilities()...)
 		finishChecks = append(finishChecks, td.FinishCheck)
+		// GoalCheck 目标达成核对(U4.1)默认关:真机 A/B 显示强模型上强制
+		// 重生成可能净负(丢内容),仅显式开启。顺序在 FinishCheck 之后
+		// (先收口计划,再核对目标)。
+		if ac.Capabilities.GoalCheck != nil && *ac.Capabilities.GoalCheck {
+			finishChecks = append(finishChecks, td.GoalCheck)
+		}
 	}
 	// 统一评审循环(ReviewModel):重复终止 → 收口守卫 → 业务收口检查,
 	// 顺序显式、全局重试预算,取代旧的三层包装嵌套(乘法放大无全局闸)。

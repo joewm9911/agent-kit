@@ -155,6 +155,11 @@ type CapabilitiesConfig struct {
 	Include []string `yaml:"include"`
 	Exclude []string `yaml:"exclude"`
 	AskUser *bool    `yaml:"ask_user"` // 内置交互能力(默认开,显式 false 关闭)
+	// GoalCheck 开启目标达成核对(U4.1):多步任务收尾前强制一次"对照原始
+	// 目标逐条自查"的重生成。**默认关**——真机 A/B 显示强模型 + 中等难度
+	// 任务上,强制重生成可能丢内容、净负;价值在弱模型/更难/高风险任务上,
+	// 待 eval 定位后再考虑放开默认。显式 true 开启。
+	GoalCheck *bool `yaml:"goal_check"`
 }
 
 // ApprovalConfig 是审批治理模块:模式 + 参数级策略(规则 + 决策记忆);
