@@ -64,6 +64,10 @@ type job struct {
 	b      Binding
 	in     channel.Inbound
 	turnID string // 挂起模式的轮次标识;恢复的轮次沿用首跑的 ID
+	// origin 承载入站 ctx 的**值**(如第三方 trace 框架写入的 logid)。run
+	// 里以 WithoutCancel 剥离其取消/超时后作为根,让 baggage 穿到 agent/
+	// decorator;取消由 run 自建的长超时接管。跨进程恢复的轮次此值为空。
+	origin context.Context
 }
 
 // NewDispatcher 创建分发器,并确保进度事件发射切面已挂载(幂等)。
@@ -161,7 +165,7 @@ func (d *Dispatcher) enqueue(ctx context.Context, b Binding, in channel.Inbound,
 	d.mu.Unlock()
 
 	select {
-	case q <- job{b: b, in: in, turnID: turnID}:
+	case q <- job{b: b, in: in, turnID: turnID, origin: ctx}:
 	default:
 		_, _ = b.Channel.Send(ctx, in.Conv, channel.Outbound{Text: b.texts().Overloaded})
 	}
@@ -183,8 +187,15 @@ func (d *Dispatcher) run(key string, j job) {
 		d.mu.Unlock()
 	}()
 
-	// IM 消息处理与单次请求生命周期解耦,用独立的长超时上下文。
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// IM 消息处理与单次请求生命周期解耦:剥离入站 ctx 的取消/超时(否则
+	// ACK 返回即被取消),但**保留其值**——第三方 trace baggage(如 logid)
+	// 借此穿到 agent/decorator。取消由独立的长超时接管。跨进程恢复的轮次
+	// origin 为空,退化为纯根。
+	base := j.origin
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(base), 30*time.Minute)
 	defer cancel()
 	// 终端用户身份(IM 的发送者)装入 ctx:长期记忆用户级作用域据此隔离。
 	ctx = runctx.WithUser(ctx, j.in.Conv.User)

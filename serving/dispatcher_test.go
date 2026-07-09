@@ -181,6 +181,45 @@ func (r echoRunner) Stream(ctx context.Context, msgs []*schema.Message) (*schema
 	return sr, nil
 }
 
+// traceKey 模拟第三方 trace 框架的私有 ctx key(agent-kit 不认识它,
+// 因此无法按 Conv.User 那样显式重织,只能靠 WithoutCancel 整体保值)。
+type traceKey struct{}
+
+// TestBaggageReachesDecorator 验证:入站 ctx 上的第三方 baggage(如 trace
+// logid)穿过 enqueue→worker→run 的"生命周期解耦"边界,抵达 decorator。
+// run 以 WithoutCancel(origin) 起根——只切取消、留值。测试特意在入站 ctx
+// 带取消并在投递后立即 cancel,双证:①值到得了 decorator;②origin 的取消
+// 不会波及已解耦的 run。
+func TestBaggageReachesDecorator(t *testing.T) {
+	fc := &fakeChannel{}
+	ag := agent.New("a", "", echoRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+
+	var mu sync.Mutex
+	var seen string
+	dec := func(ctx context.Context, _ channel.ConvRef, out channel.Outbound) channel.Outbound {
+		if out.Kind == channel.KindAnswer {
+			mu.Lock()
+			if v, ok := ctx.Value(traceKey{}).(string); ok {
+				seen = v
+			}
+			mu.Unlock()
+		}
+		return out
+	}
+	h := d.Handler(Binding{Channel: fc, Agent: ag, ReplyMode: "text", Decorator: dec})
+	base, cancel := context.WithCancel(context.WithValue(context.Background(), traceKey{}, "logid-42"))
+	h(base, channel.Inbound{Conv: channel.ConvRef{Channel: "fake", Chat: "c1"}, Text: "q", EventID: "bg1"})
+	cancel() // ACK 返回后请求 ctx 被取消:不得波及已解耦的 run
+
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return seen != "" })
+	mu.Lock()
+	defer mu.Unlock()
+	if seen != "logid-42" {
+		t.Fatalf("decorator should see trace baggage from inbound ctx, got %q", seen)
+	}
+}
+
 // TestCardReplyMode:card 模式先发"处理中"占位,完成后原地更新为答案;
 // 通道不支持更新时退化为整段回复(占位之外再发一条)。
 func TestCardReplyMode(t *testing.T) {

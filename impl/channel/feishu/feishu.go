@@ -170,7 +170,10 @@ func (f *Feishu) Start(ctx context.Context, mux *http.ServeMux, h channel.Inboun
 			return
 		}
 		m := body.Event.Message
-		go f.deliver(context.Background(), h, msgEvent{
+		// 秒级 ACK 后异步处理:剥离请求 ctx 的取消(handler 一 return 就会
+		// cancel),但用 WithoutCancel **保留其值**——第三方 trace 框架写在
+		// 请求 ctx 上的 logid 等 baggage 借此穿过异步边界,流到 agent/decorator。
+		go f.deliver(context.WithoutCancel(r.Context()), h, msgEvent{
 			eventID: body.Header.EventID, openID: body.Event.Sender.SenderID.OpenID,
 			msgID: m.MessageID, chatID: m.ChatID, chatType: m.ChatType,
 			threadID: m.ThreadID, msgType: m.MessageType, content: m.Content,

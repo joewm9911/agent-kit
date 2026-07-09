@@ -27,12 +27,14 @@ import (
 // 重连兜底,不拉垮进程(通道故障不该杀死整个 app)。
 func (f *Feishu) startLongConn(ctx context.Context, h channel.InboundHandler) error {
 	d := dispatcher.NewEventDispatcher("", ""). // 长连接不校验 token/加密(传输层已鉴权)
-							OnP2MessageReceiveV1(func(_ context.Context, e *larkim.P2MessageReceiveV1) error {
+							OnP2MessageReceiveV1(func(evCtx context.Context, e *larkim.P2MessageReceiveV1) error {
 			ev, ok := normalizeWS(e)
 			if !ok {
 				return nil
 			}
-			go f.deliver(context.Background(), h, ev) // 秒级 ACK:处理异步
+			// 秒级 ACK 后异步处理:剥离 SDK 回调 ctx 的取消,保留其值——与
+			// webhook 路径一致,让 trace baggage(若 SDK 透传)穿到下游。
+			go f.deliver(context.WithoutCancel(evCtx), h, ev)
 			return nil
 		})
 	logLevel := larkcore.LogLevelInfo
