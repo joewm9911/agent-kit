@@ -185,3 +185,35 @@ func TestStreamAppendsAndCompacts(t *testing.T) {
 		t.Fatalf("history = %d, want 4 (two turns)", len(all))
 	}
 }
+
+// TestWindowKeepingHead 验证:窗口裁剪始终保留合成头部(摘要+锚定),
+// 于是 window 可小于近期原文条数、也不丢摘要——window 与 keep_recent 独立。
+func TestWindowKeepingHead(t *testing.T) {
+	view := []*schema.Message{
+		schema.SystemMessage("[Existing summary]\n早期摘要"), // synthetic[0]
+		schema.UserMessage("最初任务:归档表不动"),               // synthetic[1] 锚定
+		schema.UserMessage("r1"),
+		schema.UserMessage("r2"),
+		schema.UserMessage("r3"),
+		schema.UserMessage("r4"),
+	}
+	// window=2 < 近期原文 4 条:仍保留头部 2 条 + 最近 2 条原文。
+	got := windowKeepingHead(view, 2, 2)
+	if len(got) != 4 {
+		t.Fatalf("want 4 (summary+anchor+last2), got %d: %v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].Content, "[Existing summary]") || !strings.Contains(got[1].Content, "归档表不动") {
+		t.Fatalf("synthetic head must survive small window: %+v", got[:2])
+	}
+	if got[2].Content != "r3" || got[3].Content != "r4" {
+		t.Fatalf("window should keep the most-recent raw: %+v", got[2:])
+	}
+	// window 足够大:原样返回
+	if all := windowKeepingHead(view, 2, 10); len(all) != len(view) {
+		t.Fatalf("large window must not trim: %d", len(all))
+	}
+	// 无摘要(synthetic=0):退化为纯窗口裁剪
+	if plain := windowKeepingHead(view, 0, 2); len(plain) != 2 || plain[0].Content != "r3" {
+		t.Fatalf("no-summary case should be plain window: %v", plain)
+	}
+}

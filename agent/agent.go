@@ -311,10 +311,8 @@ func (a *Agent) loadTurn(ctx context.Context, sessionID, input string) (all, msg
 			if all, err = fl.LoadAll(ctx, sessionID); err != nil {
 				return nil, nil, fmt.Errorf("load session: %w", err)
 			}
-			msgs = sessionView(all)
-			if a.window > 0 && len(msgs) > a.window {
-				msgs = msgs[len(msgs)-a.window:]
-			}
+			_, view, synthetic := splitSummaryView(all)
+			msgs = windowKeepingHead(view, synthetic, a.window)
 		} else {
 			if msgs, err = a.store.Load(ctx, sessionID); err != nil {
 				return nil, nil, fmt.Errorf("load session: %w", err)
@@ -394,6 +392,19 @@ func (a *Agent) compact(ctx context.Context, sessionID string) {
 func sessionView(all []*schema.Message) []*schema.Message {
 	_, view, _ := splitSummaryView(all)
 	return view
+}
+
+// windowKeepingHead 把视图裁剪到最近 window 条**原始消息**,但始终保留
+// 合成头部(滚动摘要 + 锚定的首条用户消息)。摘要是老上下文的压缩,不能
+// 因窗口裁剪从头部被裁掉——于是 window 与 keep_recent 相互独立,无隐性
+// 大小约束:window 只约束保留的近期原文条数,摘要恒在。
+func windowKeepingHead(view []*schema.Message, synthetic, window int) []*schema.Message {
+	if window <= 0 || len(view)-synthetic <= window {
+		return view
+	}
+	out := make([]*schema.Message, 0, synthetic+window)
+	out = append(out, view[:synthetic]...)
+	return append(out, view[len(view)-window:]...)
 }
 
 const summaryTagPrefix = "[[rolling-summary:"
