@@ -88,6 +88,33 @@ func TestModifierDeterministic(t *testing.T) {
 	}
 }
 
+// TestModifierUserInEnv 验证终端用户身份并入环境信息块:有用户则注入、
+// 无用户不注入(不留空值)、业务自定义 Env 的同名键不被覆盖。
+func TestModifierUserInEnv(t *testing.T) {
+	mod := PromptLayers{}.Modifier()
+	in := []*schema.Message{schema.UserMessage("hi")}
+
+	// 有用户:环境信息块出现「用户: u42」
+	ctx := runctx.WithUser(context.Background(), "u42")
+	head := mod(ctx, in)[0].Content
+	if !strings.Contains(head, "# 环境信息") || !strings.Contains(head, "用户: u42") {
+		t.Fatalf("user id should be injected into env block, got:\n%s", head)
+	}
+
+	// 无用户:不注入「用户」键
+	if h := mod(context.Background(), in)[0].Content; strings.Contains(h, "用户:") {
+		t.Fatalf("no user must not inject empty 用户 key, got:\n%s", h)
+	}
+
+	// 业务自定义 Env 已给「用户」:不覆盖
+	custom := PromptLayers{Env: func(context.Context) map[string]string {
+		return map[string]string{"用户": "biz-alias"}
+	}}.Modifier()
+	if h := custom(runctx.WithUser(context.Background(), "u42"), in)[0].Content; !strings.Contains(h, "用户: biz-alias") {
+		t.Fatalf("business-provided 用户 must not be clobbered, got:\n%s", h)
+	}
+}
+
 // TestEstimateCJK 验证按字符类型的 token 估算。
 func TestEstimateCJK(t *testing.T) {
 	en := []*schema.Message{schema.UserMessage(strings.Repeat("word", 100))} // 400 ASCII

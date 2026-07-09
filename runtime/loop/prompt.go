@@ -125,6 +125,15 @@ func (p PromptLayers) Modifier() engine.MessageModifier {
 				env["会话"] = s
 			}
 		}
+		// 终端用户身份并入环境信息(默认/自定义 Env 都生效);业务已给同名
+		// 键则不覆盖,匿名/无用户则不注入(避免空值)。注意:群共享会话
+		// (chat 映射)下发送者逐轮变化会令头部前缀失稳、削弱 prompt 缓存;
+		// 按用户隔离会话(chat_user/HTTP)则稳定。
+		if u := runctx.User(ctx); u != "" {
+			if _, exists := env["用户"]; !exists {
+				env["用户"] = u
+			}
+		}
 		if len(env) > 0 {
 			sb.WriteString("\n\n# 环境信息\n")
 			keys := make([]string, 0, len(env))
