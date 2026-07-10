@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -69,25 +70,35 @@ func (s *ResultStore) Put(ctx context.Context, toolName, text string) string {
 	s.mu.Unlock()
 
 	scope := rscope(ctx)
-	n := s.nextSeq(ctx, scope)
+	n, err := s.nextSeq(ctx, scope)
+	if err != nil {
+		slog.Warn("result store seq failed, degrading digest pointer", "err", err)
+		return "" // 诚实降级:不发幻影 id(消化附言改说"全文未能暂存")
+	}
 	id := fmt.Sprintf("r%d", n)
-	_ = s.kv.Update(ctx, scope+rsep+id, func(_ []byte, _ bool) ([]byte, error) {
+	if err := s.kv.Update(ctx, scope+rsep+id, func(_ []byte, _ bool) ([]byte, error) {
 		return []byte(text), nil
-	}, s.ttl)
+	}, s.ttl); err != nil {
+		// redis 写失败绝不能吞:否则 Put 照样交出 id,消化附言宣称
+		// "全文已存为 r1",read_result 一查"不存在"——生产实测的幻影 id。
+		slog.Warn("result store put failed, degrading digest pointer", "id", id, "err", err)
+		return ""
+	}
 	return id
 }
 
-// nextSeq 经后端原子自增取下一个序号,保证跨副本/恢复不撞 id。
-func (s *ResultStore) nextSeq(ctx context.Context, scope string) int {
+// nextSeq 经后端原子自增取下一个序号,保证跨副本/恢复不撞 id。后端失败
+// 必须上抛:吞掉的话 n 恒为 1,坏后端下每轮都发同一个取不回的 "r1"。
+func (s *ResultStore) nextSeq(ctx context.Context, scope string) (int, error) {
 	var n int
-	_ = s.kv.Update(ctx, scope+rsep+"#seq", func(old []byte, ok bool) ([]byte, error) {
+	err := s.kv.Update(ctx, scope+rsep+"#seq", func(old []byte, ok bool) ([]byte, error) {
 		if ok {
 			n, _ = strconv.Atoi(string(old))
 		}
 		n++
 		return []byte(strconv.Itoa(n)), nil
 	}, s.ttl)
-	return n
+	return n, err
 }
 
 // Get 取回一条原始结果。
@@ -222,9 +233,21 @@ func (d *digested) digest(ctx context.Context, out string) string {
 		schema.UserMessage(fmt.Sprintf("当前任务:%s\n\n工具 %s 的原始结果:\n%s", task, name, clipped)),
 	})
 	if err != nil {
-		return out // 消化失败退回原样,截断闸兜底
+		// 消化失败但全文已在暂存里:指针绝不能跟着摘要一起丢——否则下游
+		// 截断闸只说"请缩小查询范围",模型只能瞎猜 id(Ark 生产实测:
+		// 106778 字符结果消化失败 → 截断无 id → 模型猜 r1 → 读不到)。
+		// 确定性降级:开头片段 + 指针,不再需要模型。
+		if id != "" {
+			head := runes
+			if len(head) > d.over {
+				head = head[:d.over]
+			}
+			return fmt.Sprintf("[结果过长且消化失败:原始 %d 字符,以下仅为开头片段;全文已存为 %s,可用 read_result(id=%q, offset=N) 分页查看]\n%s",
+				len(runes), id, id, string(head))
+		}
+		return out // 暂存也没成:退回原样,截断闸兜底
 	}
-	pointer := "全文未能暂存(本轮暂存已满)"
+	pointer := "全文未能暂存(本轮暂存已满或后端不可用)"
 	if id != "" {
 		pointer = fmt.Sprintf("全文已存为 %s,需要细节可用 read_result(id=%q, offset=N) 分页查看", id, id)
 	}

@@ -2,9 +2,12 @@ package loop
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/core/capability"
@@ -130,5 +133,69 @@ func TestForkMessages(t *testing.T) {
 	msgs = ForkMessages(runctx.WithForkContext(context.Background()), task)
 	if len(msgs) != 1 {
 		t.Fatalf("fork without snapshot: %d msgs", len(msgs))
+	}
+}
+
+// brokenKV:全部操作报错的后端,模拟 redis 不可用/写被拒。
+type brokenKV struct{}
+
+func (brokenKV) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, fmt.Errorf("redis down")
+}
+func (brokenKV) Update(context.Context, string, func([]byte, bool) ([]byte, error), time.Duration) error {
+	return fmt.Errorf("redis down")
+}
+func (brokenKV) Delete(context.Context, string) error        { return fmt.Errorf("redis down") }
+func (brokenKV) Scan(context.Context, string) ([]string, error) {
+	return nil, fmt.Errorf("redis down")
+}
+
+// failGenModel:Generate 恒失败(模拟消化模型对超大提示词报错)。
+type failGenModel struct{}
+
+func (failGenModel) Generate(context.Context, []*schema.Message, ...einomodel.Option) (*schema.Message, error) {
+	return nil, fmt.Errorf("context length exceeded")
+}
+func (failGenModel) Stream(context.Context, []*schema.Message, ...einomodel.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, fmt.Errorf("context length exceeded")
+}
+func (m failGenModel) WithTools([]*schema.ToolInfo) (einomodel.ToolCallingChatModel, error) {
+	return m, nil
+}
+
+// TestPutNoPhantomID(生产回归):redis 写失败绝不能吞——旧实现 Put 照样
+// 返回 "r1",消化附言宣称"全文已存为 r1",read_result 一查"不存在"。
+func TestPutNoPhantomID(t *testing.T) {
+	rs := NewResultStore(brokenKV{}, 0)
+	if id := rs.Put(context.Background(), "q", "some long text"); id != "" {
+		t.Fatalf("broken backend must not hand out phantom id, got %q", id)
+	}
+}
+
+// TestDigestFailureKeepsPointer(Ark 生产回归):消化模型失败但全文已入暂存
+// ——指针不能跟着摘要一起丢。旧实现原样回退,下游截断闸只说"缩小查询范围"
+// 无 id,模型猜 r1 读不到;新行为:开头片段 + 真实 id,read_result 可取回。
+func TestDigestFailureKeepsPointer(t *testing.T) {
+	store := memResultStore()
+	ctx := WithResultStore(runctx.With(context.Background(), "a", "s1"), store)
+	raw := strings.Repeat("指标配置数据,", 2000) // 14000 字符,超 over
+	caps := DigestResults([]capability.Capability{
+		capability.New(capability.Meta{Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "metrics_config_query"}},
+			func(context.Context, string) (string, error) { return raw, nil }),
+	}, failGenModel{}, 3000)
+	out, err := capability.Invoke(ctx, caps[0], `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "read_result") || !strings.Contains(out, `id="r1"`) {
+		t.Fatalf("digest-failure message must carry the pointer, got %q", string([]rune(out)[:200]))
+	}
+	if len([]rune(out)) > 3600 {
+		t.Fatalf("fallback must stay bounded (head+pointer), got %d runes", len([]rune(out)))
+	}
+	// 指针必须真的可取回
+	full, ok := store.Get(ctx, "r1")
+	if !ok || len([]rune(full)) != 14000 {
+		t.Fatalf("full text must be retrievable via r1: ok=%v len=%d", ok, len([]rune(full)))
 	}
 }
