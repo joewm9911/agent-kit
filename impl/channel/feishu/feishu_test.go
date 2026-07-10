@@ -97,6 +97,38 @@ func TestSendRoutesThreadReply(t *testing.T) {
 
 // TestWebhookParsesThread:webhook 事件里的 thread_id/message_id 进入
 // ConvRef 的 Thread/Anchor;非话题消息两者为空。
+// TestExtractText:话题内 @ 机器人时飞书下发 post 富文本(不是 text),
+// 需拼接 text 节点、跳过结构化 at 节点;text 仍走 @ 占位清洗;其余类型丢弃。
+func TestExtractText(t *testing.T) {
+	cases := []struct {
+		name, msgType, raw, want string
+	}{
+		{"text 清 @ 占位", "text", `{"text":"@_user_1 分析一下商品"}`, "分析一下商品"},
+		{
+			"post 话题消息(at 节点不入正文)", "post",
+			`{"title":"","content":[[{"tag":"at","user_id":"ou_x","user_name":"Agent Kit"},{"tag":"text","text":" 分析一下商品"}]]}`,
+			"分析一下商品",
+		},
+		{
+			"post 多段落拼接", "post",
+			`{"title":"t","content":[[{"tag":"text","text":"第一行"}],[{"tag":"text","text":"第二行"}]]}`,
+			"第一行\n第二行",
+		},
+		{
+			"post 带语言层", "post",
+			`{"zh_cn":{"title":"","content":[[{"tag":"text","text":"你好"}]]}}`,
+			"你好",
+		},
+		{"图片等无正文类型丢弃", "image", `{"image_key":"img_1"}`, ""},
+		{"post 空内容", "post", `{"title":"","content":[]}`, ""},
+	}
+	for _, c := range cases {
+		if got := extractText(c.msgType, c.raw); got != c.want {
+			t.Errorf("%s: extractText = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestWebhookParsesThread(t *testing.T) {
 	f, _ := newTestFeishu(t)
 	mux := http.NewServeMux()

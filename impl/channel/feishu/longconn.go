@@ -34,7 +34,12 @@ func (f *Feishu) startLongConn(ctx context.Context, h channel.InboundHandler) er
 			}
 			// 秒级 ACK 后异步处理:剥离 SDK 回调 ctx 的取消,保留其值——与
 			// webhook 路径一致,让 trace baggage(若 SDK 透传)穿到下游。
-			go f.deliver(context.WithoutCancel(evCtx), h, ev)
+			// WithoutCancel 对 nil 会 panic,SDK 理论上非 nil,仍兜底防炸。
+			base := evCtx
+			if base == nil {
+				base = context.Background()
+			}
+			go f.deliver(context.WithoutCancel(base), h, ev)
 			return nil
 		})
 	logLevel := larkcore.LogLevelInfo

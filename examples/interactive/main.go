@@ -42,6 +42,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	osexec "os/exec"
@@ -77,6 +78,11 @@ func setDefault(key, val string) {
 }
 
 func main() {
+	// 日志级别:LOG_LEVEL=debug 打开 Debug(排障用,例如飞书 "inbound dropped"
+	// 这类默认不可见的丢弃日志)。
+	if strings.EqualFold(os.Getenv("LOG_LEVEL"), "debug") {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
 	// 模型选择:provider 感知的 key/base/model 默认注入(key 永不写进配置文件)。
 	// 默认 MiniMax(M2.7);OPS_MODEL_PROVIDER=zhipu 切智谱 GLM。
 	setDefault("OPS_MODEL_PROVIDER", "minimax")

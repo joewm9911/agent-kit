@@ -193,18 +193,21 @@ type msgEvent struct {
 // 转为 Inbound 交给 dispatcher。被过滤的消息留 debug 日志(静默丢弃
 // 会让"配置了却收不到"无从排查)。
 func (f *Feishu) deliver(ctx context.Context, h channel.InboundHandler, ev msgEvent) {
-	if ev.msgType != "text" || !f.triggered(ev.chatType, ev.mentions) {
+	if !f.triggered(ev.chatType, ev.mentions) {
 		slog.Debug("feishu inbound dropped", slog.String("channel", f.name),
+			slog.String("reason", "not triggered"),
 			slog.String("msg_type", ev.msgType), slog.String("chat_type", ev.chatType),
 			slog.Int("mentions", ev.mentions))
 		return
 	}
-	var content struct {
-		Text string `json:"text"`
-	}
-	_ = json.Unmarshal([]byte(ev.content), &content)
-	text := cleanMentions(content.Text)
+	// text 直取;post 富文本拼接正文(话题里 @ 机器人时飞书下发 post,
+	// 不是 text)。其余类型(图片/文件…)无正文可用,丢弃留痕。
+	text := extractText(ev.msgType, ev.content)
 	if text == "" {
+		slog.Debug("feishu inbound dropped", slog.String("channel", f.name),
+			slog.String("reason", "unsupported msg_type or empty text"),
+			slog.String("msg_type", ev.msgType), slog.String("chat_type", ev.chatType),
+			slog.Int("mentions", ev.mentions))
 		return
 	}
 	conv := channel.ConvRef{Channel: f.name, Chat: ev.chatID, User: ev.openID}
@@ -235,6 +238,66 @@ var mentionPattern = regexp.MustCompile(`@_user_\d+\s*`)
 
 func cleanMentions(s string) string {
 	return strings.TrimSpace(mentionPattern.ReplaceAllString(s, ""))
+}
+
+// postNode 是富文本的一个节点:tag=text 才有正文;tag=at 是结构化 @,
+// 不入正文(与 text 消息里的 @_user_N 占位不同)。
+type postNode struct {
+	Tag  string `json:"tag"`
+	Text string `json:"text"`
+}
+
+type postBody struct {
+	Title   string       `json:"title"`
+	Content [][]postNode `json:"content"`
+}
+
+// extractText 从消息 content 提取纯正文:
+//   - text:{"text":"@_user_1 你好"} → 清 @ 占位;
+//   - post:{"title":"","content":[[{"tag":"text","text":"你好"},{"tag":"at",...}]]}
+//     → 拼所有 text 节点。话题内 @ 机器人下发的正是 post。
+//
+// 其余类型返回空串,由调用方丢弃留痕。
+func extractText(msgType, raw string) string {
+	switch msgType {
+	case "text":
+		var c struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal([]byte(raw), &c)
+		return cleanMentions(c.Text)
+	case "post":
+		return cleanMentions(extractPostText(raw))
+	default:
+		return ""
+	}
+}
+
+func extractPostText(raw string) string {
+	var p postBody
+	if err := json.Unmarshal([]byte(raw), &p); err != nil || len(p.Content) == 0 {
+		// 兼容带语言层的形态:{"zh_cn":{"title":...,"content":[[...]]}}
+		var byLang map[string]postBody
+		if json.Unmarshal([]byte(raw), &byLang) != nil {
+			return ""
+		}
+		for _, v := range byLang {
+			if len(v.Content) > 0 {
+				p = v
+				break
+			}
+		}
+	}
+	var sb strings.Builder
+	for _, line := range p.Content {
+		for _, n := range line {
+			if n.Tag == "text" {
+				sb.WriteString(n.Text)
+			}
+		}
+		sb.WriteString("\n")
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // decode 解出事件体:配置了 encrypt_key 时按飞书规范 AES-CBC 解密
