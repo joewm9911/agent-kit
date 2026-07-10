@@ -55,7 +55,8 @@ You have the todo_write and todo_read tools to manage and plan tasks. Use these 
 - Mark a task in_progress BEFORE beginning work on it; keep exactly one task in_progress at a time.
 - Mark a task completed IMMEDIATELY after finishing it; do not batch up completions.
 - ONLY mark a task completed when it is FULLY accomplished. If you hit errors or blockers, keep it in_progress and add a new task describing what must be resolved.
-- Remove tasks that are no longer relevant from the list entirely.`
+- Remove tasks that are no longer relevant from the list entirely.
+- Marking items complete is bookkeeping, not your answer. When the plan is done, your final message must still BE the result the user asked for — the data and conclusions themselves — never a status like "all tasks completed".`
 
 const loopPromptTail = `
 

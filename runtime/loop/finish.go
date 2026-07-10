@@ -8,6 +8,34 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
+// CompletionNoticeGuard 控制"纯完成状态"收口拦截是否生效(真机 A/B 用开关做
+// 对照)。默认开:实测 MiniMax 在多步 + todo 任务上约 1/3 概率把最终消息答成
+// 一句"任务已全部完成"、零实质内容——这是把内容整体替换掉,不是多说一句。
+var CompletionNoticeGuard = true
+
+// 纯完成状态:终答只是一句"任务/方案/计划/分析…完成"之类元陈述,没有任何
+// 实质内容。紧约束避免误伤动作确认("已补货,库存 92 件"含数字/具体对象)。
+var (
+	// 泛指任务对象 + 完成动词。要求主语是"任务/方案/计划…"这类元指代,
+	// 从而放过"已下架 P100""已补货 92 件"这类具体动作确认。
+	// (所有/步骤/结论已给出 为真机 A/B 抓到的实测变体。)
+	completionNoticeRe = regexp.MustCompile(`(?i)(所有|全部)?(任务|方案|计划|分析|工作|流程|步骤|全部)[^。.,，、\n]{0,6}(完成|完毕|结束|办完)|(结论|结果)已(给出|输出)|all (tasks|steps)[^.\n]{0,8}(completed|done)|task[^.\n]{0,6}(is )?complete`)
+	completionDigitRe  = regexp.MustCompile(`[0-9０-９]`)
+	completionPoliteRe = regexp.MustCompile(`(?i)(如有|若有|如果|如需|还)[^。.\n]{0,20}(告诉我|联系我|需求|问题|需要|告知|吩咐)?|请(告诉我|随时|告知|查收|继续吩咐)|随时(联系|告知)|if you need[^.\n]{0,20}|let me know[^.\n]{0,20}`)
+	meaningfulCharRe   = regexp.MustCompile(`[\p{Han}\p{L}\p{N}]`)
+)
+
+// pureCompletionNotice:去掉完成句式 + 礼貌语后,几乎不剩实质字符,即判为
+// "纯完成通知"。三重护栏:①命中完成句式 ②不含任何数字 ③残余实质 ≤3 字。
+func pureCompletionNotice(content string) bool {
+	if !completionNoticeRe.MatchString(content) || completionDigitRe.MatchString(content) {
+		return false
+	}
+	rest := completionNoticeRe.ReplaceAllString(content, "")
+	rest = completionPoliteRe.ReplaceAllString(rest, "")
+	return len(meaningfulCharRe.FindAllString(rest, -1)) <= 3
+}
+
 // FinishGuard 是"收口守卫"的兼容外观:= 单评审器的 ReviewModel(预算
 // 沿旧值 finishGuardBounces,行为与旧实现逐位一致——既有行为测试是
 // 迁移验收线)。组合装配请直接用 ReviewModel(评审器列表 + 全局预算),
@@ -58,6 +86,9 @@ func badFinal(content string) (reason string, bad bool) {
 	}
 	if narratedPlanHeadRe.MatchString(content) && narratedCallRe.MatchString(content) {
 		return "输出是一份'计划/执行步骤'文档,写着要调用哪些工具却没有发起任何真实调用——文字不会执行任何东西。现在就发起第一步的真实 tool_call 开始执行", true
+	}
+	if CompletionNoticeGuard && pureCompletionNotice(content) {
+		return "最终消息只有'任务已完成'这类完成状态、没有任何实质内容——把完整结果本身直接给出来(数据、结论、依据),不要用完成通知代替答案", true
 	}
 	for _, p := range emptyPromises {
 		if strings.Contains(content, p) {

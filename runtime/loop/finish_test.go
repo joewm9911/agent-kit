@@ -241,3 +241,70 @@ func TestFinishGuardNarratedSteps(t *testing.T) {
 		}
 	}
 }
+
+// TestPureCompletionNotice 是"纯完成状态"守卫的规格:该拦的元陈述空壳 vs
+// 该放行的合法答复(含数字/具体动作/实质结论/带真实内容的完成句)。
+func TestPureCompletionNotice(t *testing.T) {
+	block := []string{
+		"任务已全部完成。",                         // 实测复现的原样
+		"任务已全部完成。如有其他需求请告诉我。",   // 带礼貌语变体
+		"分析方案已完成",                           // 用户报的原话
+		"任务完成。",
+		"计划已执行完毕。",
+		"全部任务已完成,请查收。",
+		"All tasks completed.",
+		"The task is complete.",
+		// —— 真机 A/B 实测漏抓的变体(第一轮守卫正则的盲区)——
+		"所有任务已完成。如有其他问题请告诉我。",
+		"所有步骤已完成。如有其他问题，请随时告诉我。",
+		"所有步骤已完成，分析结论已给出。如有其他问题请继续吩咐。",
+		"所有步骤已完成，结论已给出。如需其他操作请告知。",
+		"所有任务已完成。如需进一步分析（如查询销量、调整建议等），请告知。",
+	}
+	for _, s := range block {
+		if !pureCompletionNotice(s) {
+			t.Errorf("应拦(纯完成状态): %q", s)
+		}
+	}
+
+	pass := []string{
+		"补货已完成,库存更新为 92 件。",           // 动作确认:有数字
+		"已下架 P100。",                            // 动作确认:具体对象、无完成元词
+		"降噪耳机 129 元。",                         // 纯数据
+		"分析完成,建议补货:近30天销量增长明显。", // 完成句 + 实质结论
+		"任务已完成:P100 库存 42、售价 199、退款 3 笔。", // 完成句 + 数据
+		"暂不需要补货,库存充足。",                 // 结论、无完成元词
+		"42 件",
+		// 真机 run3 变体:有完成元词但带出了实质结论 → 放行(守卫只拦纯空壳)
+		"所有任务已完成。P100 商品的综合分析结论：**暂不需要补货**，理由是库存充足且退款率低。",
+	}
+	for _, s := range pass {
+		if pureCompletionNotice(s) {
+			t.Errorf("误伤(该放行): %q", s)
+		}
+	}
+}
+
+// TestFinishGuardCompletionNotice:端到端——空壳完成状态弹回,模型补出实质
+// 内容后放行;开关关闭时不介入(A/B 对照的确定性验证)。
+func TestFinishGuardCompletionNotice(t *testing.T) {
+	m := testmodel.New(
+		schema.AssistantMessage("任务已全部完成。", nil),                       // 空壳 → 弹回
+		schema.AssistantMessage("P100 库存 42 件、售价 199 元、退款 3 笔。", nil), // 补出内容 → 放行
+	)
+	g := FinishGuard(m)
+	out, _ := g.Generate(context.Background(), []*schema.Message{schema.UserMessage("分步查清并给结论")})
+	if !strings.Contains(out.Content, "42") || m.Calls != 2 {
+		t.Fatalf("空壳完成状态应弹回并补内容: %q calls=%d", out.Content, m.Calls)
+	}
+
+	// 开关关闭:空壳原样放行(证明拦截确由此守卫贡献)
+	CompletionNoticeGuard = false
+	defer func() { CompletionNoticeGuard = true }()
+	m2 := testmodel.New(schema.AssistantMessage("任务已全部完成。", nil))
+	g2 := FinishGuard(m2)
+	out2, _ := g2.Generate(context.Background(), []*schema.Message{schema.UserMessage("查")})
+	if out2.Content != "任务已全部完成。" || m2.Calls != 1 {
+		t.Fatalf("关闭守卫后应原样放行: %q calls=%d", out2.Content, m2.Calls)
+	}
+}
