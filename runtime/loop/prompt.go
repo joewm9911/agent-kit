@@ -103,6 +103,19 @@ const focusMaxLen = 300
 // 前缀缓存纪律:头部 system prompt(L1+L2+L3)在会话内保持稳定——
 // 环境信息按键排序、时间取天粒度;L4 记忆召回每轮变化,注入到消息
 // 尾部而非头部,避免打爆供应商的 prompt cache。
+type keyPersona struct{}
+
+// WithPersona 注入每轮子循环的 persona(渲染后的组件 prompt),由 Modifier
+// 织入系统消息 L2。P3:组件 prompt→系统指令,input→用户消息。
+func WithPersona(ctx context.Context, persona string) context.Context {
+	return context.WithValue(ctx, keyPersona{}, persona)
+}
+
+func personaFromCtx(ctx context.Context) string {
+	s, _ := ctx.Value(keyPersona{}).(string)
+	return s
+}
+
 func (p PromptLayers) Modifier() engine.MessageModifier {
 	l1 := p.Loop
 	if l1 == "" {
@@ -111,9 +124,15 @@ func (p PromptLayers) Modifier() engine.MessageModifier {
 	return func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
 		var sb strings.Builder
 		sb.WriteString(l1)
-		if p.Persona != "" {
+		// L2 persona:静态字段优先(agent 层配置);为空时取每轮子循环 persona
+		// (P3:组件 prompt→系统指令,经 WithPersona 逐次注入)。
+		persona := p.Persona
+		if persona == "" {
+			persona = personaFromCtx(ctx)
+		}
+		if persona != "" {
 			sb.WriteString("\n\n")
-			sb.WriteString(p.Persona)
+			sb.WriteString(persona)
 		}
 
 		env := map[string]string{}

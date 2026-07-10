@@ -63,12 +63,15 @@ func resetSmokeSeen() {
 	smokeSeen.msgs = nil
 }
 
-func smokeSawSystemContaining(sub string) bool {
+func smokeSawSystemContaining(sub string) bool { return smokeSawRoleContaining(schema.System, sub) }
+func smokeSawUserContaining(sub string) bool    { return smokeSawRoleContaining(schema.User, sub) }
+
+func smokeSawRoleContaining(role schema.RoleType, sub string) bool {
 	smokeSeen.mu.Lock()
 	defer smokeSeen.mu.Unlock()
 	for _, call := range smokeSeen.msgs {
 		for _, m := range call {
-			if m.Role == schema.System && strings.Contains(m.Content, sub) {
+			if m.Role == role && strings.Contains(m.Content, sub) {
 				return true
 			}
 		}
@@ -139,6 +142,10 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 		}
 	}
 	sysT, userT, toolT := sys.String(), user.String(), toolTxt.String()
+	// P3 后组件 prompt(任务书)与 model 步骤 prompt 落在系统消息;input 落
+	// 用户消息(空则 prompt 降级作用户消息)。briefT 合并系统+用户,识别任务书
+	// 对两条路径都稳。
+	briefT := sysT + "\n" + userT
 	reply := func(text string) (*schema.Message, error) { return schema.AssistantMessage(text, nil), nil }
 
 	switch {
@@ -176,7 +183,7 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 		return reply("文案v1")
 
 	// —— component 任务书(user 层识别)——
-	case strings.Contains(userT, "你是价格分析师"):
+	case strings.Contains(briefT, "你是价格分析师"):
 		if toolMsgs == 0 {
 			return call("get_product", `{"id":"P100"}`), nil
 		}
@@ -191,19 +198,19 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 			out += "[DIGESTED]"
 		}
 		return reply(out)
-	case strings.Contains(userT, "你是商品问答助手"):
+	case strings.Contains(briefT, "你是商品问答助手"):
 		if len(s.tools) > 0 && toolMsgs == 0 {
 			return call("search_products", `{"q":"降噪耳机"}`), nil
 		}
 		return reply("[QA]在售款为P100")
-	case strings.Contains(userT, "[FAQ]"):
+	case strings.Contains(briefT, "[FAQ]"):
 		if toolMsgs == 0 { // agentic RAG:先查知识库
 			return call("search_kb", `{"query":"退货"}`), nil
 		}
 		return reply("[FAQBOT]根据知识库:" + clipStr(toolT, 40)) // 用检索结果作答
-	case strings.Contains(userT, "[HANDOFF]"):
+	case strings.Contains(briefT, "[HANDOFF]"):
 		return reply("[HANDOFF]已为您转接人工")
-	case strings.Contains(userT, "深入研究课题"):
+	case strings.Contains(briefT, "深入研究课题"):
 		if toolMsgs == 0 {
 			return call("todo_write", `{"todos":[
 				{"content":"梳理现状","status":"in_progress"},
@@ -215,16 +222,16 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 				{"content":"给出结论","status":"in_progress"}]}`), nil
 		}
 		return reply("[RESEARCH]结论:值得投入")
-	case strings.Contains(userT, "你是客户分析师"):
+	case strings.Contains(briefT, "你是客户分析师"):
 		out := "[CRM]建议主动跟进"
 		if strings.Contains(userT, "caller's conversation") || strings.Contains(sysT, "caller's conversation") {
 			out += "[SNAP]"
 		}
 		return reply(out)
-	case strings.Contains(userT, "审计商品数据"): // workflow 的 model 步骤
+	case strings.Contains(briefT, "审计商品数据"): // workflow 的 model 步骤
 		return reply("[AUDIT]数据合规")
-	case strings.Contains(userT, "压成一句话汇报"): // price-review 的 brief 步骤
-		return reply("[BRIEF]" + markers(userT))
+	case strings.Contains(briefT, "压成一句话汇报"): // price-review 的 brief 步骤
+		return reply("[BRIEF]" + markers(briefT))
 
 	// —— agent 主循环 ——
 	case strings.Contains(sysT, "[OPS]"):
@@ -340,6 +347,42 @@ func skillCtx(input string) context.Context {
 }
 
 // ---- 矩阵测试 ----
+
+// TestP3PromptToSystem:P3 角色切换——组件 prompt(任务书)与 model 步骤 prompt
+// 落到系统消息;input 空时降级作用户消息(零退化)。
+func TestP3PromptToSystem(t *testing.T) {
+	setupSmokeEnv(t)
+	app := buildSmokeApp(t, BuildOptions{})
+	mounted := app.AgentMounts["ops-manager"]
+
+	// 有输入:组件 prompt 与 model 步骤 prompt 进系统消息
+	resetSmokeSeen()
+	pr, err := mounted.Get("cap://skill/catalog/price-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capability.Invoke(skillCtx("这个价有竞争力吗"), pr, `{"sku":"P100","question":"竞争力"}`); err != nil {
+		t.Fatal(err)
+	}
+	if !smokeSawSystemContaining("你是价格分析师") { // 组件 prompt → 系统
+		t.Fatal("component prompt must be in a system message (P3)")
+	}
+	if !smokeSawSystemContaining("压成一句话汇报") { // model 步骤 prompt → 系统
+		t.Fatal("model step prompt must be in a system message (P3)")
+	}
+
+	// 空输入:降级——prompt 落用户消息,不进系统 persona(零退化)
+	resetSmokeSeen()
+	if _, err := capability.Invoke(skillCtx(""), pr, `{"sku":"P100","question":"竞争力"}`); err != nil {
+		t.Fatal(err)
+	}
+	if !smokeSawUserContaining("你是价格分析师") {
+		t.Fatal("empty input should fall back to prompt-as-user")
+	}
+	if smokeSawSystemContaining("你是价格分析师") {
+		t.Fatal("fallback must not also put prompt in system persona")
+	}
+}
 
 // TestSmokeAssembly:三层装配、边界、风险传播、多 agent 共享。
 func TestSmokeAssembly(t *testing.T) {

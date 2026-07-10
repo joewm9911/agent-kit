@@ -25,6 +25,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/prompt"
 	"github.com/joewm9911/agent-kit/protocol/source"
 	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/skill"
 )
@@ -581,15 +582,24 @@ func crossNamespaceSkill(refStr string, global *source.Catalog) (capability.Capa
 	return global.Get(refStr)
 }
 
-// modelStepCap 把默认模型包装为 use: model 步骤的能力:
-// 渲染后的 args 即提示词,单次调用;步骤声明 context: fork 时,
-// 以调用方对话快照 + 提示词起步。
+// modelStepCap 把默认模型包装为 use: model 步骤的能力:单次调用。
+// P3:prompt(=args,params 已绑定+运行时渲染)→ 系统消息;input(P2 re-scope
+// 的作用域输入)→ 用户消息;input 为空则 prompt 降级作用户消息(零退化)。
+// 步骤声明 context: fork 时,以调用方对话快照起步。
 func modelStepCap(m model.ToolCallingChatModel) capability.Capability {
 	return capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "model_step"},
 		Description: "单次模型调用",
 	}, func(ctx context.Context, args string) (string, error) {
-		out, err := m.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(args)))
+		system, user := args, runctx.Input(ctx)
+		var msgs []*schema.Message
+		if user == "" {
+			msgs = loop.ForkMessages(ctx, schema.UserMessage(system)) // 兜底:prompt 作用户消息
+		} else {
+			msgs = append([]*schema.Message{schema.SystemMessage(system)},
+				loop.ForkMessages(ctx, schema.UserMessage(user))...)
+		}
+		out, err := m.Generate(ctx, msgs)
 		if err != nil {
 			return "", err
 		}
