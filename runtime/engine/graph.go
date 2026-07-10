@@ -289,9 +289,10 @@ var tplRef = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_\-]+)\}`)
 // builtinVars 是 $ 前缀的保留变量:由框架在运行时直接注入,不经过
 // 主脑转写,穿透任意嵌套深度。
 //
-//	$input    用户本轮输入原文(runctx.Input)。不可信文本,把它引进
-//	          哪个步骤等于在那里显式开一个注入面——显式声明的价值
-//	          正在于开了口子的地方看得见。
+//	$input    本组件/本图的作用域输入(runctx.Input)。不可信文本。注意
+//	          P3 后组件与 model 步骤默认继承调用方 {$input} 作为用户消息
+//	          (决策:默认继承);step 声明 input: 可重设,想隔离原文就显式
+//	          传一个收窄后的 input。
 //	$user_id  终端用户身份(runctx.User;IM = 飞书 open_id,HTTP =
 //	          请求 user 字段)。按用户取数/记账/审计的编排用它。
 //	$user_input loop 原始用户输入(runctx.LoopInput)。穿透所有组件嵌套
@@ -403,7 +404,7 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 		stepCtx := ctx
 		if s.step.Input != "" {
 			// 组件级输入隔离:重设被调组件的 {$input};{$user_input} 恒定不变。
-			stepCtx = runctx.WithInput(ctx, renderVars(s.step.Input, vars))
+			stepCtx = runctx.WithInput(ctx, renderVarsProse(s.step.Input, vars))
 		}
 		mu.Unlock()
 		if s.step.Args.IsZero() {
@@ -526,7 +527,23 @@ func invokeStep(ctx context.Context, s *compiledStep, args string) (string, erro
 // 的 planner/executor/replanner/solver/reviewer/route 提示词经此获得 params 与
 // {$input}/{$user_input}/{$user_id}(D1 多阶段全透)。
 func renderStage(ctx context.Context, tpl string) string {
-	return renderVars(tpl, runctx.Vars(ctx))
+	return renderVarsProse(tpl, runctx.Vars(ctx))
+}
+
+// renderVarsProse 是散文模板的渲染:同一套占位符查表,但不做 JSON 字符串
+// 上下文转义——阶段提示词/step input 是给模型读的散文,英文引号计数启发在
+// 这里会把多行值渲染成字面 \n、\" 与 <(实测),必须直插。JSON args
+// 模板继续用 renderVars(转义是它的正确性保障)。
+func renderVarsProse(tpl string, vars map[string]string) string {
+	if tpl == "" {
+		return ""
+	}
+	return tplRef.ReplaceAllStringFunc(tpl, func(m string) string {
+		if v, ok := vars[m[1:len(m)-1]]; ok {
+			return v
+		}
+		return m // 未知占位原样保留(与 renderVars 同语义)
+	})
 }
 
 // stageSystem 是"阶段调用"(角色②:引擎编排内的单发,无工具面)的统一系统

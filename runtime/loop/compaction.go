@@ -193,8 +193,10 @@ func Compactor(m model.ToolCallingChatModel, cfg CompactionConfig) engine.Messag
 			if !cfg.Over(view) {
 				return view // 稳定前缀:不重切,cache 持续命中
 			}
-			// 视图再次超阈值:增量归并(旧摘要 + 新增部分)后重切
-			cut := SafeCut(msgs, len(msgs)-cfg.Keep())
+			// 视图再次超阈值:增量归并(旧摘要 + 新增部分)后重切。
+			// 泄压阀同样作用于增量路径:否则会话一旦有过摘要,"最近即膨胀源"
+			// 的场景每次都走这里,保留窗恒超预算、阀永远够不着(稳态失效)。
+			cut := pressureCut(msgs, SafeCut(msgs, len(msgs)-cfg.Keep()), cfg.MaxTokens)
 			if cut <= prev.prefixLen || cut >= len(msgs) {
 				return view
 			}
@@ -314,6 +316,12 @@ const minKeepFloor = 2
 func pressureCut(msgs []*schema.Message, cut, maxTokens int) int {
 	if maxTokens <= 0 {
 		return cut
+	}
+	// 消息数少于 keep_recent 时上游的 len(msgs)-Keep() 为负(SafeCut 原样
+	// 放行)——钳到 0,否则 msgs[cut:] 直接越界 panic(实测:max_tokens 配置
+	// + 短而肥的历史,一次大段粘贴即可打崩无 recover 的 IM 路径)。
+	if cut < 0 {
+		cut = 0
 	}
 	budget := int64(maxTokens) * 3 / 4
 	for cut < len(msgs)-minKeepFloor && estimate(msgs[cut:]) > budget {

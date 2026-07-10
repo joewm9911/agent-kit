@@ -550,3 +550,22 @@ func TestGraphBuiltinUserInput(t *testing.T) {
 		t.Fatalf("$input/$user_input must be distinct: %v %q", err, out)
 	}
 }
+
+// TestRenderVarsProse(M4 回归):阶段提示词/step input 是散文——英文引号
+// 计数启发不得触发 JSON 转义,多行/带引号/带尖括号的值必须原样直插
+// (renderVars 曾把它渲染成字面 \n、\"、<)。
+func TestRenderVarsProse(t *testing.T) {
+	tpl := `The user asked: "{q}". Summarize it.`
+	vars := map[string]string{"q": "第一行\n第二行 \"引用\" <标签>"}
+	got := renderVarsProse(tpl, vars)
+	if strings.Contains(got, `\n`) || strings.Contains(got, `\"`) || strings.Contains(got, `\u003c`) {
+		t.Fatalf("prose render must not JSON-escape: %q", got)
+	}
+	if !strings.Contains(got, "第一行\n第二行") || !strings.Contains(got, "<标签>") {
+		t.Fatalf("value must be inserted verbatim: %q", got)
+	}
+	// 未知占位原样保留(与 renderVars 同语义)
+	if renderVarsProse("{nope}", nil) != "{nope}" {
+		t.Fatal("unknown placeholder must stay literal")
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -257,15 +258,30 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		vars["$input"] = runctx.Input(ctx)
 		vars["$user_input"] = runctx.LoopInput(ctx)
 		vars["$user_id"] = runctx.User(ctx)
+		// 必填参数缺失以结果回传(与 graph 族同一语义):让上级大脑补参重试,
+		// 而不是把 {placeholder} 字面量静默留在 persona 里诱导模型瞎编。
+		var missing []string
+		for name, d := range decl.Params {
+			if _, ok := vars[name]; !ok && d.Required {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			return fmt.Sprintf("call not executed: missing required parameter(s) %s.", strings.Join(missing, ", ")), nil
+		}
 		persona := brief.Render(vars) // 组件 prompt → 系统指令(persona)
 		// 多阶段引擎(rewoo/plan-execute/reflection)据此渲染其阶段提示词——
 		// params 与内置变量透进 planner/executor/replanner 等(D1 多阶段全透)。
 		ctx = runctx.WithVars(ctx, vars)
 		// P3:prompt→系统、input→用户。input(本组件作用域输入)为空则 prompt
-		// 降级作用户消息(等价旧行为,零退化)。
+		// 降级作用户消息(等价旧行为,零退化)。降级分支必须清空 persona——
+		// 否则嵌套调用里(外层组件→图→本组件,且上游 input 渲染为空)会读到
+		// 外层组件的 persona,内层顶着别人的身份跑(实测泄漏路径)。
 		task := runctx.Input(ctx)
 		if task == "" {
 			task = persona
+			ctx = runctx.WithPersona(ctx, "")
 		} else {
 			ctx = runctx.WithPersona(ctx, persona)
 		}
@@ -283,6 +299,9 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 // placeholderRe 匹配 {ident} / {$ident} 形式的模板占位符(与 graph 引擎同款)。
 var placeholderRe = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_-]+)\}`)
 
+// evidenceSyntaxRe 匹配 rewoo 的证据引用形参({e1}/{eN}),豁免 P4 声明校验。
+var evidenceSyntaxRe = regexp.MustCompile(`^e(\d+|N)$`)
+
 // validatePlaceholders 校验模板里每个占位符都是已声明 param 或内置变量,
 // 否则报错(P4:prompt 不容 typo 静默留字面量;决策 3)。含非标识符字符的
 // 花括号(如 JSON 示例 {"k":v})不匹配、不受约束。
@@ -299,6 +318,11 @@ func validatePlaceholders(where, text string, params map[string]capability.Param
 		}
 		// input:裸串入参兜底(非 JSON 对象时整串落 {input}),合法的隐式入参。
 		if ref == "input" {
+			continue
+		}
+		// {e1}/{eN}:rewoo 证据引用语法——自定义 planner/solver 阶段提示词里
+		// 合法出现(指导模型如何写引用),不是模板占位符,不受声明约束。
+		if evidenceSyntaxRe.MatchString(ref) {
 			continue
 		}
 		if _, ok := params[ref]; !ok {

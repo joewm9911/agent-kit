@@ -7,6 +7,7 @@ package prompt
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -20,13 +21,18 @@ type Template struct {
 	Text    string // 模板体,{var} 占位
 }
 
-// Render 渲染模板变量。
+var renderRef = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_-]+)\}`)
+
+// Render 渲染模板变量:单遍扫描,每个 {ident} 查一次表,未命中原样保留。
+// 不做多轮替换——值里出现的 {占位} 字面量不会被二次展开(旧实现按 map
+// 迭代序逐参数 ReplaceAll,值携带占位符时展开与否取决于随机迭代序)。
 func (t *Template) Render(vars map[string]string) string {
-	out := t.Text
-	for k, v := range vars {
-		out = strings.ReplaceAll(out, "{"+k+"}", v)
-	}
-	return out
+	return renderRef.ReplaceAllStringFunc(t.Text, func(m string) string {
+		if v, ok := vars[m[1:len(m)-1]]; ok {
+			return v
+		}
+		return m
+	})
 }
 
 // Provider 是提示词供给端的最小契约。label 是版本通道

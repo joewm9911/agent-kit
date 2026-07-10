@@ -209,4 +209,15 @@ func TestPressureCut(t *testing.T) {
 	if len(msgs)-got < minKeepFloor {
 		t.Fatalf("must keep at least minKeepFloor: cut=%d keeps %d", got, len(msgs)-got)
 	}
+
+	// 回归(H1):消息数 < keep_recent 时上游 cut 为负——修复前 msgs[cut:]
+	// 越界 panic(max_tokens 配置 + 短而肥历史,一次大段粘贴打崩 IM 路径)。
+	short := []*schema.Message{
+		schema.UserMessage(strings.Repeat("超长文档", 10000)),
+		schema.AssistantMessage("ok", nil),
+		schema.UserMessage("继续"),
+	}
+	if got := pressureCut(short, -7, 2000); got < 0 {
+		t.Fatalf("negative cut must be clamped, got %d", got)
+	}
 }

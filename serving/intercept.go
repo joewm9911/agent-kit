@@ -38,11 +38,13 @@ func RegisterContextHook(h ContextHook) {
 }
 
 // applyContextHooks 按注册顺序运行全部钩子;无注册则原样返回(零成本旁路)。
-// 每轮入站执行一次,非每 token,锁开销可忽略。
+// 每轮入站执行一次,非每 token,锁开销可忽略。快照后在锁外执行——钩子内
+// 再调 RegisterContextHook 不会自死锁(RWMutex 不可重入)。
 func applyContextHooks(ctx context.Context, info InboundInfo) context.Context {
 	hookMu.RLock()
-	defer hookMu.RUnlock()
-	for _, h := range hooks {
+	snapshot := hooks
+	hookMu.RUnlock()
+	for _, h := range snapshot {
 		ctx = h(ctx, info)
 	}
 	return ctx

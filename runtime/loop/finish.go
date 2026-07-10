@@ -21,14 +21,25 @@ var (
 	// (所有/步骤/结论已给出 为真机 A/B 抓到的实测变体。)
 	completionNoticeRe = regexp.MustCompile(`(?i)(所有|全部)?(任务|方案|计划|分析|工作|流程|步骤|全部)[^。.,，、\n]{0,6}(完成|完毕|结束|办完)|(结论|结果)已(给出|输出)|all (tasks|steps)[^.\n]{0,8}(completed|done)|task[^.\n]{0,6}(is )?complete`)
 	completionDigitRe  = regexp.MustCompile(`[0-9０-９]`)
-	completionPoliteRe = regexp.MustCompile(`(?i)(如有|若有|如果|如需|还)[^。.\n]{0,20}(告诉我|联系我|需求|问题|需要|告知|吩咐)?|请(告诉我|随时|告知|查收|继续吩咐)|随时(联系|告知)|if you need[^.\n]{0,20}|let me know[^.\n]{0,20}`)
+	// 注意:第二组不可写成可选——否则"(如果|还)+任意20字"整段被剥,把
+	// "分析完成,如果按品类看主要是耳机拉动"这类实质结论误判成空壳(实测误伤)。
+	completionPoliteRe = regexp.MustCompile(`(?i)(如有|若有|如果|如需|还)[^。.\n]{0,20}(告诉我|联系我|需求|问题|需要|告知|吩咐)|请(告诉我|随时|告知|查收|继续吩咐)|随时(联系|告知)|if you need[^.\n]{0,20}|let me know[^.\n]{0,20}`)
 	meaningfulCharRe   = regexp.MustCompile(`[\p{Han}\p{L}\p{N}]`)
 )
 
+// completionAnswerRe:肯定/否定应答开头——"是的,全部任务已完成"是对"跑完了吗"
+// 这类提问的正当回答,不是模型拿状态顶替交付物,豁免(否则弹回两次后还会被
+// Force 打上"未执行工具调用"的不实标注)。
+var completionAnswerRe = regexp.MustCompile(`^\s*(是的|是,|是，|对,|对，|没有|还没|尚未|不,|不，|yes\b|no\b)`)
+
 // pureCompletionNotice:去掉完成句式 + 礼貌语后,几乎不剩实质字符,即判为
-// "纯完成通知"。三重护栏:①命中完成句式 ②不含任何数字 ③残余实质 ≤3 字。
+// "纯完成通知"。三重护栏:①命中完成句式 ②不含任何数字 ③残余实质 ≤3 字;
+// 另豁免肯定/否定应答开头(答"完成了吗"的合法答案)。
 func pureCompletionNotice(content string) bool {
 	if !completionNoticeRe.MatchString(content) || completionDigitRe.MatchString(content) {
+		return false
+	}
+	if completionAnswerRe.MatchString(strings.ToLower(content)) {
 		return false
 	}
 	rest := completionNoticeRe.ReplaceAllString(content, "")

@@ -104,6 +104,13 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: need {session, input}", http.StatusBadRequest)
 		return
 	}
+	// user 是身份标识,会进头部系统提示词的环境块(L3)——那是禁止业务内容
+	// 的海拔。HTTP 侧它来自未认证请求体,放行换行/超长即开出一条提示词注入
+	// 通道(IM 侧是平台签发的 open_id,无此问题),按标识符约束 fail fast。
+	if len(req.User) > 128 || strings.ContainsAny(req.User, "\r\n") {
+		http.Error(w, "bad request: user must be an identifier (<=128 chars, no newlines)", http.StatusBadRequest)
+		return
+	}
 	if req.Session == "" {
 		req.Session = "http-" + suspend.NewTurnID() // 时间+随机,并发不碰撞、可读可排序
 	}
