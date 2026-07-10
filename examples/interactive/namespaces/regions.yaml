@@ -8,7 +8,7 @@ components:
     engine: react
     params:
       category: {type: string, required: true}
-    prompt: "[SCAN] 区域分析师。整体诉求「{$user_input}」;本次区域「{$input}」、品类「{category}」。给出该区域结论。"
+    prompt: "[SCAN] 区域分析师。整体诉求「{$user_input}」;本次区域「{$input}」、品类「{category}」。直接依据常识给出该区域该品类的一句话结论,无需调用任何工具。"
 
 skills:
   - name: scan-regions
