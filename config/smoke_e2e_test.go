@@ -233,6 +233,12 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 	case strings.Contains(briefT, "压成一句话汇报"): // price-review 的 brief 步骤
 		return reply("[BRIEF]" + markers(briefT))
 
+	// —— regions:统一输入模型样例(input 隔离 + {$user_input} 穿透)——
+	case strings.Contains(sysT, "[SCAN]"):
+		return reply("[RGN]区域结论")
+	case strings.Contains(briefT, "汇总三区域结论"):
+		return reply("[SCAN-DONE]")
+
 	// —— agent 主循环 ——
 	case strings.Contains(sysT, "[OPS]"):
 		switch {
@@ -341,6 +347,7 @@ func buildSmokeApp(t *testing.T, opts BuildOptions) *App {
 func skillCtx(input string) context.Context {
 	ctx := runctx.With(context.Background(), "smoke", "direct")
 	ctx = runctx.WithInput(ctx, input)
+	ctx = runctx.WithLoopInput(ctx, input) // loop 原始输入(set-once,与 agent.Run 一致)
 	ctx = loop.WithResultStore(ctx, loop.NewResultStore(store.NewInMemory(), 0))
 	ctx = loop.WithApprovalMode(ctx, loop.ApprovalAuto)
 	return ctx
@@ -384,6 +391,42 @@ func TestP3PromptToSystem(t *testing.T) {
 	}
 }
 
+// TestUnifiedRegionScan:统一输入模型的端到端组件测试——scan-regions 图并行
+// 扇出到同一 region_report 组件,验证 input: 组件级隔离({$input} 三分支互不
+// 串扰)+ {$user_input} 穿透(原始诉求恒定)+ params 占位符透传。
+func TestUnifiedRegionScan(t *testing.T) {
+	setupSmokeEnv(t)
+	app := buildSmokeApp(t, BuildOptions{})
+	mounted := app.AgentMounts["ops-manager"]
+
+	resetSmokeSeen()
+	sk, err := mounted.Get("cap://skill/regions/scan-regions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := capability.Invoke(skillCtx("盘点各区域音频"), sk, `{"category":"音频"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[SCAN-DONE]") {
+		t.Fatalf("scan-regions merge output = %q", out)
+	}
+	// input: 组件级隔离——三分支各自的 {$input} 互不串扰
+	for _, r := range []string{"华东", "华南", "华北"} {
+		if !smokeSawSystemContaining("本次区域「" + r + "」") {
+			t.Fatalf("scoped input {$input}=%s missing (isolation broken)", r)
+		}
+	}
+	// {$user_input} 穿透——三分支都看到同一 loop 原始诉求
+	if !smokeSawSystemContaining("整体诉求「盘点各区域音频」") {
+		t.Fatal("{$user_input} must propagate unchanged to nested components")
+	}
+	// params 占位符透传
+	if !smokeSawSystemContaining("品类「音频」") {
+		t.Fatal("param {category} must render into the component prompt")
+	}
+}
+
 // TestSmokeAssembly:三层装配、边界、风险传播、多 agent 共享。
 func TestSmokeAssembly(t *testing.T) {
 	setupSmokeEnv(t)
@@ -393,12 +436,12 @@ func TestSmokeAssembly(t *testing.T) {
 		t.Fatalf("agents = %v", app.Agents)
 	}
 	mounted := app.AgentMounts["ops-manager"]
-	// 只有导出 skill 进挂载目录:catalog 5 + marketing 3 + crm 1
-	if got := len(mounted.List()); got != 9 {
+	// 只有导出 skill 进挂载目录:catalog 5 + marketing 3 + crm 1 + regions 1
+	if got := len(mounted.List()); got != 10 {
 		for _, m := range mounted.List() {
 			t.Log(m.Ref.String())
 		}
-		t.Fatalf("mounted entries = %d, want 9", got)
+		t.Fatalf("mounted entries = %d, want 10", got)
 	}
 	for _, ref := range []string{
 		"cap://skill/catalog/price-review",
@@ -410,6 +453,7 @@ func TestSmokeAssembly(t *testing.T) {
 		"cap://skill/marketing/launch-campaign",
 		"cap://skill/marketing/deep-research",
 		"cap://skill/crm/customer-brief",
+		"cap://skill/regions/scan-regions",
 	} {
 		if _, err := mounted.Get(ref); err != nil {
 			t.Fatalf("missing %s: %v", ref, err)

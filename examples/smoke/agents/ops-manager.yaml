@@ -14,6 +14,7 @@ namespaces:
   - ../namespaces/catalog.yaml
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
+  - ../namespaces/regions.yaml
 
 # 具名存储实例:四类内部状态各一个实例,模块块的 store 槽用
 # cap://store/<kind>/<name> 引用。分布式部署把 type 换成 redis

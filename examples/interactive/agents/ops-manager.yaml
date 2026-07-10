@@ -32,6 +32,7 @@ namespaces:
   - ../namespaces/crm.yaml
   - ../namespaces/orders.yaml   # 在 crm 之后:order_auditor 跨 ns 引用 customer-brief
   - ../namespaces/docs.yaml
+  - ../namespaces/regions.yaml  # 统一输入模型样例:input 隔离 + {$user_input} 穿透
 
 # 全局源选品:app.yaml sources 里的 calc(python 脚本执行)直挂本 agent
 # 工具面。跑在哪由 app 级 exec: 块决定(default_sandbox),此处只做选品。
