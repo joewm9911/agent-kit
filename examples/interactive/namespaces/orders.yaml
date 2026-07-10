@@ -44,6 +44,7 @@ components:
   - name: order_auditor
     engine: react
     loop: {max_rounds: 6}
+    params: {task: {type: string, required: true}}
     prompt: "你是订单专员。任务:{task}。用 list_orders/get_order 查数据;涉及客户时用 customer-brief 拉画像;给出诊断与处理建议,不要直接执行改动。数据边界:①你只有订单数据,销量趋势和库存不归你,不要推断或顺带给结论,明确留白由调用方另查;②订单工具没有时间范围过滤,涉及「最近N天」时用返回记录的 days_ago 字段逐条筛选后再计数,并在结论里注明统计口径;数出多少是多少,不要凑整。"
     tools:
       - "tools/oms/list_orders"

@@ -46,6 +46,7 @@ func TestGraphStepFork(t *testing.T) {
 	em := &echoInputModel{}
 	comp, err := Build(context.Background(), &Declaration{
 		Name:   "t/analyzer",
+		Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 		Prompt: prompt.Value{Literal: "分析 {q}"},
 	}, Deps{DefaultModel: em})
 	if err != nil {

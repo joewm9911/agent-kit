@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -161,6 +162,16 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if err != nil {
 		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
 	}
+	// P4:prompt/阶段提示词里每个 {占位符} 必须是已声明 param 或内置变量,
+	// 否则装配期报错——不容 typo 静默留字面量(决策 3)。
+	if err := validatePlaceholders("skill "+decl.Name+" prompt", brief.Text, decl.Params); err != nil {
+		return nil, err
+	}
+	for stage, p := range prompts {
+		if err := validatePlaceholders("skill "+decl.Name+" engine_config."+stage, p, decl.Params); err != nil {
+			return nil, err
+		}
+	}
 	if err := decl.Compaction.ResolvePrompt(ctx, deps.Prompts); err != nil {
 		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
 	}
@@ -267,6 +278,34 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		}
 		return out.Content, nil
 	}), nil
+}
+
+// placeholderRe 匹配 {ident} / {$ident} 形式的模板占位符(与 graph 引擎同款)。
+var placeholderRe = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_-]+)\}`)
+
+// validatePlaceholders 校验模板里每个占位符都是已声明 param 或内置变量,
+// 否则报错(P4:prompt 不容 typo 静默留字面量;决策 3)。含非标识符字符的
+// 花括号(如 JSON 示例 {"k":v})不匹配、不受约束。
+func validatePlaceholders(where, text string, params map[string]capability.ParamDecl) error {
+	for _, m := range placeholderRe.FindAllStringSubmatch(text, -1) {
+		ref := m[1]
+		if strings.HasPrefix(ref, "$") {
+			switch ref {
+			case "$input", "$user_input", "$user_id":
+				continue
+			default:
+				return fmt.Errorf("%s: unknown builtin variable {%s} (allowed: $input, $user_input, $user_id)", where, ref)
+			}
+		}
+		// input:裸串入参兜底(非 JSON 对象时整串落 {input}),合法的隐式入参。
+		if ref == "input" {
+			continue
+		}
+		if _, ok := params[ref]; !ok {
+			return fmt.Errorf("%s: undeclared placeholder {%s} — declare it under params: or it silently stays literal", where, ref)
+		}
+	}
+	return nil
 }
 
 func splitName(full string) (ns, name string, err error) {

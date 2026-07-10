@@ -164,6 +164,7 @@ namespaces: [../namespaces/plain.yaml]
 components:
   - name: c
     engine: react
+    params: {q: {type: string}}
     prompt: "回答 {q}"
 skills:
   - name: via-mount
@@ -173,6 +174,7 @@ skills:
 components:
   - name: inherit
     engine: react
+    params: {q: {type: string}}
     prompt: "回答 {q}"
 skills:
   - name: via-agent

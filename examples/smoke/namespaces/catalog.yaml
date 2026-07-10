@@ -42,6 +42,9 @@ components:
     engine: react
     loop: {max_rounds: 6, compaction: {max_messages: 20, keep_recent: 8}}
     digest: {over: 3000}
+    params:
+      sku: {type: string, required: true}
+      question: {type: string}
     prompt: "你是价格分析师。分析商品 {sku} 的定价(用户关注:{question})。先调用 get_product 查询商品详情,必要时调用 get_inventory 看库存,然后给出定价结论。"
     tools:
       - "tools/shop/get_product"
@@ -50,6 +53,7 @@ components:
   # direct:商品问答——一次调用+一轮工具+收尾,无循环
   - name: catalog_qa
     engine: direct
+    params: {q: {type: string, required: true}}
     prompt: "你是商品问答助手。回答用户问题:{q}。需要商品数据时调用 search_products。"
     tools:
       - "tools/shop/search_products"
@@ -58,6 +62,7 @@ components:
   - name: bulk_planner
     engine: rewoo
     engine_config: {max_plan_steps: 6}
+    params: {category: {type: string, required: true}}
     prompt: "对品类「{category}」做一次批量盘点:检索商品并核对库存,汇总结果。"
     tools:
       - "tools/shop/search_products"

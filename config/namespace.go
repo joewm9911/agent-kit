@@ -249,6 +249,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			Kind:         "component",
 			Name:         ns.Name + "/" + cc.Name,
 			Prompt:       cc.Prompt,
+			Params:       cc.Params, // 循环族 component 的入参声明:工具面 schema + P4 占位符校验
 			Engine:       cc.Engine,
 			EngineConfig: cc.EngineConfig,
 			MaxSteps:     eff.maxSteps(),

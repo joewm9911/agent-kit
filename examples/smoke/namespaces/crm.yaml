@@ -18,6 +18,7 @@ components:
   - name: crm_analyst
     engine: react
     loop: {max_rounds: 4}
+    params: {profile: {type: string, required: true}}
     prompt: "你是客户分析师。基于画像「{profile}」和用户当前的问题,给出跟进建议。"
 
 skills:

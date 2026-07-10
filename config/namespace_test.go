@@ -53,6 +53,7 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 		Components: []ComponentConfig{{
 			Name:   "planner",
 			Engine: "react",
+			Params: map[string]capability.ParamDecl{"request": {Type: "string", Required: true}},
 			Prompt: promptVal("根据请求 {request} 制定计划"),
 			Tools:  []string{"tools/svc/search"},
 		}},

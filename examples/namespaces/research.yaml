@@ -16,6 +16,9 @@ components:
   - name: competitor_report         # 内部是 plan-execute 循环,对外不可见
     prompt: "cap://prompt/pp/competitor-brief"
     engine: plan-execute
+    params:
+      company: {type: string, required: true}
+      focus: {type: string}
     engine_config:
       max_rounds: 3
       step_max_rounds: 10

@@ -18,6 +18,8 @@ sources:
 components:
   - name: writer                    # 无工具的 react 退化为单次模型调用
     engine: react                   # engine 必填:direct|react|plan-execute|graph|workflow
+    params:
+      wx: {type: string, required: true}
     prompt: "根据天气「{wx}」为用户写一句今日出行建议,不超过 30 字。"
 
 skills:

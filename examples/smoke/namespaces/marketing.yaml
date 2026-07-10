@@ -20,22 +20,26 @@ components:
     engine_config:
       max_rounds: 3
       executor_prompt: "你是文案执行者。为活动写一段推广文案;收到评审意见时逐条修正,输出完整新稿。"
+    params: {brief: {type: string, required: true}}
     prompt: "为活动「{brief}」撰写推广文案。"
 
   # router 的两个下游:无工具 direct,单次作答
   - name: faq_bot                 # RAG:direct 引擎查知识库(agentic RAG)
     engine: direct
+    params: {q: {type: string, required: true}}
     prompt: "[FAQ]你是售后FAQ助手。用户问题:{q}。查知识库后作答。"
     tools:
       - "tools/kb/search_kb"
   - name: human_handoff
     engine: direct
+    params: {q: {type: string, required: true}}
     prompt: "[HANDOFF]生成一段转人工的引导话术,问题:{q}"
 
   # router:一次分诊调用,路由到工具面上的能力
   - name: channel_router
     engine: router
     engine_config: {fallback: human_handoff}
+    params: {q: {type: string, required: true}}
     prompt: "为用户来询选择处理通道:{q}"
     tools:
       - "components/faq_bot"
@@ -46,6 +50,7 @@ components:
   - name: campaign_planner
     engine: plan-execute
     engine_config: {max_rounds: 2, step_max_rounds: 4, on_exhausted: summarize}
+    params: {topic: {type: string, required: true}}
     prompt: "策划一场关于「{topic}」的促销活动,需要时审查相关商品定价。"
     tools:
       - "cap://skill/catalog/price-review"
@@ -55,6 +60,7 @@ components:
     engine: react
     todo: true
     loop: {max_rounds: 8}
+    params: {topic: {type: string, required: true}}
     prompt: "深入研究课题:{topic}。先用 todo_write 列出研究计划,逐项推进并更新状态,最后给出研究结论。"
 
 skills:
