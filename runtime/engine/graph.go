@@ -54,6 +54,11 @@ type Step struct {
 	// | fork(以最外层 agent 的对话快照 + 任务起步;背景无损继承,
 	// 隔离方向不变,只对带内部循环的能力有意义)。
 	Context string `yaml:"context"`
+	// Input 是传给被调能力的"输入",在调用方作用域渲染后经 runctx.WithInput
+	// 重设被调组件的 {$input}(组件级输入隔离);{$user_input} 不变。为空则被调
+	// 组件继承调用方的 {$input}。模板可含 {步骤}/{参数}/{$input}/{$user_input}。
+	// 对读取 {$input} 的组件(graph/循环族)生效;工具步骤无此语义。
+	Input string `yaml:"input"`
 }
 
 // StepArgs 是步骤入参(实参):标量模板或参数映射。提示词不在这里
@@ -319,23 +324,26 @@ func checkTemplateRefs(decl *GraphDeclaration, steps []compiledStep, index map[s
 	}
 
 	for i, s := range steps {
-		for _, m := range tplRef.FindAllStringSubmatch(s.step.Args.Literal, -1) {
-			ref := m[1]
-			if strings.HasPrefix(ref, "$") {
-				if !builtinVars[ref] {
-					return fmt.Errorf("step %q args references unknown builtin variable {%s}", s.step.Name, ref)
+		// args 与 input 两个模板同一套占位符校验(数据流须与 needs 闭包一致)。
+		for field, tpl := range map[string]string{"args": s.step.Args.Literal, "input": s.step.Input} {
+			for _, m := range tplRef.FindAllStringSubmatch(tpl, -1) {
+				ref := m[1]
+				if strings.HasPrefix(ref, "$") {
+					if !builtinVars[ref] {
+						return fmt.Errorf("step %q %s references unknown builtin variable {%s}", s.step.Name, field, ref)
+					}
+					continue
 				}
-				continue
-			}
-			if _, isParam := decl.Params[ref]; isParam {
-				continue
-			}
-			j, isStep := index[ref]
-			if !isStep {
-				return fmt.Errorf("step %q args references unknown placeholder {%s} (not a param or step)", s.step.Name, ref)
-			}
-			if !closure(i)[j] {
-				return fmt.Errorf("step %q args references {%s} which is not in its needs closure (add it to needs)", s.step.Name, ref)
+				if _, isParam := decl.Params[ref]; isParam {
+					continue
+				}
+				j, isStep := index[ref]
+				if !isStep {
+					return fmt.Errorf("step %q %s references unknown placeholder {%s} (not a param or step)", s.step.Name, field, ref)
+				}
+				if !closure(i)[j] {
+					return fmt.Errorf("step %q %s references {%s} which is not in its needs closure (add it to needs)", s.step.Name, field, ref)
+				}
 			}
 		}
 	}
@@ -392,11 +400,16 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 		s := &p.steps[i]
 		mu.Lock()
 		args := renderVars(s.step.Args.Literal, vars)
+		stepCtx := ctx
+		if s.step.Input != "" {
+			// 组件级输入隔离:重设被调组件的 {$input};{$user_input} 恒定不变。
+			stepCtx = runctx.WithInput(ctx, renderVars(s.step.Input, vars))
+		}
 		mu.Unlock()
 		if s.step.Args.IsZero() {
 			args = argsJSON // 空模板透传原始入参(passthrough 场景)
 		}
-		out, err := runStep(ctx, s, args)
+		out, err := runStep(stepCtx, s, args)
 		if err != nil {
 			errOnce.Do(func() {
 				firstErr = fmt.Errorf("step %s: %w", s.step.Name, err)

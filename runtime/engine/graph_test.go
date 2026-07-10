@@ -489,6 +489,43 @@ func TestGraphBuiltinUserID(t *testing.T) {
 	}
 }
 
+// TestGraphStepInputRescope:step 的 input: 在调用方作用域渲染后,经
+// runctx.WithInput 重设被调能力的 {$input}(组件级隔离);{$user_input} 恒定。
+func TestGraphStepInputRescope(t *testing.T) {
+	// 被调能力回显它看到的作用域输入 + loop 原始输入。
+	echoIn := capability.New(capability.Meta{
+		Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "echoin"},
+	}, func(ctx context.Context, _ string) (string, error) {
+		return runctx.Input(ctx) + "|" + runctx.LoopInput(ctx), nil
+	})
+	resolve := func(string) (capability.Capability, error) { return echoIn, nil }
+
+	c, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "g",
+		Steps: []Step{{Name: "s", Use: "tools/d/echoin",
+			Input: "华东-{$user_input}"}}, // input 模板在调用方作用域渲染
+	}, "ns", resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := runctx.WithLoopInput(context.Background(), "全局任务")
+	ctx = runctx.WithInput(ctx, "全局任务")
+	out, err := capability.Invoke(ctx, c, `{}`)
+	// 被调看到:作用域输入被重设为 "华东-全局任务";loop 原始仍是 "全局任务"
+	if err != nil || out != "华东-全局任务|全局任务" {
+		t.Fatalf("input re-scope failed: %v %q", err, out)
+	}
+
+	// input 模板引用未知占位符:装配期报错(与 args 同一套校验)
+	_, err = BuildGraph(context.Background(), &GraphDeclaration{
+		Name:  "g2",
+		Steps: []Step{{Name: "s", Use: "tools/d/echoin", Input: "{nope}"}},
+	}, "ns", resolve)
+	if err == nil || !strings.Contains(err.Error(), "input references unknown placeholder") {
+		t.Fatalf("unknown input placeholder must fail assembly, got %v", err)
+	}
+}
+
 // TestGraphBuiltinUserInput:{$user_input} = loop 原始输入,与作用域 {$input}
 // 区分——嵌套时 Input 可被重设、LoopInput 恒定。
 func TestGraphBuiltinUserInput(t *testing.T) {
