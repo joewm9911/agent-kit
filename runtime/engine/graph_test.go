@@ -488,3 +488,28 @@ func TestGraphBuiltinUserID(t *testing.T) {
 		t.Fatalf("unknown builtin must fail assembly, got %v", err)
 	}
 }
+
+// TestGraphBuiltinUserInput:{$user_input} = loop 原始输入,与作用域 {$input}
+// 区分——嵌套时 Input 可被重设、LoopInput 恒定。
+func TestGraphBuiltinUserInput(t *testing.T) {
+	echo := capability.New(capability.Meta{
+		Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "echo"},
+	}, func(_ context.Context, args string) (string, error) { return args, nil })
+	resolve := func(string) (capability.Capability, error) { return echo, nil }
+
+	c, err := BuildGraph(context.Background(), &GraphDeclaration{
+		Name: "g",
+		Steps: []Step{{Name: "s", Use: "tools/d/echo",
+			Args: StepArgs{Literal: `{"scoped":"{$input}","origin":"{$user_input}"}`}}},
+	}, "ns", resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// loop 原始 = 全局任务;作用域输入 = 被上层重设成子任务
+	ctx := runctx.WithLoopInput(context.Background(), "分析三个地区")
+	ctx = runctx.WithInput(ctx, "华东")
+	out, err := capability.Invoke(ctx, c, `{}`)
+	if err != nil || !strings.Contains(out, `"scoped":"华东"`) || !strings.Contains(out, `"origin":"分析三个地区"`) {
+		t.Fatalf("$input/$user_input must be distinct: %v %q", err, out)
+	}
+}

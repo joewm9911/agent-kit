@@ -241,6 +241,10 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		} else {
 			vars["input"] = argsJSON
 		}
+		// 内置变量最后注入,args 同名键不能顶掉(与 graph 一致):
+		// $input=本组件作用域输入,$user_input=loop 原始输入(穿透嵌套恒定)。
+		vars["$input"] = runctx.Input(ctx)
+		vars["$user_input"] = runctx.LoopInput(ctx)
 		task := brief.Render(vars)
 		// 上下文边界:独立会话,内部过程不回流宿主,只返回最终结果。
 		// 使用点声明 context: fork 时,以调用方对话快照 + 任务书起步

@@ -289,9 +289,12 @@ var tplRef = regexp.MustCompile(`\{(\$?[\p{L}\p{N}_\-]+)\}`)
 //	          正在于开了口子的地方看得见。
 //	$user_id  终端用户身份(runctx.User;IM = 飞书 open_id,HTTP =
 //	          请求 user 字段)。按用户取数/记账/审计的编排用它。
+//	$user_input loop 原始用户输入(runctx.LoopInput)。穿透所有组件嵌套
+//	          恒定;区别于 $input(本组件/本图的作用域输入)。
 var builtinVars = map[string]bool{
-	"$input":   true,
-	"$user_id": true,
+	"$input":      true,
+	"$user_id":    true,
+	"$user_input": true,
 }
 
 // checkTemplateRefs 校验数据流与控制流一致:args 模板引用的每个占位
@@ -350,8 +353,9 @@ func (p *graphPlan) run(ctx context.Context, argsJSON string) (string, error) {
 		}
 	}
 	// 保留变量最后注入:框架直取,调用方传入的同名键不能顶掉它。
-	vars["$input"] = runctx.Input(ctx)  // 用户本轮原始输入
-	vars["$user_id"] = runctx.User(ctx) // 终端用户身份(飞书 open_id / HTTP user 字段)
+	vars["$input"] = runctx.Input(ctx)           // 本图/本组件的作用域输入
+	vars["$user_id"] = runctx.User(ctx)          // 终端用户身份(飞书 open_id / HTTP user 字段)
+	vars["$user_input"] = runctx.LoopInput(ctx)  // loop 原始用户输入(穿透嵌套恒定)
 	var missing []string
 	for name, d := range p.params {
 		if _, ok := vars[name]; !ok && d.Required {

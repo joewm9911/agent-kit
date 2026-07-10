@@ -12,6 +12,7 @@ type keyAgent struct{}
 type keySession struct{}
 type keyInteractor struct{}
 type keyInput struct{}
+type keyLoopInput struct{}
 type keyUser struct{}
 
 // ApprovalRequest 描述一次待批准的改动性操作。
@@ -84,6 +85,25 @@ func WithInput(ctx context.Context, input string) context.Context {
 func Input(ctx context.Context) string {
 	s, _ := ctx.Value(keyInput{}).(string)
 	return s
+}
+
+// WithLoopInput 注入 loop 原始用户输入(顶层 agent.Run 设定一次,穿透所有
+// 嵌套恒定不变,对应内置变量 {$user_input})。已设定则不覆盖——组件嵌套时
+// 子组件的作用域输入(Input)可层层重设,而原始输入始终是最外层那句。
+func WithLoopInput(ctx context.Context, input string) context.Context {
+	if s, _ := ctx.Value(keyLoopInput{}).(string); s != "" {
+		return ctx // set-once:不被嵌套覆盖
+	}
+	return context.WithValue(ctx, keyLoopInput{}, input)
+}
+
+// LoopInput 返回 loop 原始用户输入({$user_input});未注入时回落到 Input
+// (顶层与作用域输入相等,向后兼容未走 WithLoopInput 的路径)。
+func LoopInput(ctx context.Context) string {
+	if s, _ := ctx.Value(keyLoopInput{}).(string); s != "" {
+		return s
+	}
+	return Input(ctx)
 }
 
 // WithUser 注入终端用户身份(飞书 open_id、HTTP 请求的 user 字段等)。

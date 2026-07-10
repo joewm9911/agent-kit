@@ -143,6 +143,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	defer lock.Unlock()
 
 	ctx = runctx.WithInput(a.prepare(ctx, sessionID), input)
+	ctx = runctx.WithLoopInput(ctx, input) // set-once:loop 原始输入,{$user_input}
 	ctx, rec := a.withRecorder(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -238,6 +239,7 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 	}()
 
 	ctx = runctx.WithInput(a.prepare(ctx, sessionID), input)
+	ctx = runctx.WithLoopInput(ctx, input) // set-once:loop 原始输入,{$user_input}
 	ctx, rec := a.withRecorder(ctx)
 	cs := a.controlFor(sessionID)
 	cs.BeginTurn(nil) // 流式:中断经调用方断开 ctx,这里只挂插话通道
