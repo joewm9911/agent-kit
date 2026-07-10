@@ -6,9 +6,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 )
 
@@ -80,6 +82,61 @@ func TestReflectionExhaustedError(t *testing.T) {
 	}
 	if _, err := r.Generate(context.Background(), []*schema.Message{schema.UserMessage("写")}); err == nil {
 		t.Fatal("expect exhausted error")
+	}
+}
+
+// ---- P2.5 多阶段全透:阶段提示词渲染 params + 内置变量 ----
+
+// captureModel 记录最近一次收到的消息,用于断言阶段提示词已被渲染。
+type captureModel struct {
+	reply  *schema.Message
+	lastIn []*schema.Message
+}
+
+func (c *captureModel) Generate(_ context.Context, in []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	c.lastIn = in
+	return c.reply, nil
+}
+func (c *captureModel) Stream(_ context.Context, in []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	c.lastIn = in
+	sr, sw := schema.Pipe[*schema.Message](1)
+	sw.Send(c.reply, nil)
+	sw.Close()
+	return sr, nil
+}
+func (c *captureModel) WithTools(_ []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return c, nil
+}
+
+// TestStagePromptRendersVars:router 的 route 阶段提示词经 renderStage 获得
+// params({topic})与内置 {$user_input};ctx 无 vars 袋时占位符原样保留。
+func TestStagePromptRendersVars(t *testing.T) {
+	cap0 := plainCap("x", "任意", func(_ context.Context, _ string) (string, error) { return "ok", nil })
+	cm := &captureModel{reply: schema.AssistantMessage(`{"target":"x","args":{}}`, nil)}
+	r, err := Build(context.Background(), "router", &Assembly{
+		Model:        cm,
+		Capabilities: []capability.Capability{cap0},
+		Prompts:      map[string]string{"route": "分诊器。主题={topic};原问题={$user_input}"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := runctx.WithVars(context.Background(), map[string]string{"topic": "音频", "$user_input": "原始问题"})
+	if _, err := r.Generate(ctx, []*schema.Message{schema.UserMessage("q")}); err != nil {
+		t.Fatal(err)
+	}
+	sys := cm.lastIn[0].Content
+	if !strings.Contains(sys, "主题=音频") || !strings.Contains(sys, "原问题=原始问题") {
+		t.Fatalf("stage prompt not rendered with vars: %q", sys)
+	}
+
+	// 无 vars 袋:占位符原样保留(向后兼容)
+	cm.lastIn = nil
+	if _, err := r.Generate(context.Background(), []*schema.Message{schema.UserMessage("q")}); err != nil {
+		t.Fatal(err)
+	}
+	if sys := cm.lastIn[0].Content; !strings.Contains(sys, "{topic}") {
+		t.Fatalf("no-vars path should keep placeholder literal: %q", sys)
 	}
 }
 

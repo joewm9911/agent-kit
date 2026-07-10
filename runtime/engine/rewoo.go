@@ -99,7 +99,7 @@ func (r *rewooRunner) Generate(ctx context.Context, msgs []*schema.Message) (*sc
 
 	// 1. 规划:一次调用产出完整计划
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(fmt.Sprintf("%s\n\nAvailable tools:\n%s\nStep limit: %d", r.planner, r.listing, r.maxSteps)),
+		schema.SystemMessage(fmt.Sprintf("%s\n\nAvailable tools:\n%s\nStep limit: %d", renderStage(ctx, r.planner), r.listing, r.maxSteps)),
 		schema.UserMessage("Task:\n" + task),
 	})
 	if err != nil {
@@ -128,7 +128,7 @@ func (r *rewooRunner) Generate(ctx context.Context, msgs []*schema.Message) (*sc
 		fmt.Fprintf(&eb, "[%s] %s => %s\n", s.ID, s.Tool, evidence[s.ID])
 	}
 	return r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(r.solver),
+		schema.SystemMessage(renderStage(ctx, r.solver)),
 		schema.UserMessage(fmt.Sprintf("Task:\n%s\n\nExecution evidence:\n%s", task, eb.String())),
 	})
 }

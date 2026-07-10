@@ -79,7 +79,7 @@ func (r *reflectionRunner) Generate(ctx context.Context, msgs []*schema.Message)
 
 	for round := 0; round < r.maxRounds; round++ {
 		out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-			schema.SystemMessage(r.reviewer),
+			schema.SystemMessage(renderStage(ctx, r.reviewer)),
 			schema.UserMessage(fmt.Sprintf("Task:\n%s\n\nCurrent draft:\n%s", task, draft.Content)),
 		})
 		if err != nil {

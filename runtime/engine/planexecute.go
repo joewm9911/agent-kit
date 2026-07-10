@@ -61,8 +61,8 @@ func promptOr(asm *Assembly, key, def string) string {
 }
 
 func systemPrepender(sys string) MessageModifier {
-	return func(_ context.Context, msgs []*schema.Message) []*schema.Message {
-		return append([]*schema.Message{schema.SystemMessage(sys)}, msgs...)
+	return func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
+		return append([]*schema.Message{schema.SystemMessage(renderStage(ctx, sys))}, msgs...)
 	}
 }
 
@@ -152,7 +152,7 @@ func (r *planExecuteRunner) Stream(ctx context.Context, msgs []*schema.Message) 
 
 func (r *planExecuteRunner) generateJSON(ctx context.Context, system, user string, target any) error {
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(system),
+		schema.SystemMessage(renderStage(ctx, system)), // planner/replanner 阶段提示词全透
 		schema.UserMessage(user),
 	})
 	if err != nil {

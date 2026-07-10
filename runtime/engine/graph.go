@@ -521,6 +521,14 @@ func invokeStep(ctx context.Context, s *compiledStep, args string) (string, erro
 // 字符串内(如 '{"q":"{plan}"}')时,值自动做 JSON 转义,上游输出含
 // 引号/换行不会破坏下游的参数解析;落在字符串外(纯文本提示词、
 // 数字/对象位置)则原样注入。
+// renderStage 用 ctx 里的模板变量袋(params + 内置)渲染多阶段引擎的阶段
+// 提示词;袋为 nil 时占位符原样保留(未接入的路径向后兼容)。多阶段引擎
+// 的 planner/executor/replanner/solver/reviewer/route 提示词经此获得 params 与
+// {$input}/{$user_input}/{$user_id}(D1 多阶段全透)。
+func renderStage(ctx context.Context, tpl string) string {
+	return renderVars(tpl, runctx.Vars(ctx))
+}
+
 func renderVars(tpl string, vars map[string]string) string {
 	if tpl == "" {
 		return ""

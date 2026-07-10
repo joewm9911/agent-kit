@@ -245,7 +245,11 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		// $input=本组件作用域输入,$user_input=loop 原始输入(穿透嵌套恒定)。
 		vars["$input"] = runctx.Input(ctx)
 		vars["$user_input"] = runctx.LoopInput(ctx)
+		vars["$user_id"] = runctx.User(ctx)
 		task := brief.Render(vars)
+		// 多阶段引擎(rewoo/plan-execute/reflection)据此渲染其阶段提示词——
+		// params 与内置变量透进 planner/executor/replanner 等(D1 多阶段全透)。
+		ctx = runctx.WithVars(ctx, vars)
 		// 上下文边界:独立会话,内部过程不回流宿主,只返回最终结果。
 		// 使用点声明 context: fork 时,以调用方对话快照 + 任务书起步
 		// (背景无损继承,隔离方向不变)。

@@ -13,6 +13,7 @@ type keySession struct{}
 type keyInteractor struct{}
 type keyInput struct{}
 type keyLoopInput struct{}
+type keyVars struct{}
 type keyUser struct{}
 
 // ApprovalRequest 描述一次待批准的改动性操作。
@@ -104,6 +105,19 @@ func LoopInput(ctx context.Context) string {
 		return s
 	}
 	return Input(ctx)
+}
+
+// WithVars 注入模板变量袋(params + 内置 $input/$user_input/$user_id),供多
+// 阶段引擎渲染其阶段提示词。每个组件调用边界按本次入参重设(与 Input 同
+// 生命周期);嵌套时子组件覆盖为自己的一份。
+func WithVars(ctx context.Context, vars map[string]string) context.Context {
+	return context.WithValue(ctx, keyVars{}, vars)
+}
+
+// Vars 返回模板变量袋;未注入时为 nil(模板渲染对 nil 安全,占位符原样保留)。
+func Vars(ctx context.Context) map[string]string {
+	m, _ := ctx.Value(keyVars{}).(map[string]string)
+	return m
 }
 
 // WithUser 注入终端用户身份(飞书 open_id、HTTP 请求的 user 字段等)。
