@@ -189,6 +189,17 @@ func FinishReviewer() Reviewer {
 			return Verdict{}
 		}
 		if a.Tally(reasonFinish) >= finishSelfLimit {
+			// 纯完成状态空壳顶到自限:它是指涉性的("方案已输出/见上"),指的
+			// 产出往往就在循环中间消息里(组件返回值只取最后一条,调用方看
+			// 不到)——harness 直接拼接真交付物收口,确定性、零额外调用,
+			// 不再赌模型重写、也不给空壳贴"未执行调用"的不实标注。
+			if CompletionNoticeGuard && pureCompletionNotice(a.Out.Content) {
+				if prior := substantivePrior(a.Msgs); prior != "" {
+					spliced := *a.Out
+					spliced.Content = prior
+					return Verdict{Action: Force, Reason: reasonFinish, Replace: &spliced}
+				}
+			}
 			annotated := *a.Out
 			annotated.Content = "[系统提示] 本轮未执行任何真实的工具调用,以下内容由模型直接生成、未经业务数据验证,请谨慎采信。\n\n" + a.Out.Content
 			return Verdict{Action: Force, Reason: reasonFinish, Replace: &annotated}

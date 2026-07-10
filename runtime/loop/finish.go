@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 )
 
 // CompletionNoticeGuard 控制"纯完成状态"收口拦截是否生效(真机 A/B 用开关做
@@ -19,11 +20,11 @@ var (
 	// 泛指任务对象 + 完成动词。要求主语是"任务/方案/计划…"这类元指代,
 	// 从而放过"已下架 P100""已补货 92 件"这类具体动作确认。
 	// (所有/步骤/结论已给出 为真机 A/B 抓到的实测变体。)
-	completionNoticeRe = regexp.MustCompile(`(?i)(所有|全部)?(任务|方案|计划|分析|工作|流程|步骤|全部)[^。.,，、\n]{0,6}(完成|完毕|结束|办完)|(结论|结果)已(给出|输出)|all (tasks|steps)[^.\n]{0,8}(completed|done)|task[^.\n]{0,6}(is )?complete`)
+	completionNoticeRe = regexp.MustCompile(`(?i)(所有|全部)?(任务|方案|计划|分析|工作|流程|步骤|全部)[^。.,，、\n]{0,6}(完成|完毕|结束|办完)|(方案|结论|结果|报告|分析)[^。.,，、\n]{0,4}已(给出|输出)|(见|如)上方?|all (tasks|steps)[^.\n]{0,8}(completed|done)|task[^.\n]{0,6}(is )?complete`)
 	completionDigitRe  = regexp.MustCompile(`[0-9０-９]`)
 	// 注意:第二组不可写成可选——否则"(如果|还)+任意20字"整段被剥,把
 	// "分析完成,如果按品类看主要是耳机拉动"这类实质结论误判成空壳(实测误伤)。
-	completionPoliteRe = regexp.MustCompile(`(?i)(如有|若有|如果|如需|还)[^。.\n]{0,20}(告诉我|联系我|需求|问题|需要|告知|吩咐)|请(告诉我|随时|告知|查收|继续吩咐)|随时(联系|告知)|if you need[^.\n]{0,20}|let me know[^.\n]{0,20}`)
+	completionPoliteRe = regexp.MustCompile(`(?i)(如有|若有|如果|如需|还)[^。.\n]{0,20}(告诉我|联系我|需求|问题|需要|告知|吩咐)|请(告诉我|随时|告知|查收|继续吩咐)|随时(联系|告知)|可(执行|继续|开始)[^。.\n]{0,6}|if you need[^.\n]{0,20}|let me know[^.\n]{0,20}`)
 	meaningfulCharRe   = regexp.MustCompile(`[\p{Han}\p{L}\p{N}]`)
 )
 
@@ -45,6 +46,27 @@ func pureCompletionNotice(content string) bool {
 	rest := completionNoticeRe.ReplaceAllString(content, "")
 	rest = completionPoliteRe.ReplaceAllString(rest, "")
 	return len(meaningfulCharRe.FindAllString(rest, -1)) <= 3
+}
+
+// substantivePrior 从循环历史里找最近一条"实质产出"的 assistant 消息——
+// 空壳终答往往是指涉性的("方案已输出/见上"),它指的东西就在本轮循环的
+// 中间消息里,只是组件返回值只取最后一条、调用方看不到(Ark 实测轨迹:
+// 11s 产出完整方案 → todo 勾完 → 终答"分析方案已输出")。找到即可由
+// harness 确定性拼接回终答,不再赌模型重写。
+func substantivePrior(msgs []*schema.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role != schema.Assistant || m.Content == "" {
+			continue
+		}
+		if _, bad := badFinal(m.Content); bad {
+			continue // 中间消息自己也是空壳/伪调用,不算产出
+		}
+		if len(meaningfulCharRe.FindAllString(m.Content, -1)) >= 30 {
+			return m.Content
+		}
+	}
+	return ""
 }
 
 // FinishGuard 是"收口守卫"的兼容外观:= 单评审器的 ReviewModel(预算

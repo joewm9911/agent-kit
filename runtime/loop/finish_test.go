@@ -260,6 +260,9 @@ func TestPureCompletionNotice(t *testing.T) {
 		"所有步骤已完成，分析结论已给出。如有其他问题请继续吩咐。",
 		"所有步骤已完成，结论已给出。如需其他操作请告知。",
 		"所有任务已完成。如需进一步分析（如查询销量、调整建议等），请告知。",
+		// Ark 生产实测:指涉性空壳——交付物在循环中间消息里,终答只说"已输出"
+		"分析方案已输出，可执行取数。",
+		"结论见上方。",
 	}
 	for _, s := range block {
 		if !pureCompletionNotice(s) {
@@ -313,5 +316,41 @@ func TestFinishGuardCompletionNotice(t *testing.T) {
 	out2, _ := g2.Generate(context.Background(), []*schema.Message{schema.UserMessage("查")})
 	if out2.Content != "任务已全部完成。" || m2.Calls != 1 {
 		t.Fatalf("关闭守卫后应原样放行: %q calls=%d", out2.Content, m2.Calls)
+	}
+}
+
+// TestFinishGuardSplicesPriorDeliverable(Ark 轨迹回归):模型顶着弹回连出
+// 指涉性空壳("方案已输出")时,真交付物就在循环中间消息里——harness 直接
+// 拼接它收口(组件返回值只取最后一条,不拼接调用方就永远看不到)。
+func TestFinishGuardSplicesPriorDeliverable(t *testing.T) {
+	deliverable := "## CBT渗透率分析方案\n维度:地区/品类/时间;口径:近30天;步骤:先取分母口径再取分子,输出对比表与结论建议。"
+	shell := schema.AssistantMessage("分析方案已输出，可执行取数。", nil)
+	m := testmodel.New(shell, shell, shell) // 弹回两次仍空壳 → Force
+	g := FinishGuard(m)
+	history := []*schema.Message{
+		schema.UserMessage("输出完整分析方案"),
+		schema.AssistantMessage(deliverable, nil), // ← 循环内的真产出
+		schema.SystemMessage("[执行记录] todo_write 已全部完成"),
+	}
+	out, err := g.Generate(context.Background(), history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Content, "CBT渗透率分析方案") {
+		t.Fatalf("harness must splice the prior deliverable, got %q", out.Content)
+	}
+	if strings.Contains(out.Content, "[系统提示]") {
+		t.Fatal("spliced final must not carry the false annotation")
+	}
+	if m.Calls != 3 {
+		t.Fatalf("calls = %d, want 3 (原始 + 两次弹回)", m.Calls)
+	}
+
+	// 历史里没有实质产出:维持原 Force 标注路径(拼无可拼)
+	m2 := testmodel.New(shell, shell, shell)
+	out2, _ := FinishGuard(m2).Generate(context.Background(),
+		[]*schema.Message{schema.UserMessage("干活")})
+	if !strings.HasPrefix(out2.Content, "[系统提示]") {
+		t.Fatalf("no prior deliverable → keep annotation, got %q", out2.Content)
 	}
 }
