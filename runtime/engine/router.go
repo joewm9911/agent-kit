@@ -75,7 +75,7 @@ func (r *routerRunner) Generate(ctx context.Context, msgs []*schema.Message) (*s
 	task := renderConversation(msgs)
 
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(renderStage(ctx, r.prompt) + "\n\nAvailable targets:\n" + r.listing),
+		schema.SystemMessage(stageSystem(ctx, r.prompt) + "\n\nAvailable targets:\n" + r.listing),
 		schema.UserMessage(task),
 	})
 	if err != nil {

@@ -14,6 +14,7 @@ type keyInteractor struct{}
 type keyInput struct{}
 type keyLoopInput struct{}
 type keyVars struct{}
+type keyPersona struct{}
 type keyUser struct{}
 
 // ApprovalRequest 描述一次待批准的改动性操作。
@@ -118,6 +119,20 @@ func WithVars(ctx context.Context, vars map[string]string) context.Context {
 func Vars(ctx context.Context) map[string]string {
 	m, _ := ctx.Value(keyVars{}).(map[string]string)
 	return m
+}
+
+// WithPersona 注入本次组件调用的身份指令(渲染后的组件 prompt)。组件的
+// 每一次模型调用都应带上它:循环调用经 loop 的 PromptLayers 织入系统消息
+// L2,多阶段引擎的阶段调用经 engine 的 stageSystem 前置——persona 是运行时
+// 上下文,放 runctx 供两侧共读(engine 不 import loop 的分层约束所需)。
+func WithPersona(ctx context.Context, persona string) context.Context {
+	return context.WithValue(ctx, keyPersona{}, persona)
+}
+
+// Persona 返回本次组件调用的身份指令;未注入时为空串。
+func Persona(ctx context.Context) string {
+	s, _ := ctx.Value(keyPersona{}).(string)
+	return s
 }
 
 // WithUser 注入终端用户身份(飞书 open_id、HTTP 请求的 user 字段等)。

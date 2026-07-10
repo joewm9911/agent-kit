@@ -267,7 +267,7 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 		if task == "" {
 			task = persona
 		} else {
-			ctx = loop.WithPersona(ctx, persona)
+			ctx = runctx.WithPersona(ctx, persona)
 		}
 		// 上下文边界:独立会话,内部过程不回流宿主,只返回最终结果。
 		// 使用点声明 context: fork 时,以调用方对话快照 + 任务起步

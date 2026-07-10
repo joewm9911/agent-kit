@@ -516,8 +516,15 @@ func TestSmokeEngineMatrix(t *testing.T) {
 		t.Fatalf("direct: %q", out)
 	}
 	// rewoo:一次规划并行执行
+	resetSmokeSeen()
 	if out := invoke("cap://skill/catalog/bulk-audit", `{"category":"耳机"}`, "盘点"); !strings.Contains(out, "[REWOO]") {
 		t.Fatalf("rewoo: %q", out)
+	}
+	// 回归护栏(🔴A):组件 prompt(persona)必须抵达多阶段引擎的阶段系统消息
+	// ——P3 曾把它静默丢掉(WithPersona 只被 Modifier 消费,rewoo 绕过 Modifier),
+	// stageSystem 修复后 planner/solver 的系统消息里必须看得到组件业务指令。
+	if !smokeSawSystemContaining("做一次批量盘点") {
+		t.Fatal("component prompt must reach multi-stage engine system messages (stageSystem)")
 	}
 	// router:分诊到 faq_bot
 	if out := invoke("cap://skill/marketing/route-inquiry", `{"q":"怎么退货"}`, "退货"); !strings.Contains(out, "[FAQBOT]") {

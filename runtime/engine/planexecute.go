@@ -37,7 +37,7 @@ func BuildPlanExecute(ctx context.Context, asm *Assembly) (Runner, error) {
 		Model:        asm.Model,
 		Capabilities: asm.Capabilities,
 		MaxSteps:     asm.ConfInt("step_max_rounds", 10),
-		Modifier:     systemPrepender(promptOr(asm, "executor", defaultExecutorPrompt)),
+		Modifier:     stageLoopModifier(asm, promptOr(asm, "executor", defaultExecutorPrompt)),
 		Rewriter:     asm.Rewriter,
 	})
 	if err != nil {
@@ -60,9 +60,23 @@ func promptOr(asm *Assembly, key, def string) string {
 	return def
 }
 
-func systemPrepender(sys string) MessageModifier {
+// stageLoopModifier 组装多阶段引擎内部 executor(角色①:有工具面的循环调用)
+// 的系统消息:先经上游 Modifier(L1 纪律 + persona 身份 + 环境,由组件装配注入),
+// 再把 executor 阶段提示词续进同一条系统消息——职能层不顶掉纪律层与身份层。
+// 无上游 Modifier(直连引擎/测试)退化为纯前置(与旧 systemPrepender 同行为)。
+func stageLoopModifier(asm *Assembly, stagePrompt string) MessageModifier {
 	return func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
-		return append([]*schema.Message{schema.SystemMessage(renderStage(ctx, sys))}, msgs...)
+		sp := renderStage(ctx, stagePrompt)
+		if asm.Modifier == nil {
+			return append([]*schema.Message{schema.SystemMessage(sp)}, msgs...)
+		}
+		out := asm.Modifier(ctx, msgs)
+		if len(out) > 0 && out[0].Role == schema.System {
+			head := *out[0]
+			head.Content += "\n\n# Stage role\n" + sp
+			return append([]*schema.Message{&head}, out[1:]...)
+		}
+		return append([]*schema.Message{schema.SystemMessage(sp)}, out...)
 	}
 }
 
@@ -128,7 +142,7 @@ func (r *planExecuteRunner) Generate(ctx context.Context, msgs []*schema.Message
 	}
 	// 轮次耗尽:让模型基于已有结果收尾,不丢弃进度。
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage("Based on the execution record below, give the best final answer to the goal."),
+		schema.SystemMessage(stageSystem(ctx, "Based on the execution record below, give the best final answer to the goal.")),
 		schema.UserMessage(fmt.Sprintf("Goal: %s\n\nExecution record:\n%s", goal, strings.Join(done, "\n"))),
 	})
 	if err != nil {
@@ -152,7 +166,7 @@ func (r *planExecuteRunner) Stream(ctx context.Context, msgs []*schema.Message) 
 
 func (r *planExecuteRunner) generateJSON(ctx context.Context, system, user string, target any) error {
 	out, err := r.asm.Model.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(renderStage(ctx, system)), // planner/replanner 阶段提示词全透
+		schema.SystemMessage(stageSystem(ctx, system)), // planner/replanner:persona + 阶段提示词(角色②)
 		schema.UserMessage(user),
 	})
 	if err != nil {

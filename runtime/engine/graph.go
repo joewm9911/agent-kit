@@ -529,6 +529,19 @@ func renderStage(ctx context.Context, tpl string) string {
 	return renderVars(tpl, runctx.Vars(ctx))
 }
 
+// stageSystem 是"阶段调用"(角色②:引擎编排内的单发,无工具面)的统一系统
+// 消息装配点:身份层(组件 persona)+ 职能层(渲染后的阶段提示词)。组件的
+// 每一次模型调用都必须带 persona——组件 prompt 是业务指令,阶段调用绕过
+// PromptLayers.Modifier,故在此前置。无 persona(直连引擎/测试)退化为纯阶段词。
+// 阶段调用刻意不带 L1(循环规约):L1 只跟工具面走,单发结构化调用带它是噪音。
+func stageSystem(ctx context.Context, stagePrompt string) string {
+	sp := renderStage(ctx, stagePrompt)
+	if p := runctx.Persona(ctx); p != "" {
+		return p + "\n\n" + sp
+	}
+	return sp
+}
+
 func renderVars(tpl string, vars map[string]string) string {
 	if tpl == "" {
 		return ""

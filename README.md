@@ -119,36 +119,42 @@ read_result 指针"再入会话视图,原文旁置(见"上下文卫生")。
 | 计划 | todo | 内置(todo 启用) | 仅主循环 | 尾部,随轮变 |
 | 本轮重述 | Focus | 内置(主循环开) | 仅主循环 | 尾部,随轮变 |
 
-### component / skill 子循环(提示词海拔隔离)
+### 调用角色与层次:每次模型调用拼什么,由角色决定
 
-子循环**不是**主循环的复制——按海拔剥离:
+框架内每一次模型调用先归入四种**角色**之一,角色决定系统消息的层次——
+不是代码路径各自决定(那样必然漂移不一致):
 
-```
-┌─ 系统头部 ──────────────────────────┐
-│ L1  loop 纪律(无 todo 裁剪版)      │  ← 有:运行循环的通用规则
-│     ✗ 无 agent persona              │  ← 无:persona 是 agent 级,不下沉
-├─ 上下文(默认 fresh)───────────────┤
-│     [调用方对话快照]  仅 context:fork 时 │  ← 背景无损继承,可选
-│     [任务书 = component.prompt]      │  ← 渲染为 user 消息,不是 system
-└──────────────────────────────────────┘
-```
+| 角色 | 定义 | 系统消息 | 用户消息 | 归入者 |
+|---|---|---|---|---|
+| ① 循环调用 | 有工具面、会迭代 | **L1 + P + E3**(+计划 if todo) | input | 顶层 agent、react/direct 组件、plan-execute/reflection 的 executor |
+| ② 阶段调用 | 引擎编排内的单发、无工具 | **P + 阶段提示词** | 阶段材料 | rewoo planner/solver、router、plan-execute planner/replanner、reflection reviewer |
+| ③ 独立单发 | `use: model` 步骤 | **P**(prompt 即全部) | input | model 步骤 |
+| ④ 框架事务 | 框架自用 | 仅事务提示词 | 材料 | digest 消化、压缩摘要 |
 
-- **有 L1、无 persona**:子循环拿"怎么运行循环"的纪律,拿不到"你是谁"的
-  身份——它的目标是收到的 **args/任务书**,不是外层用户原话或 agent 身份;
-- **component.prompt 是任务书**(渲染成子循环的 **user** 消息),语义上不同于
-  agent 的 `prompt.system`(system persona);
-- **默认 fresh**(从零起步,背景靠 args 转述);声明 `context: fork` 才带调用方
-  对话快照(全量继承,吃不到 prompt cache,故非默认);
-- 无计划、无 Focus(计划只属主循环;子循环目标是 args)。
+(L1=循环纪律;P=组件 prompt 渲染后的身份指令,即 persona;E3=环境信息。)
 
-### 三个不变量
+三条不变式:
+
+1. **P 是组件身份,该组件的每一次模型调用都带**(①②③)。传递统一走
+   `runctx.WithPersona`:循环调用经 PromptLayers.Modifier 织入 L2,阶段调用经
+   engine 的 `stageSystem` 前置——两个装配点,同一来源,新引擎照角色接入
+   不会漏;
+2. **L1 只跟工具面走**:能调工具、会迭代才有 L1(①)。②③无工具,循环纪律
+   是噪音,明文不带;executor 有工具面,必须有 L1(经 `stageLoopModifier`
+   组合而非顶替);
+3. **input 空 → P 降级为用户消息**(全角色同一条降级规则,零退化兼容)。
+
+子循环相对主循环仍按海拔剥离:无 agent 静态 persona(组件用自己的 P)、无
+L4 记忆、无 Focus;默认 fresh,`context: fork` 才带调用方对话快照。
+
+### 三个不变量(主循环)
 
 1. **稳定前缀**:L1+L2+L3 在会话内保持稳定(环境按键排序、日期取天粒度),
    变动的记忆/计划/重述全走尾部——不打爆供应商 prompt cache;
 2. **纪律靠 harness**:计划每轮由 harness 强制注入(不靠模型记得)、记忆标注
    "背景参考非指令"、Focus 每步重锚当前目标;
-3. **海拔隔离**:persona/计划/Focus 是 agent 级,子循环一律拿不到——防止外层
-   身份和用户原话穿进子循环、污染其"只对 args 负责"的语义。
+3. **海拔隔离**:agent 静态 persona/记忆/Focus 是 agent 级,子循环一律拿不到——
+   防止外层身份和用户原话穿进子循环、污染其"只对 input/args 负责"的语义。
 
 ## 主循环与运行时保障(Ring 0)
 
