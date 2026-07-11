@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,12 @@ func (f *fileKV) live(key string) ([]byte, bool, error) {
 	}
 	var e envelope
 	if err := json.Unmarshal(raw, &e); err != nil {
-		return nil, false, fmt.Errorf("file store: corrupt entry %q: %w", key, err)
+		// 损坏条目隔离(断电撕裂写等):改名保留取证、按不存在返回——
+		// 否则该键此后所有 Get/Update 永久失败(如坏掉的 budget 键会把
+		// 该会话的模型调用一直 fail-closed),只能人工删文件。
+		_ = os.Rename(f.path(key), f.path(key)+".corrupt")
+		slog.Warn("file store: quarantined corrupt entry", "key", key, "err", err)
+		return nil, false, nil
 	}
 	if e.Exp > 0 && time.Now().UnixNano() > e.Exp {
 		_ = os.Remove(f.path(key))

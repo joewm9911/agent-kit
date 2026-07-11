@@ -101,13 +101,17 @@ func (s *ResultStore) nextSeq(ctx context.Context, scope string) (int, error) {
 	return n, err
 }
 
-// Get 取回一条原始结果。
-func (s *ResultStore) Get(ctx context.Context, id string) (string, bool) {
+// Get 取回一条原始结果。后端读错误与"不存在"必须可区分:redis 抖动时把
+// 有效 id 报成"不存在",模型会永久放弃一个其实取得回的结果。
+func (s *ResultStore) Get(ctx context.Context, id string) (string, bool, error) {
 	b, ok, err := s.kv.Get(ctx, rscope(ctx)+rsep+id)
-	if err != nil || !ok {
-		return "", false
+	if err != nil {
+		return "", false, err
 	}
-	return string(b), true
+	if !ok {
+		return "", false, nil
+	}
+	return string(b), true, nil
 }
 
 type keyResultStore struct{}
@@ -280,7 +284,11 @@ func ReadResult() capability.Capability {
 			Offset int    `json:"offset"`
 		}
 		_ = json.Unmarshal([]byte(argsJSON), &args)
-		text, ok := rs.Get(ctx, args.ID)
+		text, ok, gerr := rs.Get(ctx, args.ID)
+		if gerr != nil {
+			// 后端抖动 ≠ 不存在:引导模型稍后重试同一 id,而不是永久放弃。
+			return fmt.Sprintf("结果暂存后端暂时读取失败(%q 可能仍存在),请稍后重试 read_result。", args.ID), nil
+		}
 		if !ok {
 			return fmt.Sprintf("结果 %q 不存在或已随轮次结束丢弃。", args.ID), nil
 		}

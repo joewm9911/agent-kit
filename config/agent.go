@@ -424,6 +424,9 @@ func autoRecall(kv memory.Store, scope memory.ScopeConfig, retr session.Retrieve
 				for k, v := range hits {
 					out = append(out, fmt.Sprintf("Long-term memory %s: %s", k, v))
 				}
+			} else {
+				// 后端读错误 ≠ 无记忆:静默会让"记忆凭空消失"无从排查。
+				slog.Warn("memory recall failed, injecting none", "err", err)
 			}
 		}
 		// 窗口外的会话历史命中(sessK 路;本轮加载的全量记录,不回读 store)

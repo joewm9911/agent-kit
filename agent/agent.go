@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -168,7 +169,9 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 			// 用户主动叫停:以正常回答收束,轮次照常入会话。
 			answer := "已按你的要求中断当前任务。中断前的执行情况见记录,需要时告诉我从哪里继续。"
 			if a.store != nil {
-				_ = a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...)
+				if aerr := a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...); aerr != nil {
+					slog.Warn("agent: append interrupted-turn record", "agent", a.name, "session", sessionID, "err", aerr)
+				}
 			}
 			return answer, nil
 		}
@@ -260,15 +263,23 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 	}
 
 	// 轮次锁交接给聚合协程:流耗尽、历史落盘后才放行下一轮。
+	// 落盘 ctx 剥离取消:HTTP 调用方把流读完就返回、请求 ctx 随即取消,
+	// 聚合协程还没写完 redis——整轮历史(输入+轨迹+回答)静默丢失,下一轮
+	// 失忆(与 scheduleCompact 的 WithoutCancel 同一理由)。
 	locked = false
+	bg := context.WithoutCancel(ctx)
 	copies := sr.Copy(2)
 	go func() {
 		defer lock.Unlock()
 		defer copies[1].Close()
 		var chunks []*schema.Message
+		var recvErr error
 		for {
 			chunk, e := copies[1].Recv()
 			if e != nil {
+				if e != io.EOF {
+					recvErr = e // 流中断 ≠ 正常收尾:部分回答不能冒充完整轮
+				}
 				break
 			}
 			chunks = append(chunks, chunk)
@@ -284,11 +295,17 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 		// 流结束即主循环结束,记录器此时已收齐本轮全部工具调用。
 		turn := a.turnMessages(rec, input, full.Content)
 		turn[len(turn)-1] = full
-		if err := a.store.Append(ctx, sessionID, turn...); err != nil {
+		if recvErr != nil {
+			// 与 Run 的失败落痕同规:截断的回答带上失败标注入史,
+			// 下一轮模型知道这是半截,不在其上盖楼。
+			turn = append(turn, schema.SystemMessage(fmt.Sprintf(
+				"[上一轮流式输出中断] 错误:%v。以上回答可能不完整。", recvErr)))
+		}
+		if err := a.store.Append(bg, sessionID, turn...); err != nil {
 			slog.Warn("agent: append streamed turn", "agent", a.name, "session", sessionID, "err", err)
 			return
 		}
-		a.scheduleCompact(ctx, sessionID)
+		a.scheduleCompact(bg, sessionID)
 	}()
 	return copies[0], nil
 }

@@ -78,7 +78,13 @@ func runDurable(ctx context.Context, capKey, argsJSON string, exec func(ctx cont
 		return exec(ctx)
 	}
 	if out, ok := j.Effect(ctx, capKey, argsJSON); ok {
-		return out, nil // 重放:已执行过,直接返回记录结果
+		return out, nil // 重放:已执行过(或命中在途哨兵),直接返回记录结果
+	}
+	// 两阶段台账:执行前先落"已开始"标记。此写失败即拒绝执行——副作用尚未
+	// 发生,失败安全;若跳过标记直接执行,结果写失败会让重放二次执行已审批
+	// 的 mutating 操作(效果日志存在的全部意义就是防这一下)。
+	if err := j.BeginEffect(ctx, capKey, argsJSON); err != nil {
+		return "", fmt.Errorf("effect journal unavailable, refusing to execute mutating capability (retry later): %w", err)
 	}
 	out, err := exec(ctx)
 	if err != nil {

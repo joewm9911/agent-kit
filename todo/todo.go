@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -84,15 +85,29 @@ func sessionKey(ctx context.Context) string {
 	return keyFor(runctx.Agent(ctx), runctx.Session(ctx), runctx.Scope(ctx))
 }
 
-// loadState 读取一个执行域的计划状态,缺失/损坏返回空状态。
+// loadState 读取一个执行域的计划状态,缺失/损坏返回空状态。后端读错误
+// 与"不存在"后果不同(计划还在,只是这次没读到):提示词侧消费者(PlanSection/
+// FinishCheck)无处上抛,至少 Warn 留痕——否则 redis 抖一下计划就"凭空消失",
+// 无从排查;工具面(todo_read)另走 loadStateErr 对模型如实报错。
 func (t *Todo) loadState(ctx context.Context, key string) todoState {
+	st, err := t.loadStateErr(ctx, key)
+	if err != nil {
+		slog.Warn("todo: load plan failed, treating as empty for prompt injection", "key", key, "err", err)
+	}
+	return st
+}
+
+func (t *Todo) loadStateErr(ctx context.Context, key string) (todoState, error) {
 	b, ok, err := t.kv.Get(ctx, key)
-	if err != nil || !ok {
-		return todoState{}
+	if err != nil {
+		return todoState{}, err
+	}
+	if !ok {
+		return todoState{}, nil
 	}
 	var st todoState
 	_ = json.Unmarshal(b, &st)
-	return st
+	return st, nil
 }
 
 func encodeState(st todoState) []byte {
@@ -187,13 +202,16 @@ func (t *Todo) Capabilities() []capability.Capability {
 			return msg, nil // 违规以结果回传纠正,循环不中断
 		}
 		key := sessionKey(ctx)
-		if bag := runctx.TurnState(ctx); bag != nil {
-			bag.Store(turnWritten+key, true) // 本轮动过计划(收口检查的触发前提)
+		markWritten := func() { // 持久化成功后才记"本轮动过计划"——写失败时
+			if bag := runctx.TurnState(ctx); bag != nil { // 提前标记会让 PlanSection/
+				bag.Store(turnWritten+key, true) // FinishCheck 按"已替换"的假象催办
+			}
 		}
 		if len(args.Todos) == 0 {
 			if err := t.kv.Delete(ctx, key); err != nil {
 				return "", err
 			}
+			markWritten()
 			return "计划已清空。", nil
 		}
 		// 整体替换:list 覆盖,stale 归零(更新计划即重置卡住计数)。
@@ -203,6 +221,7 @@ func (t *Todo) Capabilities() []capability.Capability {
 		if err != nil {
 			return "", err
 		}
+		markWritten()
 		return render(args.Todos), nil
 	})
 
@@ -212,11 +231,15 @@ func (t *Todo) Capabilities() []capability.Capability {
 		Params:      capability.NoParams, // 无参工具:空 schema 会被部分厂商 400
 	}
 	read := capability.New(readMeta, func(ctx context.Context, _ string) (string, error) {
-		list := t.loadState(ctx, sessionKey(ctx)).List
-		if len(list) == 0 {
+		st, err := t.loadStateErr(ctx, sessionKey(ctx))
+		if err != nil {
+			// 后端读错误 ≠ 计划为空:如实告知,别诱导模型据"空计划"重建/漂移。
+			return "计划后端暂时读取失败(计划可能仍存在),请稍后重试 todo_read;不要据此认为计划为空。", nil
+		}
+		if len(st.List) == 0 {
 			return "计划为空。", nil
 		}
-		return render(list), nil
+		return render(st.List), nil
 	})
 
 	return []capability.Capability{write, read}

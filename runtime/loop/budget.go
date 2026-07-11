@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -113,6 +114,12 @@ func (g *BudgetGate) beginCall(ctx context.Context) (spendSnap, error) {
 			snap = s
 			return json.Marshal(s)
 		}, g.ttl)
+		if err != nil && g.cfg.MaxModelCalls == 0 && g.cfg.MaxTokens == 0 {
+			// 零限额 = 只统计不设限:后端故障时纯记账不该挡业务调用
+			// (设了限额则维持 fail-closed——治理闸门宁停不放)。
+			slog.Warn("budget: stats-only accounting failed, allowing call", "err", err)
+			return snap, nil
+		}
 		return snap, err
 	}
 	g.mu.Lock()
@@ -137,14 +144,18 @@ func (g *BudgetGate) addTokens(ctx context.Context, n int64) {
 		return
 	}
 	if g.kv != nil {
-		_ = g.kv.Update(ctx, bkey(ctx), func(old []byte, ok bool) ([]byte, error) {
+		if err := g.kv.Update(ctx, bkey(ctx), func(old []byte, ok bool) ([]byte, error) {
 			var s spendSnap
 			if ok {
 				_ = json.Unmarshal(old, &s)
 			}
 			s.Tokens += n
 			return json.Marshal(s)
-		}, g.ttl)
+		}, g.ttl); err != nil {
+			// 尽力而为是既定取舍(不阻塞已产出的回答),但丢账必须留痕:
+			// 间歇故障下 MaxTokens 会持续少记、硬上限被静默放宽。
+			slog.Warn("budget: token accounting lost", "tokens", n, "err", err)
+		}
 		return
 	}
 	g.mu.Lock()

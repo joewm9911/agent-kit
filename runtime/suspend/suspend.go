@@ -21,7 +21,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -144,18 +146,38 @@ func (j *Journal) effectKey(capKey, argsJSON string) string {
 	return j.turn + "-" + hex.EncodeToString(sum[:8])
 }
 
-// Effect 查效果日志。
+// effectInFlight 是效果日志的"已开始执行"哨兵值:执行前先落此标记,执行后
+// 覆盖为真实结果。重放时若命中哨兵 = 上次执行已发起但结果未记录(结果写失败
+// 或执行中崩溃)——绝不能自动重放,以确定性文本收口交人工确认。
+const effectInFlight = "\x00effect-in-flight"
+
+// Effect 查效果日志。命中哨兵时以"不可自动重试"的说明文本返回(ok=true,
+// 挡住重放路径的再执行)。
 func (j *Journal) Effect(ctx context.Context, capKey, argsJSON string) (string, bool) {
 	raw, ok, err := j.kv.Get(ctx, kkey(kindEffect, j.effectKey(capKey, argsJSON)))
 	if err != nil || !ok {
 		return "", false
 	}
+	if string(raw) == effectInFlight {
+		return "该操作在挂起前已实际执行,但结果未能记录(记录写入失败或执行中断)。为避免重复副作用,重放不再自动执行;请人工核对该操作的实际结果后继续。", true
+	}
 	return string(raw), true
 }
 
-// SaveEffect 记录一次 mutating 执行的结果。
+// BeginEffect 在执行 mutating 能力**之前**落"已开始"标记:此写失败则拒绝
+// 执行(副作用尚未发生,失败安全)——这是效果日志幂等保证的前置台账。
+func (j *Journal) BeginEffect(ctx context.Context, capKey, argsJSON string) error {
+	return put(ctx, j.kv, kkey(kindEffect, j.effectKey(capKey, argsJSON)), []byte(effectInFlight))
+}
+
+// SaveEffect 把"已开始"标记覆盖为真实结果。写失败不能吞:标记会留在台账里,
+// 后续重放命中哨兵、拒绝自动再执行(见 Effect)——宁可要求人工确认,也不
+// 二次执行已审批的 mutating 操作。此处只能留痕。
 func (j *Journal) SaveEffect(ctx context.Context, capKey, argsJSON, result string) {
-	_ = put(ctx, j.kv, kkey(kindEffect, j.effectKey(capKey, argsJSON)), []byte(result))
+	if err := put(ctx, j.kv, kkey(kindEffect, j.effectKey(capKey, argsJSON)), []byte(result)); err != nil {
+		slog.Warn("suspend: effect result write failed; in-flight marker stays, replay will require manual confirmation",
+			"cap", capKey, "err", err)
+	}
 }
 
 // CompleteTurn 在一轮成功结束后清理该轮的全部日志。
@@ -175,17 +197,37 @@ func SavePendingTurn(ctx context.Context, kv store.KV, sessionKey string, rec Pe
 	return put(ctx, kv, kkey(kindTurn, sessionKey), raw)
 }
 
+// errNoPending 是原子认领的"无挂起记录"哨兵(仅包内)。
+var errNoPending = errors.New("no pending turn")
+
 // TakePendingTurn 取出并删除会话的挂起轮次(答案到达时的恢复入口)。
+// 认领经后端原子读改写完成(读到即删,mutate 返回 nil = 删除):Get 后再
+// Delete 的两步认领在多副本下会让同一挂起轮被两个副本各认领一次、双重放
+// ——重放里的 mutating 操作随之竞态。损坏的记录也在同一原子操作里消费掉
+// (否则它永远留在键上,该会话每条消息都撞同一错误,砖死)。
 func TakePendingTurn(ctx context.Context, kv store.KV, sessionKey string) (PendingTurn, bool, error) {
-	raw, ok, err := kv.Get(ctx, kkey(kindTurn, sessionKey))
-	if err != nil || !ok {
-		return PendingTurn{}, false, err
-	}
 	var rec PendingTurn
-	if err := json.Unmarshal(raw, &rec); err != nil {
+	var corrupt error
+	err := kv.Update(ctx, kkey(kindTurn, sessionKey), func(old []byte, ok bool) ([]byte, error) {
+		if !ok {
+			return nil, errNoPending
+		}
+		if uerr := json.Unmarshal(old, &rec); uerr != nil {
+			corrupt = uerr // 消费掉损坏记录(返回 nil 删除),错误带出
+		}
+		return nil, nil // 删除 = 认领成功
+	}, 0)
+	if errors.Is(err, errNoPending) {
+		return PendingTurn{}, false, nil
+	}
+	if err != nil {
 		return PendingTurn{}, false, err
 	}
-	return rec, true, kv.Delete(ctx, kkey(kindTurn, sessionKey))
+	if corrupt != nil {
+		slog.Warn("suspend: corrupt pending-turn record consumed", "session", sessionKey, "err", corrupt)
+		return PendingTurn{}, false, fmt.Errorf("pending turn record corrupt (consumed): %w", corrupt)
+	}
+	return rec, true, nil
 }
 
 type keyJournal struct{}
@@ -255,7 +297,14 @@ func (s *suspendingInteractor) resolve(ctx context.Context, question string) (st
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := s.j.interactionID(question)
-	if ans, ok, err := s.j.answer(ctx, id); err == nil && ok {
+	ans, ok, err := s.j.answer(ctx, id)
+	if err != nil {
+		// 读抖动 ≠ 无答案:此处若照常落 recordPending,会把用户已写入的
+		// Answer/Done 盲目覆盖成空问题记录——把一次可重试的读失败变成
+		// 破坏性的答案丢失 + 重复提问。上抛让本轮失败重试。
+		return "", fmt.Errorf("suspend journal read: %w", err)
+	}
+	if ok {
 		return ans, nil // 重放:越过挂起点
 	}
 	if err := s.j.recordPending(ctx, id, question); err != nil {

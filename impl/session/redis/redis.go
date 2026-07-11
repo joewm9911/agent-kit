@@ -6,6 +6,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -71,7 +72,10 @@ func (s *sessStore) rangeMsgs(ctx context.Context, sessionID string, start, stop
 	for _, r := range raws {
 		var m schema.Message
 		if err := json.Unmarshal(r, &m); err != nil {
-			return nil, err
+			// 一条损坏(redis OOM 截断/外部误写)不砖死整个会话:跳过留痕,
+			// 与 file 后端的坏行容忍一致。否则该会话此后每轮 load 必败。
+			slog.Warn("session/redis: skip corrupt entry", "session", sessionID, "err", err)
+			continue
 		}
 		out = append(out, &m)
 	}

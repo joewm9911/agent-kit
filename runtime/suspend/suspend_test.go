@@ -3,8 +3,11 @@ package suspend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -153,5 +156,81 @@ func TestEffectsCleanupOnComplete(t *testing.T) {
 	j.CompleteTurn(ctx)
 	if _, ok := j.Effect(ctx, "tool.t/x/y", `{"a":1}`); ok {
 		t.Fatal("effects should be cleaned after turn completes")
+	}
+}
+
+// failWriteKV:Update 恒失败、其余透传(模拟 redis 写被拒的窗口)。
+type failWriteKV struct{ store.KV }
+
+func (f failWriteKV) Update(context.Context, string, func([]byte, bool) ([]byte, error), time.Duration) error {
+	return fmt.Errorf("redis write refused")
+}
+
+// TestEffectJournalTwoPhase(H1 回归):效果日志两阶段台账。
+// ①BeginEffect 写失败 → 拒绝执行(副作用未发生,失败安全);
+// ②结果写失败后重放 → 命中在途哨兵,不二次执行,返回人工确认文本。
+func TestEffectJournalTwoPhase(t *testing.T) {
+	// ① 前置标记写不进 → mutating 不执行
+	executed := 0
+	j := NewJournal(failWriteKV{store.NewInMemory()}, "t1")
+	ctx := WithJournal(context.Background(), j)
+	_, err := runDurable(ctx, "transfer", `{"amt":100}`, func(context.Context) (string, error) {
+		executed++
+		return "转账成功", nil
+	})
+	if err == nil || executed != 0 {
+		t.Fatalf("begin-marker write failure must refuse execution: err=%v executed=%d", err, executed)
+	}
+
+	// ② 执行成功但结果写失败(哨兵留存)→ 重放不再执行
+	kv := store.NewInMemory()
+	j2 := NewJournal(kv, "t2")
+	ctx2 := WithJournal(context.Background(), j2)
+	_ = j2.BeginEffect(ctx2, "transfer", `{"amt":100}`) // 模拟:已开始、结果未记录
+	out, err := runDurable(ctx2, "transfer", `{"amt":100}`, func(context.Context) (string, error) {
+		executed++
+		return "转账成功", nil
+	})
+	if err != nil || executed != 0 {
+		t.Fatalf("in-flight marker must block re-execution: err=%v executed=%d", err, executed)
+	}
+	if !strings.Contains(out, "人工核对") {
+		t.Fatalf("in-flight replay must return manual-confirmation text, got %q", out)
+	}
+}
+
+// TestTakePendingTurnAtomicAndCorrupt(H2+M2 回归):
+// ①原子认领:并发 Take 只有一个成功(多副本双重放的根源);
+// ②损坏记录被消费掉(否则该会话每条消息都撞同一错误,永久砖死)。
+func TestTakePendingTurnAtomicAndCorrupt(t *testing.T) {
+	kv := store.NewInMemory()
+	ctx := context.Background()
+	_ = SavePendingTurn(ctx, kv, "s1", PendingTurn{TurnID: "T", Input: "原输入"})
+
+	var wins int32
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, ok, err := TakePendingTurn(ctx, kv, "s1"); ok && err == nil {
+				atomic.AddInt32(&wins, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if wins != 1 {
+		t.Fatalf("claim must be atomic: %d winners, want 1", wins)
+	}
+
+	// 损坏记录:一次消费 + 报错;第二次干净返回不存在(会话不砖死)
+	_ = kv.Update(ctx, kkey(kindTurn, "s2"), func([]byte, bool) ([]byte, error) {
+		return []byte("{{{corrupt"), nil
+	}, 0)
+	if _, ok, err := TakePendingTurn(ctx, kv, "s2"); ok || err == nil {
+		t.Fatalf("corrupt record: want consumed+error, got ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := TakePendingTurn(ctx, kv, "s2"); ok || err != nil {
+		t.Fatalf("after consumption the session must be clean: ok=%v err=%v", ok, err)
 	}
 }

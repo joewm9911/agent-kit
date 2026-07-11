@@ -173,7 +173,10 @@ func (o *official) Update(ctx context.Context, key string,
 			if next == nil {
 				p.Del(ctx, key)
 			} else {
-				p.Set(ctx, key, next, ttl) // ttl<=0 → 0 → 无过期
+				if ttl < 0 {
+					ttl = 0 // 负值钳 0:-1 恰是 goredis.KeepTTL,会保留旧过期而非清除
+				}
+				p.Set(ctx, key, next, ttl)
 			}
 			return nil
 		})
@@ -208,9 +211,15 @@ func (o *official) Delete(ctx context.Context, key string) error {
 	return o.rdb.Del(ctx, key).Err()
 }
 
+// globEscape 转义 MATCH 模式的 glob 元字符:前缀含 *?[]\ 时按字面匹配。
+func globEscape(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`, "]", `\]`)
+	return r.Replace(s)
+}
+
 func (o *official) Scan(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
-	iter := o.rdb.Scan(ctx, 0, prefix+"*", 0).Iterator()
+	iter := o.rdb.Scan(ctx, 0, globEscape(prefix)+"*", 0).Iterator()
 	for iter.Next(ctx) {
 		keys = append(keys, iter.Val())
 	}

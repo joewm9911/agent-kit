@@ -42,7 +42,7 @@ func TestDigestOverThreshold(t *testing.T) {
 		t.Fatalf("digest should carry retrieval pointer, got %q", out)
 	}
 	// 全文进了暂存
-	if full, ok := store.Get(ctx, "r1"); !ok || len([]rune(full)) != 8000 {
+	if full, ok, _ := store.Get(ctx, "r1"); !ok || len([]rune(full)) != 8000 {
 		t.Fatalf("full result not stored: ok=%v len=%d", ok, len([]rune(full)))
 	}
 	// 消化器收到了当前任务背景
@@ -194,7 +194,7 @@ func TestDigestFailureKeepsPointer(t *testing.T) {
 		t.Fatalf("fallback must stay bounded (head+pointer), got %d runes", len([]rune(out)))
 	}
 	// 指针必须真的可取回
-	full, ok := store.Get(ctx, "r1")
+	full, ok, _ := store.Get(ctx, "r1")
 	if !ok || len([]rune(full)) != 14000 {
 		t.Fatalf("full text must be retrievable via r1: ok=%v len=%d", ok, len([]rune(full)))
 	}

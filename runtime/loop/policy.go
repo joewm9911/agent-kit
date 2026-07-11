@@ -150,8 +150,8 @@ func (st *ApprovalState) recall(ctx context.Context, refKey string) (allowed, ok
 	}
 	if st.kv != nil {
 		raw, ok, err := st.kv.Get(ctx, akey(ctx, refKey))
-		if err != nil || !ok {
-			return false, false
+		if err != nil || !ok || len(raw) == 0 {
+			return false, false // 空值(外部误写)按未记忆:多问一次,不 panic
 		}
 		return raw[0] == '1', true
 	}
