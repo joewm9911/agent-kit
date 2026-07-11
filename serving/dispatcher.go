@@ -123,9 +123,14 @@ func (d *Dispatcher) Handler(b Binding) channel.InboundHandler {
 		// dispatcher 锁;redis 抖动时持锁 I/O 会冻结全部会话的分发。
 		if d.suspendKV != nil {
 			if rec, resumed, err := resumePending(ctx, d.suspendKV, key, in.Text); err != nil {
-				// 认领失败已回滚挂起记录,用户重发答案还接得上。
-				d.logger.Error("resume pending failed", slog.String("session", key), slog.String("err", err.Error()))
-				return
+				// fail-open:挂起后端故障时这条消息按**新输入**继续走,
+				// 不能 return——suspendKV 非空时每条消息都过这里,后端一坏
+				// 直接返回等于整个机器人失联(实测事故)。挂起记录没被
+				// 认领(原子认领失败即原样留存),后端恢复后下一条消息
+				// 仍能恢复;代价只是故障窗口内"本想答复挂起问题"的消息
+				// 被当成新话题,远好于全量丢弃。
+				d.logger.Error("resume pending failed; continuing as new input",
+					slog.String("session", key), slog.String("err", err.Error()))
 			} else if resumed {
 				if !d.enqueue(ctx, b, channel.Inbound{Conv: in.Conv, Text: rec.Input}, rec.TurnID) {
 					// 队满回滚:认领成功但没排进队,挂起记录必须放回去,

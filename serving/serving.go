@@ -155,8 +155,10 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) suspendableMessage(w http.ResponseWriter, ctx context.Context, a Runnable, session, input string) {
 	turnInput, turnID := input, ""
 	if rec, resumed, err := resumePending(ctx, s.suspendKV, session, input); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		// fail-open(与 IM dispatcher 同一决策):挂起后端故障时按新输入
+		// 继续处理,不 500 拉闸;记录未被认领,后端恢复后仍可续。
+		s.logger.Error("resume pending failed; continuing as new input",
+			slog.String("session", session), slog.String("err", err.Error()))
 	} else if resumed {
 		turnInput, turnID = rec.Input, rec.TurnID
 	}

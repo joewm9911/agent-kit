@@ -460,3 +460,36 @@ func TestQuestionDecorated(t *testing.T) {
 		t.Fatalf("decorator should see question+answer, got %v", seen)
 	}
 }
+
+// brokenSuspendKV 模拟挂起后端故障(redis 挂了/配错)。
+type brokenSuspendKV struct{}
+
+func (brokenSuspendKV) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, fmt.Errorf("dial unix: missing address")
+}
+func (brokenSuspendKV) Update(context.Context, string, func([]byte, bool) ([]byte, error), time.Duration) error {
+	return fmt.Errorf("dial unix: missing address")
+}
+func (brokenSuspendKV) Delete(context.Context, string) error { return fmt.Errorf("broken") }
+func (brokenSuspendKV) Scan(context.Context, string) ([]string, error) {
+	return nil, fmt.Errorf("broken")
+}
+
+// TestSuspendBackendFailureFailOpen(实测事故回归):suspendKV 非空时每条
+// 消息都先过 resumePending;后端故障若直接 return,整个机器人失联。
+// 必须 fail-open:这条消息按新输入继续处理,agent 照常回复。
+func TestSuspendBackendFailureFailOpen(t *testing.T) {
+	fc := &fakeChannel{}
+	ag := agent.New("a", "", echoRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+	d.EnableSuspend(brokenSuspendKV{})
+	h := d.Handler(Binding{Channel: fc, Agent: ag})
+
+	conv := channel.ConvRef{Channel: "fake", Chat: "c-broken", User: "u1"}
+	h(context.Background(), channel.Inbound{Conv: conv, Text: "你好", EventID: "eb1"})
+
+	waitFor(t, func() bool { return len(fc.messages()) >= 1 })
+	if len(fc.messages()) == 0 {
+		t.Fatal("suspend backend failure must not drop the message (fail-open)")
+	}
+}
