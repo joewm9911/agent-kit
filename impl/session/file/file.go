@@ -20,7 +20,10 @@ import (
 
 func init() {
 	session.Register("file", func(conf map[string]any, window int) (session.Store, error) {
-		dir, _ := conf["dir"].(string)
+		dir, ok := conf["dir"].(string)
+		if conf["dir"] != nil && !ok {
+			return nil, fmt.Errorf("session: file store dir must be a string, got %T", conf["dir"])
+		}
 		if dir == "" {
 			return nil, fmt.Errorf("session: file store requires dir")
 		}

@@ -97,10 +97,14 @@ func Dial(conf map[string]any) (Client, string, error) {
 	password, _ := conf["password"].(string)
 	db := 0
 	switch v := conf["db"].(type) {
+	case nil:
 	case int:
 		db = v
 	case float64:
 		db = int(v)
+	default:
+		// 字符串 "1" 等静默落 DB 0 会把数据写错库,必须报错。
+		return nil, "", fmt.Errorf("redis: db must be an integer, got %T", v)
 	}
 	rdb := goredis.NewClient(&goredis.Options{Addr: addr, Password: password, DB: db})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {

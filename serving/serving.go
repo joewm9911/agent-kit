@@ -57,6 +57,18 @@ func (s *Server) EnableSuspend(kv store.KV) {
 
 // AttachChannel 把一个 channel 绑定到 agent 并挂载其 webhook。
 func (s *Server) AttachChannel(ctx context.Context, ch channel.Channel, d *Dispatcher, b Binding) error {
+	// 枚举装配期锁死(单文件/多文件两条装配路径共用这里):
+	// session_mapping 拼错会把群成员并进共享会话,是隐私事故级。
+	switch b.SessionMapping {
+	case "", "chat", "chat_user":
+	default:
+		return fmt.Errorf("channel %s: session_mapping must be chat|chat_user, got %q", ch.Name(), b.SessionMapping)
+	}
+	switch b.ReplyMode {
+	case "", "text", "card", "stream":
+	default:
+		return fmt.Errorf("channel %s: reply_mode must be text|card|stream, got %q", ch.Name(), b.ReplyMode)
+	}
 	return ch.Start(ctx, s.mux, d.Handler(b))
 }
 

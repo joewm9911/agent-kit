@@ -66,6 +66,11 @@ func ParseRef(s string) (Ref, error) {
 			return Ref{}, fmt.Errorf("invalid capability ref %q: empty segment", orig)
 		}
 	}
+	// kind 段永远精确(Match 的通配不变式):* 在这里能解析出来却永远
+	// 匹配不到任何能力,收下等于承诺做不到的事。
+	if strings.Contains(r.Kind, "*") {
+		return Ref{}, fmt.Errorf("invalid capability ref %q: the kind segment cannot use wildcards (domain/name can, e.g. cap://tool/*/*)", orig)
+	}
 	return r, nil
 }
 

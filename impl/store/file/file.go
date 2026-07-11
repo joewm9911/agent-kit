@@ -28,7 +28,10 @@ import (
 
 func init() {
 	store.RegisterBackend("file", func(conf map[string]any) (store.KV, error) {
-		dir, _ := conf["dir"].(string)
+		dir, ok := conf["dir"].(string)
+		if conf["dir"] != nil && !ok {
+			return nil, fmt.Errorf("file store: dir must be a string, got %T", conf["dir"])
+		}
 		return New(dir)
 	})
 }

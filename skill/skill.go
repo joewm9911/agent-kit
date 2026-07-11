@@ -229,10 +229,14 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if kind == "" {
 		kind = "skill"
 	}
+	paramsSchema, err := capability.ParamsSchema(decl.Params)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
+	}
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: name, Version: decl.Version},
 		Description: decl.Description,
-		Params:      capability.ParamsSchema(decl.Params),
+		Params:      paramsSchema,
 		Risk:        risk,
 		Tags:        []string{"prompt:" + brief.Version},
 	}

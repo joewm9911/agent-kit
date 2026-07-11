@@ -241,6 +241,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	if err := rejectWorkDir(ac.WorkDirLegacy, "app.yaml"); err != nil {
 		return nil, err
 	}
+	if ac.DefaultModelLegacy != nil {
+		return nil, fmt.Errorf("app.yaml: default_model has been renamed model (part of the execution profile; same provider/config shape)")
+	}
 
 	// 2. 提示词
 	var prompts *prompt.Resolver

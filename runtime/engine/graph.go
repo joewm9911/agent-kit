@@ -156,10 +156,14 @@ func BuildGraph(_ context.Context, decl *GraphDeclaration, ns string, resolve St
 	if kind == "" {
 		kind = "skill"
 	}
+	paramsSchema, err := capability.ParamsSchema(decl.Params)
+	if err != nil {
+		return nil, fmt.Errorf("graph %s: %w", decl.Name, err)
+	}
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: decl.Name, Version: decl.Version},
 		Description: decl.Description,
-		Params:      capability.ParamsSchema(decl.Params),
+		Params:      paramsSchema,
 		Risk:        risk,
 	}
 	return capability.New(meta, plan.run), nil

@@ -20,11 +20,16 @@ import (
 func init() {
 	model.Register("zhipu", func(ctx context.Context, conf map[string]any) (einomodel.ToolCallingChatModel, error) {
 		var cfg struct {
-			APIKey  string `json:"api_key"`
-			BaseURL string `json:"base_url"`
-			Model   string `json:"model"`
+			APIKey      string   `json:"api_key"`
+			BaseURL     string   `json:"base_url"`
+			Model       string   `json:"model"`
+			Temperature *float32 `json:"temperature"`
+			TopP        *float32 `json:"top_p"`
+			MaxTokens   *int     `json:"max_tokens"`
 		}
-		if err := decode.Config(conf, &cfg); err != nil {
+		// 严格解码:采样参数此前静默丢弃(temperature 配了不生效),
+		// 未知键直接报错。
+		if err := decode.StrictConfig(conf, &cfg); err != nil {
 			return nil, err
 		}
 		if cfg.BaseURL == "" {
@@ -34,9 +39,10 @@ func init() {
 			cfg.Model = "glm-5.2"
 		}
 		return openai.NewChatModel(ctx, &openai.ChatModelConfig{
-			APIKey:  cfg.APIKey,
-			BaseURL: cfg.BaseURL,
-			Model:   cfg.Model,
+			APIKey:      cfg.APIKey,
+			BaseURL:     cfg.BaseURL,
+			Model:       cfg.Model,
+			Temperature: cfg.Temperature, TopP: cfg.TopP, MaxTokens: cfg.MaxTokens,
 		})
 	})
 }

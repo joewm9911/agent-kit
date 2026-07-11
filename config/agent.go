@@ -215,6 +215,20 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	// 长期记忆后端:挂工具或启用长期召回任一都需要构建;
 	// 工具面挂载仍只由 memory.tools 决定。
 	scope := memory.ScopeConfig{Write: ac.Memory.Scope.Write, Read: ac.Memory.Scope.Read}
+	// scope 词汇装配期锁死:非法值在运行期会静默按默认走(写错作用域
+	// 是隐私事故级),必须 fail fast。
+	switch scope.Write {
+	case "", "user", "shared", "session":
+	default:
+		return nil, fmt.Errorf("agent %s: memory.scope.write must be user|shared|session, got %q", ac.Name, scope.Write)
+	}
+	for _, r := range scope.Read {
+		switch r {
+		case "user", "shared", "session":
+		default:
+			return nil, fmt.Errorf("agent %s: memory.scope.read entries must be user|shared|session, got %q", ac.Name, r)
+		}
+	}
 	var kv memory.Store
 	if err := ac.Profile.rejectLegacyKeys("agent " + ac.Name); err != nil {
 		return nil, err
@@ -222,7 +236,9 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	if ac.Memory.ToolsLegacy != nil {
 		return nil, fmt.Errorf("agent %s: memory.tools has been renamed expose_tools (to avoid clashing with tools that means the tool list)", ac.Name)
 	}
-	if ac.Memory.ExposeTools || kvK > 0 {
+	// seed 属装配期灌入:即使没挂工具、没开召回也要写进后端,否则
+	// 配了 seed 的共享知识静默丢失。
+	if ac.Memory.ExposeTools || kvK > 0 || len(ac.Memory.Seed) > 0 {
 		ltType, ltConf, _, err := resolveStoreRef(ac.Memory.Store, ac.Stores, "memory")
 		if err != nil {
 			return nil, err
@@ -247,8 +263,12 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	// 审批运行态(模式+参数级策略+决策记忆)与预算门闸由 agent 每次
 	// 运行装入 ctx,对 skill 内部同样生效。
 	mode := loop.ApprovalMode(ac.Approval.Mode)
-	if mode == "" {
+	switch mode {
+	case "":
 		mode = loop.ApprovalInteractive
+	case loop.ApprovalAuto, loop.ApprovalInteractive, loop.ApprovalDeny:
+	default:
+		return nil, fmt.Errorf("agent %s: approval.mode must be auto|interactive|deny, got %q", ac.Name, mode)
 	}
 	// budget/approval 运行态后端:不配 store 留进程内(单副本默认),
 	// 配了(如 redis)则账目/决策记忆跨副本一致。
@@ -377,8 +397,12 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	}
 
 	record := loop.RecordMode(ac.Session.RecordTools)
-	if record == "" {
+	switch record {
+	case "":
 		record = loop.RecordSummary
+	case loop.RecordSummary, loop.RecordFull, loop.RecordOff:
+	default:
+		return nil, fmt.Errorf("agent %s: session.record_tools must be summary|full|off, got %q", ac.Name, record)
 	}
 	return agent.New(ac.Name, ac.Description, runner, m, agent.Options{
 		Store: sessStore, Window: ac.Session.Window, Compaction: comp,

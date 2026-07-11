@@ -261,6 +261,11 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		// 不同(agent/mount 指定)→ 为其构建专属模型。
 		if eff.Model != nil && eff.Model != deps.appModel {
 			decl.Model = &skill.ModelDecl{Provider: eff.Model.Provider, Config: eff.Model.Config}
+		} else if cc.Profile.Reliability.Retry != nil && deps.logger != nil {
+			// 重试是模型中间件:复用共享模型时,该模型携带的是 app 层
+			// 重试,component 声明的 retry 装不上——静默无效不如说清楚。
+			deps.logger.Warn("component reliability.retry only takes effect with a dedicated model (mount/agent-specified); the shared default model carries the app-level retry",
+				"namespace", ns.Name, "component", cc.Name)
 		}
 		c, err := skill.Build(ctx, decl, skill.Deps{
 			Todo:         componentTodo(),

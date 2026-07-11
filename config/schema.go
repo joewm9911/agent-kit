@@ -329,6 +329,9 @@ type Config struct {
 	// WorkDirLegacy:work_dir 已拆义为只读根(资源 FS)+ 可写状态(state_dir),
 	// 旧键装配期报错指路。
 	WorkDirLegacy *string `yaml:"work_dir"`
+	// DefaultModelLegacy:default_model 已改名 model(执行画像内嵌),
+	// 旧键装配期报错指路。
+	DefaultModelLegacy *ModelConfig `yaml:"default_model"`
 }
 
 // AppConfig 是应用级入口(app.yaml):进程级资源与接线板 + 全局默认。
@@ -350,6 +353,10 @@ type AppConfig struct {
 	// redis session 实例);agent 层可再声明私有实例。
 	Stores     []StoreInstance     `yaml:"stores"`
 	Retrievers []RetrieverInstance `yaml:"retrievers"`
+
+	// DefaultModelLegacy:default_model 已改名 model(执行画像内嵌),
+	// 旧键装配期报错指路。
+	DefaultModelLegacy *ModelConfig `yaml:"default_model"`
 
 	// 会话状态 / 治理边界的 app 层默认(可选,agent 未声明整块时回落至此)。
 	Session          SessionConfig         `yaml:"session"`
