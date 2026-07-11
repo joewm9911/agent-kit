@@ -25,7 +25,8 @@ Rules:
 - do not exceed the step limit; do not artificially serialize steps that can run in parallel (no reference relation means they can run in parallel).`
 
 const defaultRewooSolverPrompt = `You are a solver. Based on the task and the execution evidence from each step, give the final answer directly.
-The evidence may contain failure records; report them faithfully and do not fabricate.`
+The evidence may contain failure records; report them faithfully and do not fabricate.
+You are completing a delegated task: the requester is another program and cannot reply. Never ask for confirmation or end with a plan awaiting approval — deliver the best final result from the evidence, stating gaps explicitly.`
 
 // BuildRewoo 构建 ReWOO 引擎(Reasoning Without Observation):
 //
@@ -52,6 +53,12 @@ func BuildRewoo(ctx context.Context, asm *Assembly) (Runner, error) {
 	var sb strings.Builder
 	for _, c := range asm.Capabilities {
 		meta := c.Meta()
+		// 反应式工具进不了一次性计划:read_result 的 id、ask_user 的答复
+		// 都依赖运行期状态,planner 无从预知只能编造(实测编出的 read_result
+		// 步全部失败进证据)。从计划面剔除,证据不足由 solver 如实说明。
+		if hasTag(meta.Tags, capability.TagInteractive) || hasTag(meta.Tags, capability.TagRawResult) {
+			continue
+		}
 		tools[meta.Ref.Name] = c
 		params := ""
 		if meta.Params != nil {
@@ -62,6 +69,9 @@ func BuildRewoo(ctx context.Context, asm *Assembly) (Runner, error) {
 			}
 		}
 		fmt.Fprintf(&sb, "- %s: %s%s\n", meta.Ref.Name, meta.Description, params)
+	}
+	if len(tools) == 0 {
+		return nil, fmt.Errorf("rewoo: no plannable tools (interactive/raw-result tools cannot be planned one-shot)")
 	}
 	return &rewooRunner{
 		asm:      asm,

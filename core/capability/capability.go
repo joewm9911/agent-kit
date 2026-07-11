@@ -73,6 +73,11 @@ func ParseRisk(s string) (Risk, error) {
 // 工具超时闸门对其豁免——等人回复的时间不是执行时间。
 const TagInteractive = "interactive"
 
+// TagRawResult 标记能力的结果不参与消化(结果本身就是给模型的原文,
+// 如 read_result 的分页输出)。声明于 core:消化闸门(loop)与引擎的
+// 计划面筛选(engine)都要认它,而 engine 不得依赖 loop。
+const TagRawResult = "result:raw"
+
 // Meta 是能力的自描述清单。Description 会作为工具描述暴露给模型,
 // 是大脑调用决策的直接依据,写得越清楚决策越准。
 type Meta struct {

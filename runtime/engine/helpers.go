@@ -36,3 +36,13 @@ func stepRoundsDefault(asm *Assembly) int {
 	}
 	return 10
 }
+
+// hasTag 报告 tags 是否含 want。
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}

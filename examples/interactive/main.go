@@ -65,6 +65,7 @@ import (
 	"github.com/cloudwego/eino/callbacks"
 
 	"github.com/joewm9911/agent-kit/config"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
 	"github.com/joewm9911/agent-kit/protocol/resource"
 	"github.com/joewm9911/agent-kit/runtime/observe"
@@ -257,7 +258,14 @@ func main() {
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
-	ctx := context.Background()
+	// CLI 也要有终端用户身份:长期记忆按 user scope 落桶,IM/HTTP 通道
+	// 各自注入(ConvRef.User / 请求字段),纯 CLI 不注入的话 memory_save
+	// 永远报"缺少用户身份"。取 OS 用户名,同机同人跨会话记忆可复用。
+	cliUser := os.Getenv("USER")
+	if cliUser == "" {
+		cliUser = "cli-user"
+	}
+	ctx := runctx.WithUser(context.Background(), "cli:"+cliUser)
 	for {
 		fmt.Print("\n> ")
 		if !scanner.Scan() {

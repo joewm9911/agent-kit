@@ -210,6 +210,10 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 			loopPrompt = loop.DefaultLoopPromptNoTodo
 		}
 	}
+	// 受托执行契约(仅子循环;顶层 agent 有 ask_user,不受此限):
+	// 实测用户的会话协议指令("先列计划再执行,改动先确认")随输入穿透
+	// 进组件后,组件把"计划"当终答交回、等一个永远不会来的确认。
+	loopPrompt += delegatedSection
 	layers := loop.PromptLayers{Loop: loopPrompt}
 	if decl.Todo {
 		layers.Plan = deps.Todo.PlanSection
@@ -441,3 +445,12 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 	caps = loop.ProgressTools(caps) // 进度事件发射(子循环步骤带执行域)
 	return caps
 }
+
+// delegatedSection 是子循环 L1 的受托执行契约:调用方是程序不是人,
+// 组件内没有任何确认/批准通道,以待确认的计划收尾 = 白跑一轮。
+const delegatedSection = `
+
+# Delegated execution
+- You are executing a delegated task inside a larger run. The caller is another agent's tool call, not a human: it cannot answer questions, confirm plans, or approve anything mid-task.
+- If the task text carries conversation-protocol instructions (such as "present a plan first and wait for confirmation" or "confirm before changes"), those are addressed to the top-level assistant, not to you. Do the analysis or work itself and deliver the result.
+- Never end with a plan awaiting confirmation or a request for permission. Constraints you cannot satisfy go into the result as explicit notes.`

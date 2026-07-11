@@ -308,7 +308,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			}
 			c, err := buildSkillpack(ctx, deps.packRoot, deps.packOpts,
 				skill.PackSpec{Use: sc.From, Integrity: sc.Integrity, Name: ns.Name + "/" + sc.Name},
-				skill.PackOverrides{Tools: sc.Tools, Context: sc.Context},
+				skill.PackOverrides{MaxSteps: sc.MaxRounds, Tools: sc.Tools, Context: sc.Context},
 				skill.Deps{Catalog: deps.global, Prompts: deps.prompts,
 					DefaultModel: deps.defaultModel, Retry: nsEff.retry(),
 					ToolTimeout: nsEff.toolTimeout().Std(), DigestOver: nsEff.digestOver(),
@@ -321,6 +321,9 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 				return fmt.Errorf("namespace %s: skill %s: %w", ns.Name, sc.Name, err)
 			}
 			continue
+		}
+		if sc.MaxRounds != 0 {
+			return fmt.Errorf("namespace %s: skill %s: max_rounds only applies to from (external skillpack) skills; orchestration skills have no inner loop (per-step limits live on the target component)", ns.Name, sc.Name)
 		}
 		steps := sc.Steps
 		if sc.Use != "" { // 入口引用形态:单步透传,skill 只是接口

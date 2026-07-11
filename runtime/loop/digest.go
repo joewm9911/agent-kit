@@ -19,9 +19,10 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/store"
 )
 
-// TagRawResult 标记一个能力的结果不参与消化(结果本身就是给模型的
+// TagRawResult 别名 core 的跨层常量(见 capability.TagRawResult);
+// 语义:能力的结果不参与消化(结果本身就是给模型的
 // 受控输出,如 read_result 的分页;供给方也可用它显式豁免)。
-const TagRawResult = "result:raw"
+const TagRawResult = capability.TagRawResult
 
 const rsep = "\x1f"
 

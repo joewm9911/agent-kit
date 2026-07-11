@@ -16,15 +16,18 @@ import (
 )
 
 // CLI 是终端交互通道:ask_user 阻塞读 stdin,审批以 y/n 确认。
-// stdin 由单一读取协程供给行通道:阻塞读无法被 ctx 打断,放在调用
-// 栈里会让取消/超时永远等不到返回且泄漏持锁 goroutine;经通道中转后
-// 取消立即返回,迟到的输入行留在通道里给下一次提问(不丢同步)。
+// stdin 读经"按请求读"的单一协程中转:阻塞读无法被 ctx 打断,放在调用
+// 栈里会让取消/超时永远等不到返回且泄漏持锁 goroutine;而**常驻贪读**
+// 会在没有提问时偷走宿主 REPL 的输入(实测:审批答完后下一条用户命令
+// 被吞,主循环饿死)。读协程只在收到请求时才碰 stdin,两个问题都解。
 type CLI struct {
-	mu    sync.Mutex // 同一时刻只允许一个问题占用终端
-	out   io.Writer
-	lines chan lineResult
-	once  sync.Once
-	in    *bufio.Reader
+	mu      sync.Mutex // 同一时刻只允许一个问题占用终端;兼护 pending
+	out     io.Writer
+	in      *bufio.Reader
+	req     chan struct{}
+	lines   chan lineResult
+	once    sync.Once
+	pending bool // 已有在途读请求(上次 ctx 取消遗留),不再重复发
 }
 
 type lineResult struct {
@@ -34,14 +37,17 @@ type lineResult struct {
 
 // NewCLI 创建终端交互通道。
 func NewCLI() *CLI {
-	return &CLI{in: bufio.NewReader(os.Stdin), out: os.Stdout, lines: make(chan lineResult, 1)}
+	return &CLI{in: bufio.NewReader(os.Stdin), out: os.Stdout,
+		req: make(chan struct{}, 1), lines: make(chan lineResult, 1)}
 }
 
-// readLine 等待下一行输入或 ctx 取消。读协程惰性启动、进程级常驻。
+// readLine 等待下一行输入或 ctx 取消(调用方须持有 c.mu)。取消后读
+// 请求保持在途:迟到敲下的那行会留在通道里,由下一次提问消费——被
+// 取消的提问偷不走行,也不丢行。
 func (c *CLI) readLine(ctx context.Context) (string, error) {
 	c.once.Do(func() {
 		go func() {
-			for {
+			for range c.req {
 				line, err := c.in.ReadString('\n')
 				c.lines <- lineResult{text: line, err: err}
 				if err != nil {
@@ -50,8 +56,13 @@ func (c *CLI) readLine(ctx context.Context) (string, error) {
 			}
 		}()
 	})
+	if !c.pending {
+		c.req <- struct{}{}
+		c.pending = true
+	}
 	select {
 	case r := <-c.lines:
+		c.pending = false
 		if r.err != nil {
 			return "", r.err
 		}

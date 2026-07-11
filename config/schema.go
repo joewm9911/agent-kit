@@ -460,6 +460,9 @@ type NamespaceSkill struct {
 	// https://...zip | file:...);须显式 name,integrity/tools/context
 	// 见 SkillEntry 同名字段。与 steps/use 互斥。
 	From string `yaml:"from"`
+	// MaxRounds 是 from 技能包内部循环的轮数覆盖(与平铺 SkillEntry 的
+	// max_rounds 同义;两条 skillpack 装配路径同一配置面)。
+	MaxRounds int `yaml:"max_rounds"`
 	// Use 是入口引用形态(与 steps 互斥):components/<name> 等引用,
 	// skill 退化为纯接口声明,执行整体委托给该能力,params JSON 原样
 	// 透传。外部链接已改用 from(写在这里装配期报错指路)。
