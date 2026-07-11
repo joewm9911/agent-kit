@@ -56,9 +56,14 @@ func (b *store) Load(ctx context.Context, sessionID string) ([]*schema.Message, 
 }
 
 func (b *store) LoadAll(_ context.Context, sessionID string) ([]*schema.Message, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	msgs := b.sessions[sessionID]
+	if msgs != nil {
+		// 读也算活跃:只在 Append 触摸会让"常读少写"的会话被 LRU 误逐。
+		b.seq++
+		b.touch[sessionID] = b.seq
+	}
 	out := make([]*schema.Message, len(msgs))
 	copy(out, msgs)
 	return out, nil

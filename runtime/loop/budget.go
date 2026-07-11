@@ -264,13 +264,22 @@ func countTokens(in []*schema.Message, out *schema.Message) int64 {
 // tokenizer,预算与压缩阈值的触发时机随之校准。
 func estimate(msgs []*schema.Message) int64 {
 	var ascii, wide int
-	for _, m := range msgs {
-		for _, r := range m.Content {
+	count := func(s string) {
+		for _, r := range s {
 			if r < 128 {
 				ascii++
 			} else {
 				wide++
 			}
+		}
+	}
+	for _, m := range msgs {
+		count(m.Content)
+		// 工具调用的参数同样占上下文:漏计会让压缩与预算晚触发,
+		// 工具重(参数大)的会话尤其明显。
+		for _, tc := range m.ToolCalls {
+			count(tc.Function.Name)
+			count(tc.Function.Arguments)
 		}
 	}
 	return int64(ascii/4) + int64(wide*3/4) + 1

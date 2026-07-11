@@ -283,6 +283,15 @@ func Summarize(ctx context.Context, m model.ToolCallingChatModel, cfg Compaction
 	var sb strings.Builder
 	for _, msg := range msgs {
 		content := msg.Content
+		if len(msg.ToolCalls) > 0 {
+			// 摘要器要看得见调过什么工具:纯 role/content 视图里
+			// 工具调用是空行,"做过哪些查询"这类关键事实全部丢失。
+			names := make([]string, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				names = append(names, tc.Function.Name)
+			}
+			content = "[tool calls: " + strings.Join(names, ", ") + "] " + content
+		}
 		if r := []rune(content); len(r) > summarizeClipLen {
 			content = string(r[:summarizeClipLen]) + "..."
 		}

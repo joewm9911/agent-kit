@@ -324,8 +324,9 @@ type Config struct {
 
 	Observability ObservabilityConfig `yaml:"observability"`
 
-	// StateDir 是可写运行状态目录:skill 安装、file 后端落盘、轨迹等收口
-	// 于 <state_dir>/agent-kit/ 之下。只读资源(配置/提示词/skill 包)不走
+	// StateDir 是可写运行状态目录,当前消费方是 skill 安装(skillpacks
+	// 物化到 <state_dir>/agent-kit/.skills);file 后端与轨迹路径仍各自
+	// 显式配置,尚未收口到这里。只读资源(配置/提示词/skill 包)不走
 	// 这里——它们由资源 FS 承载(见 docs/resource-loading-design.md)。
 	// 默认链:state_dir → 环境 AGENTKIT_STATE_DIR → $XDG_STATE_HOME/agentkit。
 	StateDir string `yaml:"state_dir"`

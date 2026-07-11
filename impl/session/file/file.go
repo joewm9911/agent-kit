@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,17 +85,26 @@ func (f *store) LoadAll(_ context.Context, sessionID string) ([]*schema.Message,
 	}
 	defer file.Close()
 
+	// 逐行读用 Reader 而非 Scanner:Scanner 撞到超过缓冲上限的单行
+	// (ErrTooLong)是终止性错误,一条超长记录会毁掉整个会话的加载;
+	// Reader 可以把超长行读完丢弃,与"容忍坏行"同一姿态。
 	var msgs []*schema.Message
-	sc := bufio.NewScanner(file)
-	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
-	for sc.Scan() {
-		var m schema.Message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			continue // 容忍坏行,不让单条脏数据毁掉整个会话
+	r := bufio.NewReaderSize(file, 1024*1024)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var m schema.Message
+			if uerr := json.Unmarshal(line, &m); uerr == nil {
+				msgs = append(msgs, &m)
+			} // 坏行(含被截断的尾行)跳过,不让单条脏数据毁掉整个会话
 		}
-		msgs = append(msgs, &m)
+		if err != nil {
+			if err == io.EOF {
+				return msgs, nil
+			}
+			return msgs, err
+		}
 	}
-	return msgs, sc.Err()
 }
 
 func (f *store) Append(_ context.Context, sessionID string, msgs ...*schema.Message) error {

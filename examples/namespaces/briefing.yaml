@@ -1,7 +1,8 @@
 # namespaces/briefing.yaml —— namespace 维度配置(域团队拥有)。
 # 文件名即 namespace 名。三层:tools(有什么原子能力,ns 内共享对外不可见)
 # → components(执行单元是什么,不进目录)→ skills(对外长什么样、怎么串)。
-# 边界:工具与 component 不出命名空间,跨 ns 只能引用 cap://skill。
+# 边界:工具不出命名空间;跨 ns 引用 cap://skill,或目标 component
+# 声明 export: true 后经本 ns imports: 以 cap://component/<ns>/<name> 引用。
 
 sources:
   - name: wx

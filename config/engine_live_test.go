@@ -81,6 +81,7 @@ func liveTool(name, desc string, params *schema.ParamsOneOf, fn func(argsJSON st
 		Ref:         capability.Ref{Kind: "tool", Domain: "live", Name: name},
 		Description: desc,
 		Params:      params,
+		Risk:        capability.RiskReadonly, // 未声明按 mutating 保守拦审批,测试工具需显式只读
 	}
 	c := capability.New(meta, func(_ context.Context, argsJSON string) (string, error) {
 		calls.Add(1)

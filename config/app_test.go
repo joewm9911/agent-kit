@@ -59,7 +59,8 @@ func (s countingSource) Name() string { return s.name }
 func (s countingSource) Sync(context.Context) ([]capability.Capability, error) {
 	syncCount.Add(1)
 	return []capability.Capability{capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Domain: s.name, Name: "ping"},
+		Ref:  capability.Ref{Kind: "tool", Domain: s.name, Name: "ping"},
+		Risk: capability.RiskReadonly,
 	}, func(_ context.Context, in string) (string, error) { return "pong", nil })}, nil
 }
 
@@ -317,7 +318,8 @@ func registerFlakySource() {
 	registerFlaky.Do(func() {
 		source.Register("flakysrc", func(_ context.Context, name string, _ map[string]any) (source.Source, error) {
 			c := capability.New(capability.Meta{
-				Ref: capability.Ref{Kind: "tool", Domain: name, Name: "wobble"},
+				Ref:  capability.Ref{Kind: "tool", Domain: name, Name: "wobble"},
+				Risk: capability.RiskReadonly,
 			}, func(_ context.Context, in string) (string, error) {
 				if flakyCalls.Add(1) < 3 {
 					return "", errTransientTest
