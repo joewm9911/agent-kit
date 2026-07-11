@@ -21,7 +21,7 @@ type Store interface {
 }
 
 // FullLoader 是可选扩展:返回不裁剪的全量历史。实现它的后端可享受
-// 滚动摘要持久化与会话内相关性召回;内置 inmemory/file 均已实现。
+// 滚动摘要持久化与会话内相关性召回;内置 inmemory/file/redis 均已实现。
 type FullLoader interface {
 	LoadAll(ctx context.Context, sessionID string) ([]*schema.Message, error)
 }

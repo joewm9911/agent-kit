@@ -1,6 +1,6 @@
 // Package model 是模型协议:按 provider 注册工厂、按配置构造 ChatModel。
 // 与 session/memory/prompt/source/channel 的注册表机制同构;官方实现见
-// impl/model/*(minimax/openai),空导入即注册。
+// impl/model/*(minimax/openai/zhipu),空导入即注册。
 package model
 
 import (

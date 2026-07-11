@@ -49,9 +49,6 @@ func agentModel(ctx context.Context, own *ModelConfig,
 	return loop.BudgetModel(loop.RetryModel(m, retry)), nil
 }
 
-// buildAgent 用已选品的能力面与已解析的模型装配 agent。
-// 选品与模型解析由调用方完成(单文件路径按 include 选品;多文件路径
-// 自动挂载关联 namespace 的全部导出 skill)。
 // resolveStoreRef 解析 store 槽引用:cap://store/<kind>/<name> → 具名实例
 // 的 (type, config, ttl);裸字符串(inmemory/file/...)当作缺省简写直接
 // 作 type 返回,存量零迁移。ref 为空返回空 type(上游按默认处理)。

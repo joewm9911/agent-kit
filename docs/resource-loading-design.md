@@ -1,6 +1,6 @@
 # ResourceLoader 设计(完整方案)
 
-> 状态:设计待 review。目标:**一套** ResourceLoader 抽象统一所有资源
+> 状态:设计已定稿,分批推进中。目标:**一套** ResourceLoader 抽象统一所有资源
 > 加载——配置(app/agent/namespace/component)、提示词、skill 包及其
 > 文件读取能力(fs cap)——与部署环境解耦:仓库根、容器 `/`、systemd
 > 工作目录、单二进制内嵌,同一份配置都能加载,路径语义一致可预测。

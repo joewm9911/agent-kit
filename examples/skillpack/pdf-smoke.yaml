@@ -1,6 +1,6 @@
 # examples/skillpack —— 外部技能包(skillpack)冒烟场景:
-# 一行 use: 引用 Anthropic 官方 pdf 技能(pin 到 commit),启动期下载安装到
-# <PROJECT_WORK_DIR>/agent-kit/.skills(SDK 固定约定,skills.lock 即供给链
+# 一行 from: 引用 Anthropic 官方 pdf 技能(pin 到 commit),启动期下载安装到
+# <state_dir>/agent-kit/.skills(SDK 固定约定,skills.lock 即供给链
 # 账本),真实模型在隔离
 # 子循环里按其 SKILL.md 指令写 pypdf 脚本、经 workdir 绑定的 python 工具
 # 执行。由 config 包 TestLiveRealPDFSkill 驱动:
@@ -26,8 +26,8 @@ model:
 catalog:
   max_risk: dangerous
 
-# 宿主项目工作目录(PROJECT_WORK_DIR):skills 安装到固定约定位置
-# <work_dir>/agent-kit/.skills;不配 work_dir 时默认进程 cwd。
+# 可写状态目录:skills 安装到固定约定位置 <state_dir>/agent-kit/.skills;
+# 不配 state_dir 时默认链 AGENTKIT_STATE_DIR → $XDG_STATE_HOME/agentkit。
 state_dir: "${SKILLPACK_WORK_DIR}"
 
 skillpacks:

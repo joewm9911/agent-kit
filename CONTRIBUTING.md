@@ -64,7 +64,7 @@ bash scripts/layering-check.sh
 ```
 
 - New extension implementations go under `impl/<kind>/<name>/` and
-  self-register; add a table row to `docs/extending.md`.
+  self-register.
 - New configuration keys follow the vocabulary in `docs/config-taxonomy.md`
   (one word, one meaning; `use`/`from`/`sources`/`args`/`params`/`prompt`).
 - Registry names from third-party packages should be prefixed

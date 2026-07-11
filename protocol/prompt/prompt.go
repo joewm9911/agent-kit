@@ -1,7 +1,7 @@
 // Package prompt 把提示词抽象为 provider 供给的资源:按名字+版本通道
 // 拉取,渲染变量,版本随轨迹打点可回溯。所有出现提示词的位置
 // (system prompt、skill 模板、planner/replanner)都可以用
-// cap://prompt.<type>/<source>/<name>@<label> 引用,或直接写字面量。
+// cap://prompt/<source>/<name>@<label> 引用,或直接写字面量。
 package prompt
 
 import (
@@ -90,7 +90,7 @@ func (r *Resolver) Add(name string, p Provider) {
 	r.providers[name] = p
 }
 
-// Resolve 解析 cap://prompt.*/<source>/<name>@<label> 形式的引用。
+// Resolve 解析 cap://prompt/<source>/<name>@<label> 形式的引用。
 // nil 接收者安全:装配层常以可能为 nil 的 *Resolver 满足 Source 接口
 // (typed-nil 穿过接口后非 nil),在此兜底成明确错误而非 panic。
 func (r *Resolver) Resolve(ctx context.Context, refStr string) (*Template, error) {

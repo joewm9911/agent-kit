@@ -19,8 +19,8 @@ import (
 
 // SkillpacksConfig 是 app 级外部技能包策略。
 type SkillpacksConfig struct {
-	// Dir 覆盖安装目录(相对值以 work_dir 为基准)。默认固定约定:
-	// <work_dir>/agent-kit/.skills——agent-kit 是 SDK,落盘产物收口在
+	// Dir 覆盖安装目录(相对值以 state_dir 为基准)。默认固定约定:
+	// <state_dir>/agent-kit/.skills——agent-kit 是 SDK,落盘产物收口在
 	// 宿主项目的 agent-kit/ 命名空间下(对齐 node_modules/.terraform 心智)。
 	Dir string `yaml:"dir"`
 	// Sync:auto(默认,缺失即下载)| require-local(缺失 fail fast,
@@ -79,7 +79,7 @@ func resolveStateDir(stateDir string) string {
 // rejectWorkDir 拦截已拆义的旧键 work_dir(fail fast 即迁移指南)。
 func rejectWorkDir(legacy *string, where string) error {
 	if legacy != nil {
-		return fmt.Errorf("%s: work_dir has been split — read-only resources (config/prompts/skill packs) are carried by the resource loader (local dir / embed.FS), and writable runtime state moves under state_dir (skill installs, file backends, trajectory). Set state_dir instead", where)
+		return fmt.Errorf("%s: work_dir has been split — read-only resources (config/prompts/skill packs) are carried by the resource loader (local dir / embed.FS), and skill installs move under state_dir. Set state_dir instead", where)
 	}
 	return nil
 }

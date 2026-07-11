@@ -37,5 +37,5 @@ systematic-debugging / tdd:
     MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
     go run ./examples/superpowers
 
-首启从 GitHub 下载三个技能到 <work_dir>/agent-kit/.skills(之后零网络)。带
+首启从 GitHub 下载三个技能到 <state_dir>/agent-kit/.skills(之后零网络)。带
 脚本的技能是 Dangerous 风险,调用时终端请求审批(y 放行,a 本会话免问)。

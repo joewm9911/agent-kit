@@ -4,7 +4,7 @@
 #   go run ./examples/superpowers
 #
 # 环境占位(runner 注入默认):MINIMAX_API_KEY(必填)/ SP_MODEL_BASE /
-# SP_WORK_DIR。技能装到 <work_dir>/agent-kit/.skills(首启下载,之后零网络)。
+# SP_WORK_DIR(→ state_dir)。技能装到 <state_dir>/agent-kit/.skills(首启下载,之后零网络)。
 # 带脚本的技能是 Dangerous:每次调用终端请求审批(y 放行,a 本会话免问)。
 
 secrets:

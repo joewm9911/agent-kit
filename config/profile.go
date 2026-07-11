@@ -193,7 +193,7 @@ func (p Profile) stepRetry() int {
 //	  - ../namespaces/catalog.yaml                     # 仅路径
 //	  - path: ../namespaces/research.yaml              # 路径 + 覆盖
 //	    model: {provider: openai, config: {...}}
-//	    loop:  {max_steps: 5}
+//	    loop:  {max_rounds: 5}
 type NamespaceMount struct {
 	Path    string `yaml:"path"`
 	Profile `yaml:",inline"`

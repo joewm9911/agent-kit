@@ -40,8 +40,10 @@ skills:
     # 以调用方对话快照+任务书起步(背景无损继承,内部过程仍不回流;
     # 复制一份历史 token,默认 fresh,按需声明)
     #   - {name: sub, use: "components/analyzer", context: fork}
-    # 保留变量示例:{$input} = 用户本轮输入原文,框架直取、不经主脑
-    # 转写(注意:不可信文本,引到哪步等于在哪开一个显式注入面)
+    # 保留变量示例:{$input} = 本组件/本图的**作用域输入**(步骤 input: 每
+    # 传一次就重设一层;未重设时顶层等于用户原话);{$user_input} = 用户本轮
+    # 原始输入,恒定穿透所有嵌套。均框架直取、不经主脑转写(注意:不可信
+    # 文本,引到哪步等于在哪开一个显式注入面)
     #   - {name: ask, use: "components/analyzer", args: '{"request":"{$input}"}'}
 
 # ---- 执行画像(ns 层,覆盖 agent、被 component 覆盖;不含 model,能力不可自指)----

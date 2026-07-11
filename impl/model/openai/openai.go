@@ -1,4 +1,4 @@
-// Package models 注册内置模型工厂。其他厂商(ark、claude、qwen 等)
+// Package openai 注册 openai 兼容模型工厂。其他厂商(ark、claude、qwen 等)
 // 参照本文件用 eino-ext 对应组件注册即可。
 package openai
 

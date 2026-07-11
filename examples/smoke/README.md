@@ -16,6 +16,8 @@ namespaces/
   marketing.yaml            营销域:reflection/router/plan-execute、
                             调用级 todo、跨 ns skill 引用
   crm.yaml                  客户域:最小形态 + fork,多 agent 共享验证对象
+  regions.yaml              统一输入模型样例:组件级 {$input} 隔离 +
+                            {$user_input} 穿透、步骤 input:、P3 prompt→系统
 ```
 
 ## 能力覆盖矩阵(→ 断言所在测试)
@@ -32,6 +34,8 @@ namespaces/
 | 轨迹入会话/长期记忆/自动召回/滚动摘要 | ops-manager 多轮 | TestSmokeAgentMemoryLoop |
 | 参数级审批(allow 规则/交互拒绝/决策记忆) | apply-price | TestSmokeApprovalPolicy |
 | 预算硬停(skill 内部计入) | support-bot | TestSmokeBudgetHardStop |
+| P3 角色切换(组件/model 步骤 prompt→系统、input→用户,空 input 降级) | regions | TestP3PromptToSystem |
+| 统一输入模型({$input} 组件级隔离、{$user_input} 穿透、步骤 input:) | regions/scan-regions | TestUnifiedRegionScan |
 | 真实模型全链路 | ops-manager + MiniMax | TestLiveMiniMaxSmoke |
 
 未在本场景重复覆盖、由单元测试守护的机制:中断/steering(agent 包)、

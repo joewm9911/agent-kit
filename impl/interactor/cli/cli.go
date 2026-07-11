@@ -1,4 +1,4 @@
-// Package interact 提供 runctx.Interactor 的内置实现。
+// Package cli 提供 runctx.Interactor 的终端内置实现。
 // CLI 用于终端运行;IM 通道(飞书等)在 channel 包中提供各自实现。
 package cli
 

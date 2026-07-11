@@ -1,10 +1,10 @@
 // examples/interactive:冒烟场景的**可交互副本**——smoke 树保持纯测试用途,
 // 本目录独立演进。真实 MiniMax + 内置 mock 业务后端 + 真实 pdf 技能。
 //
-//	ZHIPU_API_KEY=$(security find-generic-password -a agent-kit -s zhipu-api-key -w) \
+//	MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
 //	go run ./examples/interactive
 //
-// 默认模型智谱 glm-5.2;切 MiniMax:OPS_MODEL_PROVIDER=minimax + MINIMAX_API_KEY。
+// 默认模型 MiniMax(M2.7);切智谱 GLM:OPS_MODEL_PROVIDER=zhipu + ZHIPU_API_KEY。
 //
 // 业务数据(backend.go,确定性生成):20 商品 × 6 品类 × 3 仓库 × 30 天
 // 销售序列 × 80 订单 × 10 客户,埋有异常(热销缺货 P103、下滑积压 P108、
