@@ -50,13 +50,14 @@ You are allowed to be proactive, but only when the user asks you to do something
 const loopPromptTodo = `
 
 # Task management
-You have the todo_write and todo_read tools to manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
+You have the todo_write and todo_read tools to manage and plan tasks. Use these tools VERY frequently to keep your working state accurate; the harness already surfaces the plan to the user.
 - Any task that requires 3 or more distinct steps, or where the user gives multiple requirements, needs a plan: capture it with todo_write BEFORE starting work. Skip the plan for a single straightforward action or pure Q&A.
 - Mark a task in_progress BEFORE beginning work on it; keep exactly one task in_progress at a time.
 - Mark a task completed IMMEDIATELY after finishing it; do not batch up completions.
 - ONLY mark a task completed when it is FULLY accomplished. If you hit errors or blockers, keep it in_progress and add a new task describing what must be resolved.
 - Remove tasks that are no longer relevant from the list entirely.
-- Marking items complete is bookkeeping, not your answer. When the plan is done, your final message must still BE the result the user asked for — the data and conclusions themselves — never a status like "all tasks completed".`
+- Sequence at the end of a task: finish your bookkeeping (the last todo_write) FIRST, then write the answer. The answer is always your last message — never call todo_write after delivering the result.
+- Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as "all tasks completed" or "the plan has been output above".`
 
 const loopPromptTail = `
 

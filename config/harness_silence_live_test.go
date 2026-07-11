@@ -163,7 +163,7 @@ func TestLiveHarnessSilence(t *testing.T) {
 	// 契约行已按本实验数据落进 DefaultLoopPrompt(prompt.go loopPromptTodo)。
 	// 保持可重跑:A 臂 = 剥掉契约行还原修复前的 L1;B 臂 = 现状(含契约)。
 	// 契约行漂移即报错(逐字锚定,防止 L1 改了而实验静默失真)。
-	const todoContractLine = "\n- Marking items complete is bookkeeping, not your answer. When the plan is done, your final message must still BE the result the user asked for — the data and conclusions themselves — never a status like \"all tasks completed\"."
+	const todoContractLine = "\n- Sequence at the end of a task: finish your bookkeeping (the last todo_write) FIRST, then write the answer. The answer is always your last message — never call todo_write after delivering the result.\n- Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as \"all tasks completed\" or \"the plan has been output above\"."
 	if !strings.Contains(loop.DefaultLoopPrompt, todoContractLine) {
 		t.Fatalf("L1 已漂移:找不到 todo 返回值契约行,A/B 失去意义")
 	}

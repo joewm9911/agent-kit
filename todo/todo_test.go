@@ -160,6 +160,26 @@ func TestTodoPlanSection(t *testing.T) {
 	}
 }
 
+// TestTodoPlanSectionAllDone:全部勾完是空壳收尾的高发时刻(生产实测:
+// 交付物在中间消息 → todo 勾完 → 终答"已输出/见上")。此刻 PlanSection 必须
+// 注入最高近因的交付指令:下一条消息=最终返回值、前文不可见、重写即交付。
+func TestTodoPlanSectionAllDone(t *testing.T) {
+	ctx := testCtx("a", "plandone")
+	writeTodos(t, ctx, `{"todos":[{"content":"查数","status":"completed"},{"content":"出结论","status":"completed"}]}`)
+	sec := td.PlanSection(ctx)
+	if !strings.Contains(sec, "全部完成") {
+		t.Fatalf("all-done header missing: %q", sec)
+	}
+	for _, must := range []string{"最终结果返回给调用方", "不会被返回", "这是交付,不是重复"} {
+		if !strings.Contains(sec, must) {
+			t.Fatalf("all-done delivery instruction missing %q in %q", must, sec)
+		}
+	}
+	if strings.Contains(sec, "全部完成前不要停") {
+		t.Fatal("stale in-progress header must not appear when everything is completed")
+	}
+}
+
 func TestTodoNudge(t *testing.T) {
 	ctx := testCtx("a", "nudge")
 	work := capability.New(capability.Meta{

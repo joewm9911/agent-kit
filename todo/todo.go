@@ -149,6 +149,7 @@ const todoWriteDesc = `Write/update the task plan list (whole-list replacement).
 - Mark an item completed the moment it is done; do not batch them up to mark at the end; if new tasks surface while working, add them to the list.
 - Never mark something completed that is not done: on test failure, partial completion, or being blocked, keep it in_progress and add a note item.
 - Call at most once per turn; whole-list replacement semantics: submit the complete list every time.
+- Calling this tool never concludes your turn. After your last todo_write you must still write a final message containing the complete result itself — only that final message reaches the caller; earlier messages do not.
 
 Examples:
 - "Analyze why sales are declining and give remediation suggestions" -> use it. Reason: you must check sales, check inventory, compare and attribute, and give suggestions — 3+ steps, and each step's output decides how the next is done.
@@ -238,6 +239,23 @@ func (t *Todo) PlanSection(ctx context.Context) string {
 				"先回答当前问题;之后用 todo_write 更新本计划:删除无关项(全部无关就提交空 todos),仍相关的继续推进。\n" +
 				render(list)
 		}
+	}
+	// 全部完成:这正是"空壳收尾"的高发时刻(生产实测:交付物在中间消息里
+	// 产出 → todo 勾完 → 终答只说"已输出/见上")。此刻由 harness 注入最高
+	// 近因的交付指令——远在头部的 L1 契约在这个时刻常被"避免重复"的局部
+	// 一致性压过,必须在事发现场重申"前文不可见、重写即交付"。
+	allDone := true
+	for _, item := range list {
+		if item.Status != "completed" {
+			allDone = false
+			break
+		}
+	}
+	if allDone {
+		return "# 任务计划:全部完成\n" + render(list) +
+			"\n计划只是记账。你的下一条消息将作为最终结果返回给调用方——此前所有消息都不会被返回。" +
+			"必须把完整结果本身(数据、结论、依据)写进这条消息;若结果在前文已经写过,原样完整地再写一遍——这是交付,不是重复。" +
+			"不要以「已完成」「已输出」「见上述方案」这类指涉语收尾。"
 	}
 	return "# 当前任务计划(完成一项立刻用 todo_write 更新;全部完成前不要停)\n" + render(list)
 }
