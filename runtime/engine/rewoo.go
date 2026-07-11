@@ -229,14 +229,14 @@ func (r *rewooRunner) execute(ctx context.Context, steps []rewooStep) (map[strin
 func (r *rewooRunner) runTool(ctx context.Context, name, argsJSON string) (string, error) {
 	c, ok := r.tools[name]
 	if !ok {
-		return fmt.Sprintf("(failed: plan referenced a nonexistent tool %q)", name), nil
+		return fmt.Sprintf("(执行失败:计划引用了不存在的工具 %q)", name), nil
 	}
 	out, err := capability.Invoke(ctx, c, argsJSON)
 	if err != nil {
 		if turnTerminal(err) {
 			return "", err
 		}
-		return fmt.Sprintf("(failed: %v)", err), nil
+		return fmt.Sprintf("(执行失败:%v)", err), nil
 	}
 	return out, nil
 }

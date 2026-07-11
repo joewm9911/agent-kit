@@ -34,12 +34,14 @@ func Register(provider string, f Factory) {
 func Build(ctx context.Context, provider string, conf map[string]any) (einomodel.ToolCallingChatModel, error) {
 	mu.RLock()
 	f, ok := factories[provider]
-	mu.RUnlock()
-	if !ok {
-		names := make([]string, 0, len(factories))
+	var names []string
+	if !ok { // 名字列表在锁内抄出:错误路径在锁外遍历注册表是数据竞争
 		for k := range factories {
 			names = append(names, k)
 		}
+	}
+	mu.RUnlock()
+	if !ok {
 		sort.Strings(names)
 		return nil, fmt.Errorf("model: unknown provider %q, registered: %v", provider, names)
 	}

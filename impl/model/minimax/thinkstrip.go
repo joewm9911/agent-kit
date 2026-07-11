@@ -182,7 +182,11 @@ func (st *thinkStreamState) holdover(m *schema.Message) []*schema.Message {
 // (drop 期的未闭合 think 已无法还原完整原文,不再吐回)。
 func (st *thinkStreamState) flush() *schema.Message {
 	if st.mode == 0 && st.buf.Len() > 0 && st.m != nil {
-		return withContent(st.m, st.buf.String())
+		out := withContent(st.m, st.buf.String())
+		// 帧上的非文本载荷(tool_calls)在 holdover 时已放行过,这里
+		// 再带一遍会让下游收到重复的 ToolCalls。
+		out.ToolCalls = nil
+		return out
 	}
 	return nil
 }

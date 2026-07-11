@@ -67,12 +67,14 @@ func Build(ctx context.Context, name string, asm *Assembly) (Runner, error) {
 	}
 	mu.RLock()
 	b, ok := builders[name]
+	var names []string
+	if !ok { // 名字列表在锁内抄出:错误路径在锁外遍历注册表是数据竞争
+		for k := range builders {
+			names = append(names, k)
+		}
+	}
 	mu.RUnlock()
 	if !ok {
-		names := make([]string, 0, len(builders))
-		for n := range builders {
-			names = append(names, n)
-		}
 		sort.Strings(names)
 		return nil, fmt.Errorf("engine: unknown engine %q, registered: %v", name, names)
 	}

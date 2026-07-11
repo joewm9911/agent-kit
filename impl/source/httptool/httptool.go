@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -121,12 +122,43 @@ func New(namespace string, cfg Config) (capability.Capability, error) {
 	}), nil
 }
 
+// maxRespBytes 是响应体读取上限:MaxRespLen 只截断给模型的文本,
+// 不限制先读进内存的量——恶意/故障端点的无限响应会打爆进程内存。
+const maxRespBytes = 1 << 20 // 1MB
+
 func invoke(ctx context.Context, client *http.Client, cfg Config, argsJSON string) (string, error) {
 	var args map[string]any
 	if argsJSON != "" {
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
+	}
+
+	// 声明即白名单:未声明的键透传等于给模型开了一个任意 query/body
+	// 注入面(可覆盖后端的隐藏参数)。以结果报错让模型自纠。
+	var unknown []string
+	for name := range args {
+		if _, declared := cfg.Params[name]; !declared {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Sprintf("invalid arguments: undeclared parameter(s) %s; this tool only accepts its declared parameters", strings.Join(unknown, ", ")), nil
+	}
+	// required 契约在调用侧兜底:模型漏传时空值拼进请求只会得到后端
+	// 难归因的 4xx,不如直接点名。
+	var missing []string
+	for name, p := range cfg.Params {
+		if p.Required {
+			if _, ok := args[name]; !ok {
+				missing = append(missing, name)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Sprintf("invalid arguments: missing required parameter(s) %s", strings.Join(missing, ", ")), nil
 	}
 
 	rawURL := cfg.URL
@@ -149,6 +181,13 @@ func invoke(ctx context.Context, client *http.Client, cfg Config, argsJSON strin
 			query.Set(name, fmt.Sprint(val))
 		default:
 			body[name] = val
+		}
+	}
+	// 占位符必须全部被消费:残留的 {name} 会按字面量发出去,后端报
+	// 难归因的 404/400(参数没声明 in: path、或声明遗漏都会走到这)。
+	if i := strings.IndexByte(rawURL, '{'); i >= 0 {
+		if j := strings.IndexByte(rawURL[i:], '}'); j > 0 {
+			return fmt.Sprintf("invalid arguments: URL placeholder %s was not filled (declare the parameter with in: path and pass it)", rawURL[i:i+j+1]), nil
 		}
 	}
 	if len(query) > 0 {
@@ -184,13 +223,16 @@ func invoke(ctx context.Context, client *http.Client, cfg Config, argsJSON strin
 		return "", err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRespBytes))
 	if err != nil {
 		return "", err
 	}
 	out := string(data)
-	if cfg.MaxRespLen > 0 && len(out) > cfg.MaxRespLen {
-		out = out[:cfg.MaxRespLen] + "...(truncated)"
+	if cfg.MaxRespLen > 0 {
+		// 按 rune 截断:字节切会把多字节字符切碎成乱码。
+		if runes := []rune(out); len(runes) > cfg.MaxRespLen {
+			out = string(runes[:cfg.MaxRespLen]) + "...(truncated)"
+		}
 	}
 	if resp.StatusCode >= 400 {
 		// 返回错误详情而非 error:让模型看到响应体,自行决定重试或换参数。

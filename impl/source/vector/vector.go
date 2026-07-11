@@ -106,6 +106,10 @@ func newRetrieverCapability(ns, toolName, desc string, topK, maxDocLen int, r re
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil || args.Query == "" {
 			args.Query = argsJSON
 		}
+		// 空查询(""/"{}")做相似检索没有意义,兜底命中还会误导模型。
+		if q := strings.TrimSpace(args.Query); q == "" || q == "{}" {
+			return "invalid arguments: query is required", nil
+		}
 		var opts []retriever.Option
 		if topK > 0 {
 			opts = append(opts, retriever.WithTopK(topK))

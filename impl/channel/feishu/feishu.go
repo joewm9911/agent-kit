@@ -390,7 +390,33 @@ func encode(msg channel.Outbound) (msgType, content string) {
 		"elements": []any{map[string]any{"tag": "markdown", "content": msg.Text}},
 	}
 	b, _ := json.Marshal(card)
+	if len(b) > cardMaxBytes {
+		// 卡片超约 30KB 会被飞书整条拒收;流式 Update 场景意味着这条
+		// 消息永久无法再刷新。降级截断正文保住可达性。
+		text := msg.Text
+		for len(b) > cardMaxBytes && len(text) > 0 {
+			runes := []rune(text)
+			text = string(runes[:len(runes)/2])
+			card["elements"] = []any{map[string]any{"tag": "markdown", "content": text + "\n...(内容过长已截断)"}}
+			b, _ = json.Marshal(card)
+		}
+	}
 	return "interactive", string(b)
+}
+
+// cardMaxBytes 是飞书卡片载荷上限(官方约 30KB,留余量)。
+const cardMaxBytes = 28 << 10
+
+// clip 截断字符串到 n 字节内(按 rune 收口,避免切碎多字节字符)。
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	for len(runes) > 0 && len(string(runes)) > n {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "..."
 }
 
 func (f *Feishu) call(ctx context.Context, method, path string, payload, out any) error {
@@ -417,6 +443,11 @@ func (f *Feishu) call(ctx context.Context, method, path string, payload, out any
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 网关层错误(限频/服务不可用)body 常是空或 HTML,先于 JSON
+		// 解码报出 status,否则真因被 "bad response" 掩盖。
+		return fmt.Errorf("feishu: HTTP %d on %s: %s", resp.StatusCode, path, clip(string(data), 200))
 	}
 	var envelope struct {
 		Code int    `json:"code"`
@@ -464,7 +495,16 @@ func (f *Feishu) accessToken(ctx context.Context) (string, error) {
 	if out.Code != 0 {
 		return "", fmt.Errorf("feishu get token: %d %s", out.Code, out.Msg)
 	}
+	if out.Token == "" {
+		return "", fmt.Errorf("feishu get token: empty token in response")
+	}
+	// 提前 60s 过期防止边界竞争;响应 expire 异常(0/负/过小)时钳到
+	// 60s,否则算出过去时刻 = 每次请求都打令牌接口(限频事故)。
+	ttl := time.Duration(out.Expire-60) * time.Second
+	if ttl < 60*time.Second {
+		ttl = 60 * time.Second
+	}
 	f.token = out.Token
-	f.tokExpire = time.Now().Add(time.Duration(out.Expire-60) * time.Second)
+	f.tokExpire = time.Now().Add(ttl)
 	return f.token, nil
 }

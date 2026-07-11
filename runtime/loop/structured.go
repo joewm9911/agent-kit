@@ -9,6 +9,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/santhosh-tekuri/jsonschema/v5"
+
+	"github.com/joewm9911/agent-kit/runtime/engine"
 )
 
 // StructuredConfig 要求最终回答符合 JSON Schema(下游是程序时的刚需)。
@@ -50,7 +52,7 @@ func (e *StructuredEnforcer) Enforce(ctx context.Context, m model.ToolCallingCha
 	current := answer
 	var lastErr error
 	for i := 0; i <= e.maxRetries; i++ {
-		candidate := extractJSONBlock(current)
+		candidate := extractJSONBlock(engine.ExtractJSON(current))
 		if err := e.validate(candidate); err == nil {
 			return candidate, nil
 		} else {

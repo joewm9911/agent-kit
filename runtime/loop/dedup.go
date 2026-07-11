@@ -46,6 +46,12 @@ const dedupWarn = "\n\n[重复调用] 本次调用与上一次的参数完全相
 func DedupCalls(caps []capability.Capability) []capability.Capability {
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
+		if hasTag(c.Meta().Tags, capability.TagInteractive) {
+			// 交互类(ask_user 等)豁免:同一问题问两遍可以是有意的再
+			// 确认,回放旧答案等于替用户作答。
+			out = append(out, c)
+			continue
+		}
 		out = append(out, &deduped{inner: c})
 	}
 	return out

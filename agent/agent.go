@@ -196,9 +196,21 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	}
 	answer := out.Content
 	if a.structured != nil {
-		if answer, err = a.structured.Enforce(ctx, a.model, answer); err != nil {
-			return "", err
+		enforced, eerr := a.structured.Enforce(ctx, a.model, answer)
+		if eerr != nil {
+			// 与失败轮落痕政策一致:本轮工作(原始回答+执行记录)进会话,
+			// 下一轮可基于它修复格式,而不是整轮从零重来。
+			if a.store != nil {
+				turn := a.turnMessages(rec, input, answer)
+				turn = append(turn, schema.SystemMessage(fmt.Sprintf(
+					"[结构化输出失败] 上面的回答未能通过 schema 校验:%v。重试时修复格式即可,不要重做已完成的工作。", eerr)))
+				if aerr := a.store.Append(ctx, sessionID, turn...); aerr != nil {
+					slog.Warn("agent: append structured-failure record", "agent", a.name, "session", sessionID, "err", aerr)
+				}
+			}
+			return "", eerr
 		}
+		answer = enforced
 	}
 	if a.store != nil {
 		if err := a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...); err != nil {

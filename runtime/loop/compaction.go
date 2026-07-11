@@ -80,6 +80,7 @@ func clearOldToolResults(msgs []*schema.Message, over, keep int) []*schema.Messa
 		runes := []rune(m.Content)
 		if len(runes) <= over ||
 			strings.HasPrefix(m.Content, toolClearedPrefix) ||
+			strings.HasPrefix(m.Content, "[结果过长且消化失败") || // digest 失败指针:自带 read_result 取回指引,清掉反而断路
 			strings.Contains(m.Content, "[结果已消化") {
 			if out != nil {
 				out = append(out, m)

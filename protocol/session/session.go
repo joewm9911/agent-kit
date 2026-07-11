@@ -54,12 +54,14 @@ func New(typ string, conf map[string]any, window int) (Store, error) {
 	}
 	facMu.RLock()
 	f, ok := factories[typ]
-	facMu.RUnlock()
-	if !ok {
-		names := make([]string, 0, len(factories))
+	var names []string
+	if !ok { // 名字列表在锁内抄出:错误路径在锁外遍历注册表是数据竞争
 		for k := range factories {
 			names = append(names, k)
 		}
+	}
+	facMu.RUnlock()
+	if !ok {
 		sort.Strings(names)
 		return nil, fmt.Errorf("session: unknown store type %q; blank-import a backend (e.g. agent-kit/impl/session/inmemory) or agent-kit/std. registered: %v", typ, names)
 	}
