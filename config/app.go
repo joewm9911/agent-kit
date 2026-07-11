@@ -235,6 +235,9 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 	if err := installObservability(ac.Observability, logger); err != nil {
 		return nil, err
 	}
+	if err := ac.Profile.rejectLegacyKeys("app.yaml"); err != nil {
+		return nil, err
+	}
 	if err := rejectWorkDir(ac.WorkDirLegacy, "app.yaml"); err != nil {
 		return nil, err
 	}
@@ -390,6 +393,10 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	// 执行画像:agent 主循环 eff = app.merge(agent自己);也作为其
 	// namespace/component 的 base(五级链的 app+agent 两级)。
 	agentProfile := app.Profile.merge(as.Profile)
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	// 外部 skillpack 策略(app 级一份;namespace 的 use: 链接经 nsDeps 生效)
 	packOpts, err := app.Skillpacks.options()
@@ -400,14 +407,14 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 
 	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
 	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。
-	mounted := source.NewCatalog(maxRisk, nil)
+	mounted := source.NewCatalog(maxRisk, logger)
 	nsExports := newComponentExports() // 导出 component 注册表(本 agent 挂载序列共享)
 	for _, mnt := range as.Mounts {
 		nsCopy := mnt.NamespaceConfig // 按 agent 实例化,不共享装配产物
 		err := buildNamespace(ctx, &nsCopy, nsDeps{
 			exports: nsExports,
 			global:  mounted, prompts: prompts, defaultModel: defaultModel,
-			maxRisk:  maxRisk,
+			maxRisk: maxRisk, logger: logger,
 			base:     agentProfile,      // app.merge(agent);ns 自己在 buildNamespace 内并入
 			mount:    mnt.Override,      // per-mount 覆盖(最高优)
 			appModel: app.Profile.Model, // 判断 component 是否需专属 model
@@ -440,7 +447,7 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	if err != nil {
 		return nil, nil, err
 	}
-	a, err := buildAgent(ctx, &as.AgentConfig, agentProfile, caps, prompts, m, opts.Interactor, nil)
+	a, err := buildAgent(ctx, &as.AgentConfig, agentProfile, caps, prompts, m, opts.Interactor, logger)
 	if err != nil {
 		return nil, nil, err
 	}

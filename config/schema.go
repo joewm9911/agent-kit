@@ -53,7 +53,7 @@ type StoreInstance struct {
 	Kind   string         `yaml:"kind"` // session | memory | todo | result | suspend | budget | approval
 	Type   string         `yaml:"type"` // inmemory | file | redis | ...(各自后端注册表)
 	Config map[string]any `yaml:"config"`
-	TTL    loop.Duration  `yaml:"ttl"` // 保留时长(todo/result),0=不过期
+	TTL    loop.Duration  `yaml:"ttl"` // 保留时长(todo/result/approval/budget),0=不过期
 }
 
 // RetrieverInstance 是一个具名召回器实例声明;session.recall 用
@@ -441,6 +441,10 @@ type NamespaceSkill struct {
 	Params      map[string]capability.ParamDecl `yaml:"params"`
 	Steps       []engine.Step                   `yaml:"steps"`
 	Output      string                          `yaml:"output"`
+	// Engine 是编排形态:graph(DAG,可并行,缺省)| workflow(严格
+	// 顺序,禁 needs)。与 component 的同名字段同一词汇;skill 允许
+	// 缺省(graph)是因为 skill 只有编排一族,不存在循环/编排歧义。
+	Engine string `yaml:"engine"`
 	// From 集成一个外部 SKILL.md 技能包(github.com/...@ver |
 	// https://...zip | file:...);须显式 name,integrity/tools/context
 	// 见 SkillEntry 同名字段。与 steps/use 互斥。

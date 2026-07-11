@@ -155,7 +155,14 @@ func FromTool(ctx context.Context, t tool.BaseTool, ref Ref, risk Risk) (Capabil
 	if ref.Kind == "" {
 		ref.Kind = "tool"
 	}
-	meta := Meta{Ref: ref, Description: info.Desc, Params: info.ParamsOneOf, Risk: risk}
+	params := info.ParamsOneOf
+	if params == nil {
+		// 外部工具(MCP 等)合法无参:nil 若透传,New 会注入默认的
+		// {input: required} 假 schema——模型对无参工具硬造参数、被拒。
+		// 映射为 NoParams 哨兵,工具形态按厂商契约传 nil schema。
+		params = NoParams
+	}
+	meta := Meta{Ref: ref, Description: info.Desc, Params: params, Risk: risk}
 	return New(meta, func(ctx context.Context, argsJSON string) (string, error) {
 		return inv.InvokableRun(ctx, argsJSON)
 	}), nil

@@ -5,8 +5,11 @@
 package config
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 
@@ -71,13 +74,21 @@ func secretsProviderFor(raw []byte, path string) (secrets.Provider, error) {
 	return secrets.New(head.Secrets.Provider, head.Secrets.Config)
 }
 
-// expandParse 用给定 provider 展开占位符后解析 YAML。
+// expandParse 用给定 provider 展开占位符后解析 YAML。严格模式:未知
+// 字段直接报错——拼错的键(max_round、system_prompt)静默忽略等于配置
+// 没生效还不吱声,是全库审计里最大的一类静默吞配置。自由形态段
+// (config/engine_config/args 等)声明为 map 不受影响。
 func expandParse(raw []byte, sp secrets.Provider, path string, out any) error {
 	expanded, err := secrets.Expand(raw, sp)
 	if err != nil {
 		return fmt.Errorf("expand secrets in %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(expanded, out); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(expanded))
+	dec.KnownFields(true)
+	if err := dec.Decode(out); err != nil {
+		if errors.Is(err, io.EOF) { // 空文件按零值处理,与 Unmarshal 一致
+			return nil
+		}
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	return nil
@@ -106,7 +117,7 @@ type BuildOptions struct {
 }
 
 // Build 把声明组装为可运行的 App。装配顺序:观测 → 提示词 → 目录
-// (sources → skills → workflows)→ agents → gateway/channels。
+// (sources → skills)→ agents → gateway/channels。
 func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	logger := opts.Logger
 	if logger == nil {
@@ -281,6 +292,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 			return nil, err
 		} else if kv != nil {
 			dispatcher.EnableSuspend(kv)
+			app.Server.EnableSuspend(kv) // HTTP /messages 与 IM 共用同一挂起后端
 		}
 		for _, cc := range cfg.Channels {
 			ch, err := channel.New(cc.Type, cc.Name, cc.Config)
@@ -296,6 +308,12 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 				SessionMapping: cc.SessionMapping, ReplyMode: cc.ReplyMode,
 				Placeholder: cc.Placeholder,
 			}
+			// 面向用户文案覆盖(未知键 fail fast)。
+			texts, err := serving.NewTexts(cc.Texts)
+			if err != nil {
+				return nil, fmt.Errorf("channel %s: %w", cc.Name, err)
+			}
+			binding.Texts = texts
 			// 按名解析装饰器/进度订阅(代码注册、配置启用,查无 fail fast)。
 			if cc.Decorator != "" {
 				dec, err := serving.LookupDecorator(cc.Decorator)

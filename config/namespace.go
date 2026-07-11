@@ -320,7 +320,17 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			if len(steps) > 0 {
 				return fmt.Errorf("namespace %s: skill %s: use and steps are mutually exclusive", ns.Name, sc.Name)
 			}
+			if sc.Engine != "" {
+				return fmt.Errorf("namespace %s: skill %s: engine only pairs with steps (use is pure delegation)", ns.Name, sc.Name)
+			}
 			steps = []engine.Step{{Name: "main", Use: sc.Use}}
+		}
+		eng := sc.Engine
+		if eng == "" {
+			eng = "graph" // skill 只有编排一族,缺省 DAG 全形态
+		}
+		if err := validateStepsEngine(eng, steps); err != nil {
+			return fmt.Errorf("namespace %s: skill %s: %w", ns.Name, sc.Name, err)
 		}
 		resolver := stepResolver(ns.Name, local, comps, imports, deps.exports, deps.global, deps.defaultModel)
 		steps, err := resolveStepArgs(ctx, steps, deps.prompts)
@@ -429,18 +439,11 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 	if !cc.Prompt.IsZero() || len(cc.Tools) > 0 || cc.EngineConfig != nil || cc.Loop.MaxSteps != nil || cc.Todo {
 		return nil, fmt.Errorf("steps is mutually exclusive with prompt/tools/engine_config/max_steps/todo (the orchestration family has no brain; the plan is the steps themselves)")
 	}
-	switch cc.Engine {
-	case "graph":
-	case "workflow": // 顺序简化形态:只允许缺省的"依赖上一步"链
-		for _, s := range cc.Steps {
-			if s.Needs != nil {
-				return nil, fmt.Errorf("step %q: workflow is the simplified sequential form and does not support needs (for a DAG use engine: graph)", s.Name)
-			}
-		}
-	case "":
+	if cc.Engine == "" {
 		return nil, fmt.Errorf("engine must be declared explicitly: graph (DAG, can run in parallel) | workflow (strictly sequential)—the execution shape is the fact a config reader most needs to see at a glance")
-	default:
-		return nil, fmt.Errorf("steps can only pair with engine: graph|workflow, got %q", cc.Engine)
+	}
+	if err := validateStepsEngine(cc.Engine, cc.Steps); err != nil {
+		return nil, err
 	}
 	resolver := stepResolver(nsName, local, comps, imports, deps.exports, deps.global, deps.defaultModel)
 	steps, err := resolveStepArgs(ctx, cc.Steps, deps.prompts)
@@ -453,6 +456,23 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 		Steps:  applyStepDefaults(steps, 0, 0, eff.stepTimeout(), eff.stepRetry()),
 		Output: cc.Output,
 	}, nsName, resolver)
+}
+
+// validateStepsEngine 校验编排形态词汇(component 与 ns skill 共用):
+// graph 是 DAG 全形态;workflow 是顺序简化形态,禁显式 needs。
+func validateStepsEngine(eng string, steps []engine.Step) error {
+	switch eng {
+	case "graph":
+	case "workflow":
+		for _, s := range steps {
+			if s.Needs != nil {
+				return fmt.Errorf("step %q: workflow is the simplified sequential form and does not support needs (for a DAG use engine: graph)", s.Name)
+			}
+		}
+	default:
+		return fmt.Errorf("steps can only pair with engine: graph|workflow, got %q", eng)
+	}
+	return nil
 }
 
 // resolveRef 是工具面与编排步共用的单引用解析内核(#6 合流)。同一套

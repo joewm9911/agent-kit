@@ -78,6 +78,7 @@ func (r *directRunner) Generate(ctx context.Context, msgs []*schema.Message) (*s
 
 	// 并行执行本轮全部工具调用,结果按声明顺序回填
 	results := make([]*schema.Message, len(first.ToolCalls))
+	terminals := make([]error, len(first.ToolCalls))
 	var wg sync.WaitGroup
 	for i, call := range first.ToolCalls {
 		wg.Add(1)
@@ -90,7 +91,13 @@ func (r *directRunner) Generate(ctx context.Context, msgs []*schema.Message) (*s
 			}
 			out, err := inv.InvokableRun(ctx, call.Function.Arguments)
 			if err != nil {
-				// 以结果回传错误,让收尾调用能向上说明,不中断
+				// 轮次终止级(挂起/中断/预算硬停)必须穿透,不能压成结果
+				// 字符串——否则 direct 组件内的 ask_user 挂起被吞,终答照跑。
+				if turnTerminal(err) {
+					terminals[i] = err
+					return
+				}
+				// 其余以结果回传错误,让收尾调用能向上说明,不中断
 				results[i] = schema.ToolMessage(fmt.Sprintf("tool execution failed: %v", err), call.ID)
 				return
 			}
@@ -98,6 +105,11 @@ func (r *directRunner) Generate(ctx context.Context, msgs []*schema.Message) (*s
 		}(i, call)
 	}
 	wg.Wait()
+	for _, terr := range terminals {
+		if terr != nil {
+			return nil, terr
+		}
+	}
 
 	// 收尾:无工具的最终调用,强制给出结果(不给继续调用的机会)
 	final := append(append(msgs, first), results...)

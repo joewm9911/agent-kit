@@ -149,43 +149,49 @@ func (g *gated) run(ctx context.Context, argsJSON string, exec func(ctx context.
 		Arguments:   argsJSON,
 	}
 
-	// 弹窗串行化 + 锁内重查:模型并行发起一批同能力调用时,全部 goroutine
-	// 会在任何弹窗被回答之前越过上面的 recall 检查——若不在锁内重查,
-	// 用户第一次"总是允许/拒绝"救不了已排队的其余弹窗(实测 11 连弹)。
-	if st != nil {
-		st.promptSerialize()
-		defer st.promptRelease()
-		if allowed, ok := st.recall(ctx, meta.Ref.Key()); ok {
-			if allowed {
-				return exec(ctx)
+	// 决策阶段与执行阶段分离:锁(弹窗串行化 + 锁内重查)只罩决策——
+	// 模型并行发起一批同能力调用时,全部 goroutine 会在任何弹窗被回答之前
+	// 越过外层 recall 检查,锁内重查让用户第一次"总是允许"救下已排队的
+	// 其余弹窗(实测 11 连弹)。执行必须在锁外:mutating skill 的内层工具
+	// 再触同一 ApprovalState 时,锁跨执行 = 自死锁;即使不嵌套,一个长工具
+	// 也会把全会话的审批串行在它后面。
+	allowed, err := func() (bool, error) {
+		if st != nil {
+			st.promptSerialize()
+			defer st.promptRelease()
+			if a, ok := st.recall(ctx, meta.Ref.Key()); ok {
+				return a, nil
 			}
-			return deniedResult(ctx, meta.Ref.Name), nil
 		}
-	}
-
-	// 支持决策记忆的通道:多出"总是允许/拒绝"档
-	if di, ok := it.(DecisionInteractor); ok && st != nil {
-		d, err := di.ApproveDecision(ctx, req)
-		if err != nil {
-			return fmt.Sprintf("操作未执行:批准流程失败(%v)。", err), nil
+		// 支持决策记忆的通道:多出"总是允许/拒绝"档
+		if di, ok := it.(DecisionInteractor); ok && st != nil {
+			d, derr := di.ApproveDecision(ctx, req)
+			if derr != nil {
+				return false, derr
+			}
+			switch d {
+			case DecisionAlwaysAllow:
+				st.memorize(ctx, meta.Ref.Key(), true)
+				return true, nil
+			case DecisionAllow:
+				return true, nil
+			case DecisionAlwaysDeny:
+				st.memorize(ctx, meta.Ref.Key(), false)
+			}
+			return false, nil
 		}
-		switch d {
-		case DecisionAlwaysAllow:
-			st.memorize(ctx, meta.Ref.Key(), true)
-			return exec(ctx)
-		case DecisionAllow:
-			return exec(ctx)
-		case DecisionAlwaysDeny:
-			st.memorize(ctx, meta.Ref.Key(), false)
-		}
-		return deniedResult(ctx, meta.Ref.Name), nil
-	}
-
-	ok, err := it.Approve(ctx, req)
+		return it.Approve(ctx, req)
+	}()
 	if err != nil {
+		// 轮次终止级错误(挂起 ErrSuspended/中断/预算硬停)必须穿透——
+		// 转成结果字符串会让挂起模式下的审批"问了却不挂起":用户收到审批
+		// 问题,轮次却没挂起,后续的"同意"变成一条全新输入(功能性坏死)。
+		if turnTerminalErr(err) {
+			return "", err
+		}
 		return fmt.Sprintf("操作未执行:批准流程失败(%v)。", err), nil
 	}
-	if !ok {
+	if !allowed {
 		return deniedResult(ctx, meta.Ref.Name), nil
 	}
 	return exec(ctx)

@@ -34,6 +34,6 @@ skills:
       完整竞品报告时调用;只是随口问竞品的某个点,不要调用。
     params:
       company: {type: string, desc: 竞品公司名, required: true}
-      focus:   {type: string, desc: 额外关注的方面,可选}
+      focus:   {type: string, desc: "额外关注的方面,可选"}
     steps:
       - {name: report, use: "components/competitor_report", args: '{"company":"{company}","focus":"{focus}"}'}

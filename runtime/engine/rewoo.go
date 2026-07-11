@@ -166,8 +166,10 @@ func (r *rewooRunner) execute(ctx context.Context, steps []rewooStep) (map[strin
 
 	evidence := make(map[string]string, len(steps))
 	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		termOnce sync.Once
+		termErr  error
 	)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -183,7 +185,11 @@ func (r *rewooRunner) execute(ctx context.Context, steps []rewooStep) (map[strin
 		args := substituteRefs(s.Args, evidence)
 		mu.Unlock()
 
-		result := r.runTool(ctx, s.Tool, args)
+		result, terr := r.runTool(ctx, s.Tool, args)
+		if terr != nil { // 轮次终止级:中断整个计划并上抛
+			termOnce.Do(func() { termErr = terr; cancel() })
+			return
+		}
 		mu.Lock()
 		evidence[s.ID] = result
 		var next []int
@@ -211,20 +217,28 @@ func (r *rewooRunner) execute(ctx context.Context, steps []rewooStep) (map[strin
 		go exec(i)
 	}
 	wg.Wait()
+	if termErr != nil {
+		return nil, termErr
+	}
 	return evidence, nil
 }
 
 // runTool 执行单个工具;失败以证据回传(求解器如实反映),不中断计划。
-func (r *rewooRunner) runTool(ctx context.Context, name, argsJSON string) string {
+// 轮次终止级错误(挂起/中断/预算硬停)例外:必须作为错误穿透,否则被
+// 字符串化进证据后求解器照跑,挂起信号丢失。
+func (r *rewooRunner) runTool(ctx context.Context, name, argsJSON string) (string, error) {
 	c, ok := r.tools[name]
 	if !ok {
-		return fmt.Sprintf("(failed: plan referenced a nonexistent tool %q)", name)
+		return fmt.Sprintf("(failed: plan referenced a nonexistent tool %q)", name), nil
 	}
 	out, err := capability.Invoke(ctx, c, argsJSON)
 	if err != nil {
-		return fmt.Sprintf("(failed: %v)", err)
+		if turnTerminal(err) {
+			return "", err
+		}
+		return fmt.Sprintf("(failed: %v)", err), nil
 	}
-	return out
+	return out, nil
 }
 
 // collectRefs 收集 args 各层字符串值里的 {eN} 引用。

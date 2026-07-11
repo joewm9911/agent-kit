@@ -55,6 +55,9 @@ func Register(scheme string, r Resolver) {
 	if scheme == "file" || scheme == "embed" {
 		panic(fmt.Sprintf("resource: scheme %q is built in", scheme))
 	}
+	if s, _ := splitScheme(scheme + ":x"); s != scheme {
+		panic(fmt.Sprintf("resource: scheme %q is not routable (must match [a-z][a-z0-9+.-]*, length >= 2)", scheme))
+	}
 	if _, dup := resolvers[scheme]; dup {
 		panic(fmt.Sprintf("resource: scheme %q registered more than once", scheme))
 	}
@@ -135,8 +138,15 @@ func splitScheme(ref string) (scheme, rest string) {
 		return "", ref
 	}
 	s := ref[:i]
-	for _, c := range s {
-		if c < 'a' || c > 'z' {
+	// RFC 3986 scheme 字符集:首字符字母,后续可含数字/+/-/.。
+	// 只收小写纯字母会让 Register("s3")/("oci-v2") 收下却永远路由不到
+	// (数字/连字符命中 file 分支,报困惑的 file-not-found)。
+	// 首字符仍要求小写字母(排除 Windows 盘符 C:\ 与相对路径)。
+	if s[0] < 'a' || s[0] > 'z' {
+		return "", ref
+	}
+	for _, c := range s[1:] {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '+' && c != '-' && c != '.' {
 			return "", ref
 		}
 	}
