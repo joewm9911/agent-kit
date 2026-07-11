@@ -307,6 +307,13 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 			if !ok {
 				return nil, fmt.Errorf("channel %s: unknown agent %q", cc.Name, cc.Agent)
 			}
+			for i := range cfg.Agents {
+				if cfg.Agents[i].Name == cc.Agent && cfg.Agents[i].Session.Window <= 0 {
+					// IM 场景没有会话记忆 = 每条消息都失忆,几乎必是漏配。
+					logger.Warn("channel binds an agent with session disabled (window=0); each message starts from scratch — set session.window if memory is expected",
+						"channel", cc.Name, "agent", cc.Agent)
+				}
+			}
 			binding := serving.Binding{
 				Channel: ch, Agent: target,
 				SessionMapping: cc.SessionMapping, ReplyMode: cc.ReplyMode,

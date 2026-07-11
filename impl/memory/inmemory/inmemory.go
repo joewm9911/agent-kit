@@ -5,7 +5,6 @@ package inmemory
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	"github.com/joewm9911/agent-kit/protocol/memory"
@@ -39,19 +38,18 @@ func (m *store) Put(_ context.Context, scope, key, value string) error {
 	return nil
 }
 
-func (m *store) Search(_ context.Context, scopes []string, query string, limit int) (map[string]string, error) {
+// Search 按 scopes 顺序检索(先 user 后 shared 即优先级),scope 内按
+// 相关度降序;满 limit 截断——先给的 scope 挤掉后给的,不做跨 scope 覆盖。
+func (m *store) Search(_ context.Context, scopes []string, query string, limit int) ([]memory.Hit, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := map[string]string{}
-	q := strings.ToLower(query)
+	var out []memory.Hit
 	for _, scope := range scopes {
-		for k, v := range m.buckets[scope] {
-			if strings.Contains(strings.ToLower(k), q) || strings.Contains(strings.ToLower(v), q) {
-				out[k] = v
-				if limit > 0 && len(out) >= limit {
-					return out, nil
-				}
-			}
+		hits := memory.ScanBucket(scope, m.buckets[scope], query)
+		memory.SortHits(hits)
+		out = append(out, hits...)
+		if limit > 0 && len(out) >= limit {
+			return out[:limit], nil
 		}
 	}
 	return out, nil

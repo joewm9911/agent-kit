@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
 )
 
 func init() {
@@ -72,8 +73,16 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 		// 收尾(react 内部消费的是流副本,不影响对外流式输出)。
 		StreamToolCallChecker: streamToolCallChecker,
 	}
+	// 步数收口引导(镜像预算 nearLimit):步数耗尽是硬失败,临近上限时
+	// 注入"就地收口"引导,把"跑满炸轮"变成"带着已有结果收口"。
+	nudge := stepNudgeModifier(rounds)
 	if asm.Modifier != nil {
-		cfg.MessageModifier = react.MessageModifier(asm.Modifier)
+		mod := asm.Modifier
+		cfg.MessageModifier = react.MessageModifier(func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
+			return nudge(ctx, mod(ctx, msgs))
+		})
+	} else {
+		cfg.MessageModifier = react.MessageModifier(nudge)
 	}
 	if asm.Rewriter != nil {
 		cfg.MessageRewriter = react.MessageModifier(asm.Rewriter)
@@ -89,6 +98,32 @@ func BuildReAct(ctx context.Context, asm *Assembly) (Runner, error) {
 		return nil, err
 	}
 	return &reactRunner{ag: ag}, nil
+}
+
+// stepNudgeNotice 是步数临近耗尽时注入的收口引导。
+const stepNudgeNotice = "[步数提醒] 工具调用轮数即将耗尽。请基于已获得的信息立即收口给出最终回答;若确有未完成项,如实说明进展与剩余工作,不要再发起新的探索。"
+
+// stepNudgeModifier 按轮计数(TurnState,执行域隔离),进入最后一轮
+// 工具机会时注入收口引导。rounds 太小(<3)不注入——引导本身也占注意力。
+// 计数按 Modifier 调用近似轮数,评审重试会略微提前触发,方向无害。
+func stepNudgeModifier(rounds int) func(context.Context, []*schema.Message) []*schema.Message {
+	return func(ctx context.Context, msgs []*schema.Message) []*schema.Message {
+		bag := runctx.TurnState(ctx)
+		if bag == nil || rounds < 3 {
+			return msgs
+		}
+		key := "react-round#" + runctx.Scope(ctx)
+		n := 0
+		if v, ok := bag.Load(key); ok {
+			n, _ = v.(int)
+		}
+		n++
+		bag.Store(key, n)
+		if n == rounds {
+			return append(msgs, schema.SystemMessage(stepNudgeNotice))
+		}
+		return msgs
+	}
 }
 
 // turnTerminal 判定错误是否"轮次终止级"——必须穿透工具错误兜底:

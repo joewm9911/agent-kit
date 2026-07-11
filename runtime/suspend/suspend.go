@@ -120,6 +120,27 @@ func (j *Journal) recordPending(ctx context.Context, id, question string) error 
 }
 
 // put 是"直接写入"的 KV 便捷封装(挂起日志无并发改写,不需读改写)。
+// WithTTL 给挂起后端套默认过期:调用方传 ttl<=0 的写入按 d 过期。
+// 挂起记录天然该有寿命——无人应答的审批/提问在后端永久堆积,只涨不清。
+func WithTTL(kv store.KV, d time.Duration) store.KV {
+	if d <= 0 {
+		return kv
+	}
+	return &ttlKV{KV: kv, d: d}
+}
+
+type ttlKV struct {
+	store.KV
+	d time.Duration
+}
+
+func (t *ttlKV) Update(ctx context.Context, key string, mutate func([]byte, bool) ([]byte, error), ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = t.d
+	}
+	return t.KV.Update(ctx, key, mutate, ttl)
+}
+
 func put(ctx context.Context, kv store.KV, key string, value []byte) error {
 	return kv.Update(ctx, key, func([]byte, bool) ([]byte, error) {
 		return value, nil

@@ -116,23 +116,31 @@ func (d *Dispatcher) Handler(b Binding) channel.InboundHandler {
 			}
 			return
 		}
+		d.mu.Unlock()
 		// 挂起模式:会话有持久化的挂起轮次 → 这条消息是答案,
 		// 记入交互日志并以原输入重放该轮(进程重启后同样走这里)。
+		// 在锁外做:认领是 KV 上的原子操作(TakePendingTurn),不需要
+		// dispatcher 锁;redis 抖动时持锁 I/O 会冻结全部会话的分发。
 		if d.suspendKV != nil {
 			if rec, resumed, err := resumePending(ctx, d.suspendKV, key, in.Text); err != nil {
 				// 认领失败已回滚挂起记录,用户重发答案还接得上。
-				d.mu.Unlock()
 				d.logger.Error("resume pending failed", slog.String("session", key), slog.String("err", err.Error()))
 				return
 			} else if resumed {
-				d.mu.Unlock()
-				d.enqueue(ctx, b, channel.Inbound{Conv: in.Conv, Text: rec.Input}, rec.TurnID)
+				if !d.enqueue(ctx, b, channel.Inbound{Conv: in.Conv, Text: rec.Input}, rec.TurnID) {
+					// 队满回滚:认领成功但没排进队,挂起记录必须放回去,
+					// 否则这轮永久丢失(用户答案已记,重发即可再触发)。
+					if err := suspendSave(ctx, d.suspendKV, key, rec); err != nil {
+						d.logger.Error("rollback pending turn failed", slog.String("session", key), slog.String("err", err.Error()))
+					}
+				}
 				return
 			}
 		}
 		// 运行进行中:控制类消息旁路串行队列,即时生效——
 		// "停止"不能排在它要停止的任务后面。文本指令与 HTTP 的
 		// /control 端点是同一 Agent.Interrupt/Steer 机制的两个传输入口。
+		d.mu.Lock()
 		if d.running[key] {
 			if isInterruptText(in.Text) {
 				d.mu.Unlock()
@@ -152,8 +160,9 @@ func (d *Dispatcher) Handler(b Binding) channel.InboundHandler {
 	}
 }
 
-// enqueue 把一轮任务放进会话的串行队列。turnID 非空表示恢复的轮次。
-func (d *Dispatcher) enqueue(ctx context.Context, b Binding, in channel.Inbound, turnID string) {
+// enqueue 把一轮任务放进会话的串行队列;队满返回 false(调用方决定
+// 是否回滚认领)。turnID 非空表示恢复的轮次。
+func (d *Dispatcher) enqueue(ctx context.Context, b Binding, in channel.Inbound, turnID string) bool {
 	key := d.sessionKey(b, in.Conv)
 	d.mu.Lock()
 	q := d.workers[key]
@@ -166,8 +175,10 @@ func (d *Dispatcher) enqueue(ctx context.Context, b Binding, in channel.Inbound,
 
 	select {
 	case q <- job{b: b, in: in, turnID: turnID, origin: ctx}:
+		return true
 	default:
 		_, _ = b.Channel.Send(ctx, in.Conv, channel.Outbound{Text: b.texts().Overloaded})
+		return false
 	}
 }
 

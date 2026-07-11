@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	einomodel "github.com/cloudwego/eino/components/model"
@@ -129,11 +128,17 @@ func suspendKV(sc SuspendConfig, stores []StoreInstance) (store.KV, error) {
 		}
 		ref, bare = "file", map[string]any{"dir": sc.Dir}
 	}
-	kv, _, err := resolveKV(ref, bare, stores, "suspend")
+	kv, ttl, err := resolveKV(ref, bare, stores, "suspend")
 	if err != nil {
 		return nil, fmt.Errorf("suspend: %w", err)
 	}
-	return kv, nil
+	if ttl <= 0 {
+		ttl = sc.TTL.Std()
+	}
+	if ttl <= 0 {
+		ttl = 168 * time.Hour // 挂起记录默认 7 天过期,不永久堆积
+	}
+	return suspend.WithTTL(kv, ttl), nil
 }
 
 // componentTodo 为组件级调用清单构造一个进程内后端并包成 Todo:组件清单
@@ -419,31 +424,35 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 // 会话历史来自 agent 本轮已加载的全量记录(ctx 共享,一轮只读一次
 // store);同轮多次模型调用的查询不变,结果按轮 memo,不重复检索。
 func autoRecall(kv memory.Store, scope memory.ScopeConfig, retr session.Retriever, window, sessK, kvK int) func(ctx context.Context) []string {
-	var mu sync.Mutex
-	memo := map[string]struct {
+	type memoEntry struct {
 		input  string
 		result []string
-	}{}
+	}
+	const memoKey = "recall-memo"
 
 	return func(ctx context.Context) []string {
 		query := runctx.Input(ctx)
 		if query == "" {
 			return nil
 		}
-		sess := runctx.Session(ctx)
-		mu.Lock()
-		if m, ok := memo[sess]; ok && m.input == query {
-			mu.Unlock()
-			return m.result
+		// memo 挂轮级状态:同轮多次模型调用复用,跨轮自然失效——进程级
+		// map 会让下一轮同字面输入拿到旧召回(期间 memory_save 的新记忆
+		// 凭空消失),且无界增长。
+		bag := runctx.TurnState(ctx)
+		if bag != nil {
+			if m, ok := bag.Load(memoKey); ok {
+				if e, ok := m.(memoEntry); ok && e.input == query {
+					return e.result
+				}
+			}
 		}
-		mu.Unlock()
 
 		var out []string
 		// 长期记忆命中(kvK 路)
 		if kv != nil && kvK > 0 {
 			if hits, err := kv.Search(ctx, scope.ReadScopes(ctx), query, kvK); err == nil {
-				for k, v := range hits {
-					out = append(out, fmt.Sprintf("Long-term memory %s: %s", k, v))
+				for _, h := range hits {
+					out = append(out, fmt.Sprintf("Long-term memory %s: %s", h.Key, h.Value))
 				}
 			} else {
 				// 后端读错误 ≠ 无记忆:静默会让"记忆凭空消失"无从排查。
@@ -463,18 +472,9 @@ func autoRecall(kv memory.Store, scope memory.ScopeConfig, retr session.Retrieve
 			}
 		}
 
-		mu.Lock()
-		if len(memo) > 1024 { // 粗粒度防泄漏
-			memo = map[string]struct {
-				input  string
-				result []string
-			}{}
+		if bag != nil {
+			bag.Store(memoKey, memoEntry{input: query, result: out})
 		}
-		memo[sess] = struct {
-			input  string
-			result []string
-		}{query, out}
-		mu.Unlock()
 		return out
 	}
 }

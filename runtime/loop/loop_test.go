@@ -88,7 +88,8 @@ func TestApprovalGate(t *testing.T) {
 		Risk: capability.RiskMutating,
 	}, func(ctx context.Context, in string) (string, error) { return "executed", nil })
 	ro := capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: "read"},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: "read"},
+		Risk: capability.RiskReadonly, // 未声明现按 mutating 保守对待,只读需显式
 	}, func(ctx context.Context, in string) (string, error) { return "read-ok", nil })
 
 	gatedCaps := GateApproval([]capability.Capability{mut, ro}, ApprovalInteractive)

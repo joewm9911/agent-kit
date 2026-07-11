@@ -48,18 +48,32 @@ import (
 // agent 未声明整块时回落 app(B/C 类是 app→agent 整块降级,不下沉 component)。
 // 具名存储实例:app 层作为共享池,agent 私有实例前置(名字冲突 agent 优先)。
 func inheritAppDefaults(app *AppConfig, ac *AgentConfig) {
+	// 整块继承是刻意语义(agent 声明了块 = 接管整块),但也是最容易踩的
+	// 坑:agent 只想改 session 的一个字段,app 的 window 就整块蒸发。
+	// 双方都声明时给一条装配日志,把静默行为变成可见事实。
+	warnOverride := func(block string, agentHas, appHas bool) {
+		if agentHas && appHas {
+			slog.Info("agent declares its own block; app-level defaults for it are fully replaced (whole-block semantics, no field merge)",
+				"agent", ac.Name, "block", block)
+		}
+	}
+	warnOverride("session", !ac.Session.isZero(), !app.Session.isZero())
 	if ac.Session.isZero() {
 		ac.Session = app.Session
 	}
+	warnOverride("memory", !ac.Memory.isZero(), !app.Memory.isZero())
 	if ac.Memory.isZero() {
 		ac.Memory = app.Memory
 	}
+	warnOverride("todo", !ac.Todo.isZero(), !app.Todo.isZero())
 	if ac.Todo.isZero() {
 		ac.Todo = app.Todo
 	}
+	warnOverride("approval", !ac.Approval.isZero(), !app.Approval.isZero())
 	if ac.Approval.isZero() {
 		ac.Approval = app.Approval
 	}
+	warnOverride("budget", !ac.Budget.isZero(), !app.Budget.isZero())
 	if ac.Budget.isZero() {
 		ac.Budget = app.Budget
 	}
@@ -346,6 +360,14 @@ func BuildApp(ctx context.Context, spec *AppSpec, opts BuildOptions) (*App, erro
 			target, ok := app.Agents[cc.Agent]
 			if !ok {
 				return nil, fmt.Errorf("channel %s: unknown agent %q", cc.Name, cc.Agent)
+			}
+			for _, as := range spec.Agents {
+				if as.Name == cc.Agent && as.Session.isZero() && ac.Session.Window <= 0 ||
+					as.Name == cc.Agent && !as.Session.isZero() && as.Session.Window <= 0 {
+					// IM 场景没有会话记忆 = 每条消息都失忆,几乎必是漏配。
+					logger.Warn("channel binds an agent with session disabled (window=0); each message starts from scratch — set session.window if memory is expected",
+						"channel", cc.Name, "agent", cc.Agent)
+				}
 			}
 			binding := serving.Binding{
 				Channel: ch, Agent: target,

@@ -25,3 +25,14 @@ func singleAsStream(out *schema.Message, err error) (*schema.StreamReader[*schem
 	sw.Close()
 	return sr, nil
 }
+
+// stepRoundsDefault 是执行器子循环轮数的缺省:优先取执行画像的
+// loop.max_rounds(asm.MaxSteps)——组件上配了它却只对 react 生效、
+// 对 plan-execute/reflection 静默无效,是审计 P2-2 抓的一词两义坑;
+// engine_config.step_max_rounds 显式声明时仍最优先。
+func stepRoundsDefault(asm *Assembly) int {
+	if asm.MaxSteps > 0 {
+		return asm.MaxSteps
+	}
+	return 10
+}

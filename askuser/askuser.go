@@ -18,6 +18,7 @@ func New() capability.Capability {
 		Description: "Ask the user one question and wait for the answer. Use only when required information is missing and cannot be obtained through other tools; ask only one question at a time.",
 		Params:      capability.SingleParam("question", "The question to ask the user, concise and specific"),
 		Tags:        []string{capability.TagInteractive}, // 等人回复不占工具超时
+		Risk:        capability.RiskReadonly,             // 只向用户提问,不动外部世界
 	}
 	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
 		question := capability.ParseSingle(argsJSON, "question")

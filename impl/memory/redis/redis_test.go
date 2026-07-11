@@ -43,7 +43,7 @@ func TestRedisMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hits["预算"] != "上限 100 万" {
+	if len(hits) == 0 || hits[0].Key != "预算" || hits[0].Value != "上限 100 万" || hits[0].Scope != memory.UserScope("u1") {
 		t.Fatalf("u1 预算 miss/串桶: %v", hits)
 	}
 	// scope 边界:只读 shared 时读不到用户桶
@@ -55,7 +55,7 @@ func TestRedisMemory(t *testing.T) {
 	// 跨副本:全新客户端接同一 redis,续读同一记忆
 	kv2, _ := memory.New("redis", conf)
 	again, _ := kv2.Search(ctx, []string{memory.UserScope("u1")}, "100 万", 5)
-	if again["预算"] != "上限 100 万" {
+	if len(again) == 0 || again[0].Value != "上限 100 万" {
 		t.Fatalf("跨副本读长期记忆失败: %v", again)
 	}
 
@@ -83,7 +83,7 @@ func TestMemoryThirdPartyClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hits["预算"] != "上限 100 万" || len(hits) != 1 {
+	if len(hits) != 1 || hits[0].Key != "预算" || hits[0].Value != "上限 100 万" {
 		t.Fatalf("scope 检索错: %v", hits)
 	}
 }

@@ -36,9 +36,85 @@ const SharedScope = "shared"
 // Store 是长期记忆的最小契约。scope 是归属维度(user:<id> / shared /
 // session:<id>);Search 在给定的一组 scope 内检索。实现可以是关键词
 // 匹配,也可以是向量检索(scope → metadata filter)。
+//
+// Search 返回按相关度排好序的命中,scopes 顺序即优先级(先 user 后
+// shared:个人事实压过域共识,同键不同值时不丢失、不覆盖)。旧契约
+// map[string]string 三宗罪:无序(prompt cache 敌对)、跨 scope 同键
+// 覆盖(方向还反了,shared 压 user)、超 limit 时随机子集(eval 不可
+// 复现)——pre-1.0 硬切为 []Hit。
 type Store interface {
 	Put(ctx context.Context, scope, key, value string) error
-	Search(ctx context.Context, scopes []string, query string, limit int) (map[string]string, error)
+	Search(ctx context.Context, scopes []string, query string, limit int) ([]Hit, error)
+}
+
+// Hit 是一次检索命中。Score 只在同一后端内可比。
+type Hit struct {
+	Scope string
+	Key   string
+	Value string
+	Score float64
+}
+
+// ScanBucket 是关键词后端(inmemory/redis)共用的打分内核:查询分词后
+// 对 key/value 做子串命中(key 权重更高),再叠加字符 bigram Jaccard
+// 兜底(容错分词打不中的黏连中文)。返回 Score>0 的命中,未排序。
+func ScanBucket(scope string, bucket map[string]string, query string) []Hit {
+	tokens := strings.Fields(strings.ToLower(query))
+	qgrams := bigrams(query)
+	var hits []Hit
+	for k, v := range bucket {
+		lk, lv := strings.ToLower(k), strings.ToLower(v)
+		var score float64
+		for _, t := range tokens {
+			if strings.Contains(lk, t) {
+				score += 2
+			} else if strings.Contains(lv, t) {
+				score += 1
+			}
+		}
+		if j := jaccard(qgrams, bigrams(k+" "+v)); j > 0 {
+			score += j
+		}
+		if score > 0 {
+			hits = append(hits, Hit{Scope: scope, Key: k, Value: v, Score: score})
+		}
+	}
+	return hits
+}
+
+// SortHits 按 Score 降序、Key 升序稳定排序(确定序,eval 可复现)。
+func SortHits(hits []Hit) {
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		return hits[i].Key < hits[j].Key
+	})
+}
+
+func bigrams(s string) map[string]struct{} {
+	r := []rune(strings.ToLower(strings.Join(strings.Fields(s), "")))
+	out := map[string]struct{}{}
+	for i := 0; i+1 < len(r); i++ {
+		out[string(r[i:i+2])] = struct{}{}
+	}
+	return out
+}
+
+func jaccard(a, b map[string]struct{}) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	n := 0
+	for g := range a {
+		if _, ok := b[g]; ok {
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return float64(n) / float64(len(a)+len(b)-n)
 }
 
 // Factory 按配置构造长期记忆后端。
@@ -145,6 +221,7 @@ func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 	save := capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_save"},
 		Description: "Save a long-term memory. Call when the user states a preference, a fact, or information worth remembering across sessions.",
+		Risk:        capability.RiskReadonly, // 写的是 agent 自身记忆,不是外部世界;误存可覆盖,不过审批
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"key":   {Type: schema.String, Desc: "A short title for the memory (a noun phrase, for easy later retrieval)", Required: true},
 			"value": {Type: schema.String, Desc: "The memory content (self-contained, do not refer to earlier context)", Required: true},
@@ -168,6 +245,7 @@ func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 	search := capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "memory_search"},
 		Description: "Search long-term memory by keyword. Call first when an answer depends on the user's past preferences or prior facts.",
+		Risk:        capability.RiskReadonly,
 		Params:      capability.SingleParam("query", "Search keywords"),
 	}, func(ctx context.Context, argsJSON string) (string, error) {
 		query := capability.ParseSingle(argsJSON, "query")
@@ -179,8 +257,8 @@ func AsCapabilities(kv Store, scope ScopeConfig) []capability.Capability {
 			return "no memory found", nil
 		}
 		var sb strings.Builder
-		for k, v := range hits {
-			fmt.Fprintf(&sb, "- %s: %s\n", k, v)
+		for _, h := range hits {
+			fmt.Fprintf(&sb, "- %s: %s\n", h.Key, h.Value)
 		}
 		return sb.String(), nil
 	})

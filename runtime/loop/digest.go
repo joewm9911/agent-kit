@@ -271,6 +271,7 @@ func ReadResult() capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "read_result"},
 		Description: "分页读取被消化工具结果的原文。仅当摘要信息不足时使用,按 offset 逐页推进。",
+		Risk:        capability.RiskReadonly,
 		Params:      params,
 		Tags:        []string{TagRawResult}, // 自身分页输出不再消化
 	}

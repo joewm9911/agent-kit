@@ -22,7 +22,8 @@ import (
 // bigResultTool 返回固定大结果的工具,供 digest 路径测试。
 func bigResultTool(name, out string) capability.Capability {
 	return capability.New(capability.Meta{
-		Ref: capability.Ref{Kind: "tool", Domain: "t", Name: name},
+		Ref:  capability.Ref{Kind: "tool", Domain: "t", Name: name},
+		Risk: capability.RiskReadonly,
 	}, func(context.Context, string) (string, error) { return out, nil })
 }
 

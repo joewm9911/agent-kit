@@ -94,6 +94,7 @@ func newRetrieverCapability(ns, toolName, desc string, topK, maxDocLen int, r re
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: ns, Name: toolName},
 		Description: desc,
+		Risk:        capability.RiskReadonly, // 只读检索
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"query": {Type: schema.String, Desc: "检索查询语句", Required: true},
 		}),

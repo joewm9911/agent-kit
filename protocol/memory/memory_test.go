@@ -29,19 +29,16 @@ func (m *testStore) Put(_ context.Context, scope, key, value string) error {
 	return nil
 }
 
-func (m *testStore) Search(_ context.Context, scopes []string, query string, limit int) (map[string]string, error) {
+func (m *testStore) Search(_ context.Context, scopes []string, query string, limit int) ([]Hit, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := map[string]string{}
-	q := strings.ToLower(query)
+	var out []Hit
 	for _, scope := range scopes {
-		for k, v := range m.buckets[scope] {
-			if strings.Contains(strings.ToLower(k), q) || strings.Contains(strings.ToLower(v), q) {
-				out[k] = v
-				if limit > 0 && len(out) >= limit {
-					return out, nil
-				}
-			}
+		hits := ScanBucket(scope, m.buckets[scope], query)
+		SortHits(hits)
+		out = append(out, hits...)
+		if limit > 0 && len(out) >= limit {
+			return out[:limit], nil
 		}
 	}
 	return out, nil

@@ -271,6 +271,9 @@ type SuspendConfig struct {
 	Dir         string         `yaml:"dir"`
 	Store       string         `yaml:"store"`
 	StoreConfig map[string]any `yaml:"store_config"`
+	// TTL 是挂起记录(轮次/交互/效果日志)的过期时长,缺省 168h(7 天):
+	// 无人应答的挂起不该在后端永久堆积。具名 store 实例自带的 ttl 优先。
+	TTL loop.Duration `yaml:"ttl"`
 }
 
 // ObservabilityConfig 是观测配置。

@@ -177,6 +177,7 @@ func (t *Todo) Capabilities() []capability.Capability {
 	writeMeta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_write"},
 		Description: todoWriteDesc,
+		Risk:        capability.RiskReadonly, // 内部记账,不动外部世界
 		Params: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"todos": {
 				Type: schema.Array, Required: true, Desc: "The complete task list",
@@ -228,6 +229,7 @@ func (t *Todo) Capabilities() []capability.Capability {
 	readMeta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "todo_read"},
 		Description: "Read the current task plan list.",
+		Risk:        capability.RiskReadonly,
 		Params:      capability.NoParams, // 无参工具:空 schema 会被部分厂商 400
 	}
 	read := capability.New(readMeta, func(ctx context.Context, _ string) (string, error) {

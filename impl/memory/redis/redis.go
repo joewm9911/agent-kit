@@ -6,7 +6,6 @@ package redis
 
 import (
 	"context"
-	"strings"
 
 	"github.com/joewm9911/agent-kit/impl/utils/redisconn"
 	"github.com/joewm9911/agent-kit/protocol/memory"
@@ -33,23 +32,21 @@ func (m *memStore) Put(ctx context.Context, scope, key, value string) error {
 	return m.rdb.HSet(ctx, m.key(scope), key, value)
 }
 
-// Search 在给定 scopes 内做关键词匹配,命中满 limit 即返回。多个 scope 出现
-// 同名 key 时,后遍历的 scope 覆盖(对齐 inmemory 的 out[k]=v 语义)。
-func (m *memStore) Search(ctx context.Context, scopes []string, query string, limit int) (map[string]string, error) {
-	out := map[string]string{}
-	q := strings.ToLower(query)
+// Search 按 scopes 顺序检索(先 user 后 shared 即优先级),scope 内按
+// 相关度降序;满 limit 截断。整 hash HGetAll 后本地打分——规模到需要
+// 服务端检索时应换向量后端(vectorstore 家族),不在这层做 SCAN 优化。
+func (m *memStore) Search(ctx context.Context, scopes []string, query string, limit int) ([]memory.Hit, error) {
+	var out []memory.Hit
 	for _, scope := range scopes {
 		all, err := m.rdb.HGetAll(ctx, m.key(scope))
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range all {
-			if strings.Contains(strings.ToLower(k), q) || strings.Contains(strings.ToLower(v), q) {
-				out[k] = v
-				if limit > 0 && len(out) >= limit {
-					return out, nil
-				}
-			}
+		hits := memory.ScanBucket(scope, all, query)
+		memory.SortHits(hits)
+		out = append(out, hits...)
+		if limit > 0 && len(out) >= limit {
+			return out[:limit], nil
 		}
 	}
 	return out, nil

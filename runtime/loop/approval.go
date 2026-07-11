@@ -34,7 +34,7 @@ func GateApproval(caps []capability.Capability, mode ApprovalMode) []capability.
 	}
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
-		if c.Meta().Risk >= capability.RiskMutating {
+		if c.Meta().Risk.Effective() >= capability.RiskMutating {
 			out = append(out, &gated{inner: c, mode: mode})
 		} else {
 			out = append(out, c)
@@ -51,7 +51,7 @@ func GateApproval(caps []capability.Capability, mode ApprovalMode) []capability.
 func GateApprovalCtx(caps []capability.Capability) []capability.Capability {
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
-		if c.Meta().Risk >= capability.RiskMutating {
+		if c.Meta().Risk.Effective() >= capability.RiskMutating {
 			out = append(out, &gated{inner: c}) // mode 留空 = 运行时从 ctx 解析
 		} else {
 			out = append(out, c)

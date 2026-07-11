@@ -22,10 +22,10 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/joewm9911/agent-kit/core/capability"
+	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
 	"github.com/joewm9911/agent-kit/protocol/source"
 	"github.com/joewm9911/agent-kit/runtime/engine"
-	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/skill"
 )
@@ -618,6 +618,7 @@ func modelStepCap(m model.ToolCallingChatModel) capability.Capability {
 	return capability.New(capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "builtin", Name: "model_step"},
 		Description: "单次模型调用",
+		Risk:        capability.RiskReadonly, // 纯模型调用,无外部副作用
 	}, func(ctx context.Context, args string) (string, error) {
 		system, user := args, runctx.Input(ctx)
 		var msgs []*schema.Message

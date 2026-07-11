@@ -21,22 +21,37 @@ import (
 )
 
 // Risk 是能力的风险分级,是审批拦截与目录准入的依据。
+//
+// 零值是 RiskUnspecified 而非 readonly:忘写 Risk 的 mutating 能力若默认
+// 最宽松,会静默绕过审批闸门。门闸与准入对 Unspecified 按 mutating 保守
+// 对待(经 Effective);内置只读工具全部显式标注 RiskReadonly。
 type Risk int
 
 const (
-	RiskReadonly  Risk = iota // 只读,无副作用
-	RiskMutating              // 有改动性副作用(写文件、发消息、下单)
-	RiskDangerous             // 危险(删除、资金、不可逆),默认不入目录
+	RiskUnspecified Risk = iota // 未声明:门闸按 mutating 保守对待
+	RiskReadonly                // 只读,无副作用
+	RiskMutating                // 有改动性副作用(写文件、发消息、下单)
+	RiskDangerous               // 危险(删除、资金、不可逆),默认不入目录
 )
+
+// Effective 返回门闸/准入视角的等效级别:未声明按 mutating 保守处理。
+func (r Risk) Effective() Risk {
+	if r == RiskUnspecified {
+		return RiskMutating
+	}
+	return r
+}
 
 func (r Risk) String() string {
 	switch r {
+	case RiskReadonly:
+		return "readonly"
 	case RiskMutating:
 		return "mutating"
 	case RiskDangerous:
 		return "dangerous"
 	default:
-		return "readonly"
+		return "unspecified"
 	}
 }
 

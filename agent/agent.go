@@ -245,6 +245,10 @@ func (a *Agent) turnMessages(rec *loop.ToolRecorder, input, answer string) []*sc
 // Stream 流式执行一轮对话。返回的流复制两份:一份给调用方,
 // 一份在后台聚合后回写会话历史(含本轮工具轨迹)。结构化输出与
 // 流式互斥(用 Run)。
+//
+// 评审栈差异:Run 路径的终答评审(重复终止/收口守卫/拒绝核对/todo
+// 收口)在流式下不生效——token 已经发给用户,弹回重答不可能。对终答
+// 质量有硬要求的场景用 Run;流式是体验优先的通道。
 func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.StreamReader[*schema.Message], error) {
 	lock := a.turnLock(sessionID)
 	lock.Lock()
@@ -517,6 +521,7 @@ func (a *Agent) Meta() capability.Meta {
 		Ref:         capability.Ref{Kind: "agent", Domain: "agents", Name: a.name},
 		Description: a.description,
 		Params:      capability.SingleParam("task", "交给该 agent 的完整任务描述"),
+		Risk:        capability.RiskReadonly, // 子 agent 内部工具各带风险闸门,入口本身无直接副作用
 	}
 }
 

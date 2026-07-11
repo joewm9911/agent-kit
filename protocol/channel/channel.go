@@ -68,6 +68,8 @@ type InboundHandler func(ctx context.Context, in Inbound)
 type Channel interface {
 	Name() string
 	// Start 注册 webhook 路由(或建立长连接),收到用户消息时回调 h。
+	// mux 契约:webhook 型通道把回调路由注册到 mux;长连接/轮询型通道
+	// 不需要 HTTP 面,必须容忍 mux 为 nil(直接忽略),不得解引用。
 	Start(ctx context.Context, mux *http.ServeMux, h InboundHandler) error
 	// Send 发送消息,返回消息 ID(供 Update 做流式刷新)。
 	Send(ctx context.Context, conv ConvRef, msg Outbound) (msgID string, err error)

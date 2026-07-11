@@ -75,3 +75,8 @@ func (t *suspendTurn) finish(ctx context.Context, sessionKey, turnInput string, 
 	}
 	return s.Question, true, nil
 }
+
+// suspendSave 把认领后的挂起轮次放回存储(队满等入队失败时的回滚)。
+func suspendSave(ctx context.Context, kv store.KV, sessionKey string, rec suspend.PendingTurn) error {
+	return suspend.SavePendingTurn(ctx, kv, sessionKey, rec)
+}

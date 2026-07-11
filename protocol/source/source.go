@@ -15,7 +15,9 @@ import (
 type Source interface {
 	// Name 即该源下所有能力的 namespace。
 	Name() string
-	// Sync 连接供给端并返回全部能力。实现应保证可重复调用(刷新)。
+	// Sync 连接供给端并返回全部能力。当前只在装配期(Catalog.AddSource)
+	// 调用一次——目录不做运行期刷新,能力集变更靠重启装配;实现无须为
+	// 重复调用做幂等设计(将来引入刷新机制时会另立契约)。
 	Sync(ctx context.Context) ([]capability.Capability, error)
 }
 

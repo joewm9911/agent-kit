@@ -345,6 +345,7 @@ func packFS(dir string) fs.FS { return os.DirFS(dir) }
 func packReadCap(packFS fs.FS) capability.Capability {
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: "tool", Domain: "pack", Name: "pack_read"},
+		Risk:        capability.RiskReadonly, // 只读包内文档
 		Description: "Read a reference file bundled with the skill pack (limited to docs/templates packaged inside the pack; an empty path lists the manifest). Note: the user's files are not inside the pack — to read or write the user's files, use a script execution tool (e.g. python).",
 		Params:      capability.SingleParam("path", "Relative path inside the pack; empty = list the file manifest"),
 	}

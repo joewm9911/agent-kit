@@ -55,7 +55,7 @@ func (c *Catalog) AddSource(ctx context.Context, src Source, required bool, prio
 	defer c.mu.Unlock()
 	for _, cp := range caps {
 		meta := cp.Meta()
-		if meta.Risk > c.maxRisk {
+		if meta.Risk.Effective() > c.maxRisk {
 			c.logger.Warn("capability rejected by admission (risk too high)",
 				slog.String("ref", meta.Ref.String()), slog.String("risk", meta.Risk.String()))
 			continue

@@ -36,7 +36,7 @@ func BuildPlanExecute(ctx context.Context, asm *Assembly) (Runner, error) {
 	executor, err := BuildReAct(ctx, &Assembly{
 		Model:        asm.Model,
 		Capabilities: asm.Capabilities,
-		MaxSteps:     asm.ConfInt("step_max_rounds", 10),
+		MaxSteps:     asm.ConfInt("step_max_rounds", stepRoundsDefault(asm)),
 		Modifier:     stageLoopModifier(asm, promptOr(asm, "executor", defaultExecutorPrompt)),
 		Rewriter:     asm.Rewriter,
 	})
