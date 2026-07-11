@@ -13,6 +13,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -46,15 +47,44 @@ func (f *Feishu) startLongConn(ctx context.Context, h channel.InboundHandler) er
 	if os.Getenv("FEISHU_WS_DEBUG") != "" { // 帧级排障开关(仅日志粒度)
 		logLevel = larkcore.LogLevelDebug
 	}
-	cli := ws.NewClient(f.cfg.AppID, f.cfg.AppSecret,
-		ws.WithEventHandler(d),
-		ws.WithDomain(f.cfg.BaseURL),
-		ws.WithAutoReconnect(true),
-		ws.WithLogLevel(logLevel),
-	)
+	newClient := func() *ws.Client {
+		return ws.NewClient(f.cfg.AppID, f.cfg.AppSecret,
+			ws.WithEventHandler(d),
+			ws.WithDomain(f.cfg.BaseURL),
+			ws.WithAutoReconnect(true),
+			ws.WithLogLevel(logLevel),
+		)
+	}
+	// 监督循环:SDK 的 AutoReconnect 只兜它自己认出的断线;实测网络闪断
+	// (代理掐连接)后 Start 会直接返回——返回 nil 时旧代码连日志都不打,
+	// goroutine 静默退场,机器人从此收不到任何消息且无迹可查。这里无论
+	// 返回什么都记日志、退避后重建客户端再连;退避封顶 2 分钟,恢复即清零。
 	go func() {
-		if err := cli.Start(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("feishu long_conn exited", slog.String("channel", f.name), slog.String("err", err.Error()))
+		backoff := time.Second
+		for {
+			began := time.Now()
+			err := newClient().Start(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			if time.Since(began) > 5*time.Minute {
+				backoff = time.Second // 连得住说明网络已恢复,退避从头算
+			}
+			if err != nil {
+				slog.Error("feishu long_conn exited; will reconnect",
+					slog.String("channel", f.name), slog.Duration("backoff", backoff), slog.String("err", err.Error()))
+			} else {
+				slog.Error("feishu long_conn exited without error; will reconnect",
+					slog.String("channel", f.name), slog.Duration("backoff", backoff))
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			if backoff < 2*time.Minute {
+				backoff *= 2
+			}
 		}
 	}()
 	return nil
