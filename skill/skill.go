@@ -96,6 +96,9 @@ type Deps struct {
 	// DigestOver 启用内部工具面的大结果消化:超过该 rune 数的工具
 	// 结果先落 run 级暂存,由模型带任务提取要点后入上下文(0 关闭)。
 	DigestOver int
+	// Truncate 是工具结果硬截断上限(rune;0 用内置默认)。与宿主 agent
+	// 同一画像键(digest.truncate),装配层透传,保证子循环同一纪律。
+	Truncate int
 	// Todo 是组件级调用清单的持有对象(仅 decl.Todo 时用),由装配层注入
 	// 后端。component 的清单是调用级临时草稿(结束即弃),用进程内后端即可。
 	Todo *todo.Todo
@@ -211,9 +214,15 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if decl.Todo {
 		layers.Plan = deps.Todo.PlanSection
 	}
+	finishChecks := []func(context.Context) string{loop.DeniedCallsCheck}
+	if decl.Todo {
+		// 开了调用级清单就要有收口纪律:计划未收口弹回补交——空壳
+		// 终答("已完成")的病灶正是开了计划不收口的组件。
+		finishChecks = append(finishChecks, deps.Todo.FinishCheck)
+	}
 	runner, err := engine.Build(ctx, engineName, &engine.Assembly{
 		Model: loop.ReviewModel(m, loop.RepeatBreakReviewer(), loop.FinishReviewer(),
-			loop.CheckedReviewer(loop.DeniedCallsCheck)), // 统一评审循环(子循环同套纪律)
+			loop.CheckedReviewer(finishChecks...)), // 统一评审循环(子循环同套纪律)
 		Capabilities: caps,
 		MaxSteps:     decl.MaxSteps,
 		Modifier:     layers.Modifier(),
@@ -425,9 +434,10 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
 	caps = loop.DedupCalls(caps) // 重复调用断路器(执行域按调用唯一,计数互不串)
 	caps = loop.DigestResults(caps, m, deps.DigestOver)
-	caps = loop.TruncateResults(caps, 0)
+	caps = loop.TruncateResults(caps, deps.Truncate)
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
+	caps = loop.ControlTools(caps) // 中断/插话检查点(与宿主循环同一栈,插话不再等到 skill 返回)
 	caps = loop.ProgressTools(caps) // 进度事件发射(子循环步骤带执行域)
 	return caps
 }

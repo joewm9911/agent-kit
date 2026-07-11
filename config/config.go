@@ -215,6 +215,7 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 			Todo:    componentTodo(),
 			Catalog: catalog, Prompts: prompts, DefaultModel: defaultModel,
 			ToolTimeout: cfg.Profile.toolTimeout().Std(), Retry: cfg.Profile.retry(),
+			DigestOver: cfg.Profile.digestOver(), Truncate: cfg.Profile.digestTruncate(),
 		}
 		var c capability.Capability
 		if entry.Use != "" {

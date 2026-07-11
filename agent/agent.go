@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
@@ -33,6 +34,7 @@ import (
 type Agent struct {
 	name        string
 	description string
+	subSeq      atomic.Int64 // 子 agent 形态的调用序号(执行域按调用隔离)
 	runner      engine.Runner
 	store       session.Store // nil = 无会话记忆
 	window      int           // 织入历史的窗口上限
@@ -523,7 +525,7 @@ func (a *Agent) AsLambda(ctx context.Context) (*compose.Lambda, error) {
 // 压执行域:todo 等按域隔离的运行时状态与宿主分键,互不覆盖
 // (预算/审批刻意不分——治理归调用方的会话账本)。
 func (a *Agent) invokeAsSub(ctx context.Context, argsJSON string) (string, error) {
-	ctx = runctx.WithScopePush(ctx, "sub:"+a.name)
+	ctx = runctx.WithScopePush(ctx, fmt.Sprintf("sub:%s#%d", a.name, a.subSeq.Add(1)))
 	task := capability.ParseSingle(argsJSON, "task")
 	out, err := a.runner.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(task)))
 	if err != nil {

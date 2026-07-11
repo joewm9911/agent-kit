@@ -160,14 +160,17 @@ func TestLiveHarnessSilence(t *testing.T) {
 		return hit, miss
 	}
 
-	// 契约行已按本实验数据落进 DefaultLoopPrompt(prompt.go loopPromptTodo)。
-	// 保持可重跑:A 臂 = 剥掉契约行还原修复前的 L1;B 臂 = 现状(含契约)。
-	// 契约行漂移即报错(逐字锚定,防止 L1 改了而实验静默失真)。
-	const todoContractLine = "\n- Sequence at the end of a task: finish your bookkeeping (the last todo_write) FIRST, then write the answer. The answer is always your last message — never call todo_write after delivering the result.\n- Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as \"all tasks completed\" or \"the plan has been output above\"."
-	if !strings.Contains(loop.DefaultLoopPrompt, todoContractLine) {
+	// 契约行已按本实验数据落进 DefaultLoopPrompt:记账次序行在 loopPromptTodo,
+	// 返回值契约行在 loopPromptTail(审计批 P1-C 迁移:它是循环力学事实,对
+	// NoTodo 组件同样生效)。保持可重跑:A 臂 = 剥掉两行还原修复前的 L1;
+	// B 臂 = 现状。漂移即报错(逐字锚定,防止 L1 改了而实验静默失真)。
+	const bookkeepingLine = "\n- Sequence at the end of a task: finish your bookkeeping (the last todo_write) FIRST, then write the answer. The answer is always your last message — never call todo_write after delivering the result."
+	const returnContractLine = "\n- Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as \"all tasks completed\" or \"the plan has been output above\"."
+	if !strings.Contains(loop.DefaultLoopPrompt, bookkeepingLine) || !strings.Contains(loop.DefaultLoopPrompt, returnContractLine) {
 		t.Fatalf("L1 已漂移:找不到 todo 返回值契约行,A/B 失去意义")
 	}
-	preFixL1 := strings.Replace(loop.DefaultLoopPrompt, todoContractLine, "", 1)
+	preFixL1 := strings.Replace(loop.DefaultLoopPrompt, bookkeepingLine, "", 1)
+	preFixL1 = strings.Replace(preFixL1, returnContractLine, "", 1)
 
 	// 本轮 A/B 测提示词:守卫两臂都关;空壳尺子 = 覆盖率为 0(hit==0),
 	// 不用正则词表——前次实验正是词表漏了"所有任务已完成"变体导致测量失真。

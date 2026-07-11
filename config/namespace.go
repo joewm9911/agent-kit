@@ -276,6 +276,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			ToolTimeout:  eff.toolTimeout().Std(),
 			Retry:        eff.retry(),
 			DigestOver:   eff.digestOver(),
+			Truncate:     eff.digestTruncate(),
 		})
 		if err != nil {
 			return fmt.Errorf("namespace %s: %w", ns.Name, err)
@@ -310,7 +311,8 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 				skill.PackOverrides{Tools: sc.Tools, Context: sc.Context},
 				skill.Deps{Catalog: deps.global, Prompts: deps.prompts,
 					DefaultModel: deps.defaultModel, Retry: nsEff.retry(),
-					ToolTimeout: nsEff.toolTimeout().Std(), DigestOver: nsEff.digestOver()},
+					ToolTimeout: nsEff.toolTimeout().Std(), DigestOver: nsEff.digestOver(),
+					Truncate: nsEff.digestTruncate()},
 				deps.execCfg, deps.hubs)
 			if err != nil {
 				return fmt.Errorf("namespace %s: %w", ns.Name, err)
