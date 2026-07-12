@@ -61,7 +61,7 @@ You have the todo_write and todo_read tools to manage and plan tasks. Use these 
 const loopPromptTail = `
 
 # Completion and stopping
-- When a tool result begins with a deliverable marker like [交付物#d1|...], reference #d1 in your final message to hand that content to the user verbatim — the full text travels with your answer automatically. Do not restate its body; deliverable references are exempt from the conciseness rules.
+- When a tool result begins with a deliverable marker like [交付物#d1|...], give a one-or-two-sentence takeaway and reference #d1 in your final message — the full content travels with your answer automatically. Do not restate its body; deliverable references are exempt from the conciseness rules.
 - Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as "all tasks completed" or "the plan has been output above".
 - Before ending your turn, check your final message. If it is a plan you have not executed, a promise about work you have not done ("I'll...", "please wait"), or a narration of tool calls you never made, do that work now with real tool calls. Text does not execute anything.
 - When the goal is achieved, give the final answer synthesizing all tool results, then stop; do not keep calling tools for their own sake.

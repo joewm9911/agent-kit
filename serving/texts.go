@@ -27,6 +27,7 @@ type Texts struct {
 	Failure     string // error close line: %s = error text
 	Approval    string // approval question: %s description, %s arguments
 	AskTimeout  string // ask/approval reply timeout (no verbs)
+	Deliverable string // deliverable follow-up header: %s id, %s title; empty format = content only
 }
 
 // defaultTexts is the English baseline used when a Binding sets no Texts.
@@ -46,6 +47,7 @@ var defaultTexts = Texts{
 	Failure:     "Failed: %s",
 	Approval:    suspend.DefaultApprovalPrompt,
 	AskTimeout:  "timed out waiting for user reply",
+	Deliverable: "**%s · %s**\n\n", // 头部:%s=id 引用锚,%s=标题;配空串 = 只发原文
 }
 
 // NewTexts builds an override Texts from a map of snake_case field names

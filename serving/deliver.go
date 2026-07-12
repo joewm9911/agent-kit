@@ -6,6 +6,7 @@ package serving
 import (
 	"log/slog"
 	"regexp"
+	"strings"
 
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/core/runctx"
@@ -18,6 +19,26 @@ const (
 	maxDeliverables    = 5
 	maxDeliverablesLen = 200 << 10 // 200KB(内容总量)
 )
+
+// collapseBareReference 处理"终答只有引用"的形态:剥掉全部 #dN 引用与
+// 空白/标点后所剩无几时,终答本身没有信息量——用首个交付物原文顶替
+// 终答,该交付物不再随行(其余照旧)。返回处理后的 (answer, dels)。
+func collapseBareReference(answer string, dels []runctx.Deliverable) (string, []runctx.Deliverable) {
+	if len(dels) == 0 {
+		return answer, dels
+	}
+	stripped := deliverRefRe.ReplaceAllString(answer, "")
+	stripped = strings.Map(func(r rune) rune {
+		if strings.ContainsRune(" \t\n\r,。;;:.、!!??()()[]【】·-—*#|", r) {
+			return -1
+		}
+		return r
+	}, stripped)
+	if len([]rune(stripped)) > 12 { // 有实质导读:保持导读+随行
+		return answer, dels
+	}
+	return dels[0].Content, dels[1:]
+}
 
 // ResolveDeliverables 是裸跑宿主(CLI 等自己调 agent.Run 的场景)用的
 // 出站解析入口,语义同 dispatcher/HTTP 内部路径。

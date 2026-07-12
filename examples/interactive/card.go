@@ -41,7 +41,7 @@ func opsCard(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel
 		return out // 杂项通知(中断确认等)保持默认渲染
 	}
 	if out.Kind == channel.KindDeliverable && len(out.Deliverables) == 1 {
-		style.title = fmt.Sprintf("交付物 #%s · %s", out.Deliverables[0].ID, out.Deliverables[0].Title)
+		style.title = fmt.Sprintf("#%s · %s", out.Deliverables[0].ID, out.Deliverables[0].Title)
 	}
 	var elements []any
 	if len(out.Progress) > 0 {

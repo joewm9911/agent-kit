@@ -277,13 +277,22 @@ func (d *Dispatcher) run(key string, j job) {
 		return
 	}
 	dels := resolveDeliverables(answer, sink, d.logger)
+	// 裸引用折叠:模型终答只有 "#d1" 这类纯引用时,answer 卡是纯噪音——
+	// 把首个交付物原文折进终答卡,单条送达(实测:MiniMax 简洁性偏置下
+	// 这是常见形态)。有实质导读时保持"导读卡 + 随行卡"。
+	answer, dels = collapseBareReference(answer, dels)
 	lc.closeAnswer(ctx, answer, dels)
 	// 随行消息:每份交付物独立发出(默认呈现);装饰器可对 KindDeliverable
-	// 置 Skip(比如已把内容内联进 answer 卡片)。
+	// 置 Skip(比如已把内容内联进 answer 卡片)。头部文案走 texts
+	// (deliverable 键),可本地化、可置空(只发原文)。
 	for _, del := range dels {
+		text := del.Content
+		if f := j.b.texts().Deliverable; f != "" {
+			text = fmt.Sprintf(f, "#"+del.ID, del.Title) + del.Content
+		}
 		if _, err := d.send(ctx, j.b, j.in.Conv, channel.Outbound{
 			Kind: channel.KindDeliverable, Markdown: true,
-			Text:         fmt.Sprintf("**交付物 #%s · %s**\n\n%s", del.ID, del.Title, del.Content),
+			Text:         text,
 			Deliverables: []runctx.Deliverable{del},
 		}); err != nil {
 			d.logger.Error("send deliverable failed", slog.String("id", del.ID), slog.String("err", err.Error()))

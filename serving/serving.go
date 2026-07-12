@@ -149,6 +149,7 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 // doneResponse 组装完成响应:answer + 引用随行的交付物数组(无则省略)。
 func doneResponse(session, answer string, sink *runctx.DeliverableSink, logger *slog.Logger) any {
 	dels := resolveDeliverables(answer, sink, logger)
+	answer, dels = collapseBareReference(answer, dels)
 	if len(dels) == 0 {
 		return map[string]string{"session": session, "status": "done", "answer": answer}
 	}

@@ -82,7 +82,8 @@ func (deliverRunner) Generate(ctx context.Context, _ []*schema.Message) (*schema
 	sink.NextCallSeq()
 	sink.Emit(runctx.Deliverable{ID: "d1", Title: "月报", Source: "cap://skill/t/report",
 		Mode: capability.DeliverAttach, Content: "# 月报\n全量数据…"})
-	return schema.AssistantMessage("结论见导读,完整报表见 #d1。", nil), nil
+	// 实质导读(剥引用后仍有信息量,不触发裸引用折叠)
+	return schema.AssistantMessage("本月总销量 2,724 件、销售额 ¥726,906,头部单品贡献超八成,建议加仓补货。完整报表见 #d1。", nil), nil
 }
 
 func (r deliverRunner) Stream(ctx context.Context, in []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
@@ -112,8 +113,8 @@ func TestDispatcherDeliverableFollowup(t *testing.T) {
 	if !strings.Contains(msgs[0], "#d1") {
 		t.Fatalf("answer should reference #d1, got %q", msgs[0])
 	}
-	if !strings.Contains(msgs[1], "全量数据") || !strings.Contains(msgs[1], "交付物 #d1") {
-		t.Fatalf("follow-up must carry verbatim deliverable, got %q", msgs[1])
+	if !strings.Contains(msgs[1], "全量数据") || !strings.Contains(msgs[1], "#d1 · 月报") {
+		t.Fatalf("follow-up must carry verbatim deliverable with default header, got %q", msgs[1])
 	}
 }
 
@@ -139,4 +140,34 @@ func postMessageRaw(t *testing.T, s *Server, body map[string]string) (int, strin
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
+}
+
+// TestCollapseBareReference:终答只有裸引用时折叠为单条(实测:MiniMax
+// 简洁性偏置常产出 "报表见 #d1。" 甚至 "#d1")。
+func TestCollapseBareReference(t *testing.T) {
+	dels := []runctx.Deliverable{
+		{ID: "d1", Title: "报表", Content: "# 报表全文"},
+		{ID: "d2", Title: "盘点", Content: "盘点全文"},
+	}
+	// 裸引用(纯 #d1)→ 折叠:首个交付物顶替终答,不再随行
+	ans, rest := collapseBareReference("#d1", dels)
+	if ans != "# 报表全文" || len(rest) != 1 || rest[0].ID != "d2" {
+		t.Fatalf("bare ref must collapse, got ans=%q rest=%d", ans, len(rest))
+	}
+	// "报表见 #d1。" 这类空壳导读同样折叠
+	ans, rest = collapseBareReference("报表见 #d1。", dels)
+	if ans != "# 报表全文" || len(rest) != 1 {
+		t.Fatalf("hollow lead must collapse, got %q", ans)
+	}
+	// 实质导读:不折叠
+	lead := "总销量 2,724 件,头部商品贡献 81%,建议加仓补货。完整报表见 #d1。"
+	ans, rest = collapseBareReference(lead, dels)
+	if ans != lead || len(rest) != 2 {
+		t.Fatalf("substantive lead must keep both, got %q rest=%d", ans, len(rest))
+	}
+	// 无交付物:原样
+	ans, rest = collapseBareReference("#d1", nil)
+	if ans != "#d1" || rest != nil {
+		t.Fatal("no dels must be identity")
+	}
 }
