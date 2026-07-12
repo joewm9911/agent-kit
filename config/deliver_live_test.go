@@ -108,3 +108,99 @@ func TestLiveDeliverReference(t *testing.T) {
 		t.Fatalf("引用的轮次附件必须逐字节一致:verbatim=%d ref=%d", verbatim, refHits)
 	}
 }
+
+// TestLiveDeliverFidelityAB:效果 A/B——同一 30 行报表、同一问题,
+// A 臂不开通道(用户只见终答),B 臂 deliver: attach(终答+随行附件)。
+// 尺子 = 用户可见文本里 30 个行锚点(P001..P030)与 7 个列锚点的保留率。
+//
+//	SMOKE_LIVE=1 go test ./config/ -run TestLiveDeliverFidelityAB -v -count=1 -timeout 20m
+func TestLiveDeliverFidelityAB(t *testing.T) {
+	if os.Getenv("SMOKE_LIVE") == "" {
+		t.Skip("SMOKE_LIVE 未开启")
+	}
+	key := os.Getenv("MINIMAX_API_KEY")
+	if key == "" {
+		t.Skip("无 MINIMAX_API_KEY")
+	}
+	ctx := context.Background()
+	base := os.Getenv("SMOKE_MODEL_BASE")
+	if base == "" {
+		base = "https://api.minimaxi.com/v1"
+	}
+	raw, err := model.Build(ctx, "minimax", map[string]any{"api_key": key, "base_url": base})
+	if err != nil {
+		t.Fatalf("build model: %v", err)
+	}
+	retry := loop.RetryConfig{MaxAttempts: 4, BaseDelay: loop.Duration(3 * time.Second), MaxDelay: loop.Duration(30 * time.Second)}
+	m := loop.RetryModel(raw, retry)
+
+	var rows strings.Builder
+	rows.WriteString("# 键鼠外设 30 天销售报表\n\n| SKU | 商品 | 销量 | 销售额 | 趋势 | 毛利率 | 状态 |\n|---|---|---|---|---|---|---|\n")
+	rowAnchors := make([]string, 0, 30)
+	for i := 1; i <= 30; i++ {
+		sku := fmt.Sprintf("P%03d", i)
+		rowAnchors = append(rowAnchors, sku)
+		fmt.Fprintf(&rows, "| %s | 商品%d | %d | ¥%d | +%d%% | %d%% | 在售 |\n", sku, i, i*13, i*997, i%9, 20+i%30)
+	}
+	report := rows.String()
+	colAnchors := []string{"SKU", "商品", "销量", "销售额", "趋势", "毛利率", "状态"}
+
+	measure := func(visible string) (rowKeep, colKeep int) {
+		for _, a := range rowAnchors {
+			if strings.Contains(visible, a) {
+				rowKeep++
+			}
+		}
+		for _, a := range colAnchors {
+			if strings.Contains(visible, a) {
+				colKeep++
+			}
+		}
+		return
+	}
+
+	runArm := func(name string, mode capability.DeliverMode, runs int) (avgRow, avgCol float64) {
+		cap_ := capability.New(capability.Meta{
+			Ref:         capability.Ref{Kind: "skill", Domain: "live", Name: "sales-report"},
+			Description: "生成键鼠外设品类 30 天销售报表(完整明细)",
+			Risk:        capability.RiskReadonly,
+			Deliver:     mode,
+		}, func(context.Context, string) (string, error) { return report, nil })
+		caps := loop.DeliverResults([]capability.Capability{cap_})
+		layers := loop.PromptLayers{Loop: loop.DefaultLoopPromptNoTodo}
+		runner, err := engine.Build(ctx, "react", &engine.Assembly{
+			Model: m, Capabilities: caps, MaxSteps: 4, Modifier: layers.Modifier(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ag := agent.New("fid-"+name, "", runner, m, agent.Options{})
+		var rowSum, colSum int
+		for i := 0; i < runs; i++ {
+			turnCtx, sink := runctx.WithDeliverableSink(ctx)
+			answer, err := ag.Run(turnCtx, fmt.Sprintf("%s-%d", name, i), "给我出一份键鼠外设 30 天销售报表,要完整的")
+			if err != nil {
+				t.Logf("[%s run %d] err=%v", name, i+1, err)
+				continue
+			}
+			visible := answer // 用户可见 = 终答
+			for _, d := range serving.ResolveDeliverables(answer, sink) {
+				visible += "\n" + d.Content // + 随行附件
+			}
+			r, c := measure(visible)
+			rowSum += r
+			colSum += c
+			t.Logf("[%s run %d] 行保留 %d/30 列保留 %d/7 (answer_len=%d)", name, i+1, r, c, len([]rune(answer)))
+		}
+		return float64(rowSum) / float64(runs), float64(colSum) / float64(runs)
+	}
+
+	const runs = 6
+	baseRow, baseCol := runArm("baseline", capability.DeliverNone, runs)
+	chanRow, chanCol := runArm("channel", capability.DeliverAttach, runs)
+	t.Logf("效果 A/B(n=%d):基线 行 %.1f/30 列 %.1f/7 | 通道 行 %.1f/30 列 %.1f/7",
+		runs, baseRow, baseCol, chanRow, chanCol)
+	if chanRow < 29.9 {
+		t.Fatalf("通道臂行保留必须 100%%(机制保证),got %.1f/30", chanRow)
+	}
+}
