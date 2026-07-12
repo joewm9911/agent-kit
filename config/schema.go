@@ -441,6 +441,8 @@ type ComponentConfig struct {
 	Params map[string]capability.ParamDecl `yaml:"params"`
 	Steps  []engine.Step                   `yaml:"steps"`
 	Output string                          `yaml:"output"`
+	// Deliver 是产出的交付语义(attach|always|direct,缺省=证据)。
+	Deliver string `yaml:"deliver"`
 }
 
 // NamespaceSkill 声明一个对外 skill:接口(描述+参数)+ 编排(steps,
@@ -456,6 +458,9 @@ type NamespaceSkill struct {
 	// 顺序,禁 needs)。与 component 的同名字段同一词汇;skill 允许
 	// 缺省(graph)是因为 skill 只有编排一族,不存在循环/编排歧义。
 	Engine string `yaml:"engine"`
+	// Deliver 是产出的交付语义(attach|always|direct,缺省=证据),
+	// 词汇同 skill.Declaration,装配期枚举校验。
+	Deliver string `yaml:"deliver"`
 	// From 集成一个外部 SKILL.md 技能包(github.com/...@ver |
 	// https://...zip | file:...);须显式 name,integrity/tools/context
 	// 见 SkillEntry 同名字段。与 steps/use 互斥。

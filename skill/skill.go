@@ -63,6 +63,9 @@ type Declaration struct {
 	Model          *ModelDecl `yaml:"model"`
 	MaxSteps       int        `yaml:"max_rounds"`
 	MaxStepsLegacy *int       `yaml:"max_steps"` // 已废弃:改 max_rounds
+	// Deliver 是产出的交付语义:attach(存底,终答引用 #dN 即原文随行)
+	// | always(恒随行)| direct(独占轮次时原文即终答);缺省 = 证据。
+	Deliver string `yaml:"deliver"`
 	// Compaction 启用内部循环的上下文压缩(长任务 skill 建议开启)。
 	Compaction loop.CompactionConfig `yaml:"compaction"`
 	// Todo 给内部循环挂调用级临时清单(仅 react):键 = 本次执行域,
@@ -246,11 +249,16 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if err != nil {
 		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
 	}
+	deliver, err := capability.ParseDeliver(decl.Deliver)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
+	}
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: name, Version: decl.Version},
 		Description: decl.Description,
 		Params:      paramsSchema,
 		Risk:        risk,
+		Deliver:     deliver,
 		Tags:        []string{"prompt:" + brief.Version},
 	}
 	var callSeq atomic.Int64 // 调用的执行域序号
@@ -437,6 +445,7 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 	}
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
 	caps = loop.DedupCalls(caps) // 重复调用断路器(执行域按调用唯一,计数互不串)
+	caps = loop.DeliverResults(caps) // 交付物捕获(嵌套 skill 的产出同样进轮级 sink)
 	caps = loop.DigestResults(caps, m, deps.DigestOver)
 	caps = loop.TruncateResults(caps, deps.Truncate)
 	caps = suspend.DurableEffects(caps)

@@ -42,6 +42,21 @@ agents:
   - name: a
     memory: {scope: {write: global}}
 `, "user|shared|session"},
+		{"deliver_enum", `
+model: {provider: marker, config: {resp: hi}}
+namespaces:
+  - name: ops
+    components:
+      - name: c
+        engine: react
+        prompt: "做事"
+    skills:
+      - name: s
+        deliver: attch
+        use: "components/c"
+agents:
+  - name: a
+`, "attach|always|direct"},
 		{"default_model_redirect", `
 default_model: {provider: marker, config: {resp: hi}}
 agents:

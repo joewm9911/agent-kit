@@ -111,6 +111,8 @@ type GraphDeclaration struct {
 	Steps       []Step                          `yaml:"steps"`
 	// Output 是产出步骤名,缺省为最后一个声明的步骤。
 	Output string `yaml:"output"`
+	// Deliver 是产出的交付语义(词汇同 skill.Declaration)。
+	Deliver string `yaml:"deliver"`
 }
 
 // StepResolver 在装配期把 use 引用解析为能力。由命名空间装配层提供,
@@ -160,11 +162,16 @@ func BuildGraph(_ context.Context, decl *GraphDeclaration, ns string, resolve St
 	if err != nil {
 		return nil, fmt.Errorf("graph %s: %w", decl.Name, err)
 	}
+	deliver, err := capability.ParseDeliver(decl.Deliver)
+	if err != nil {
+		return nil, fmt.Errorf("graph %s: %w", decl.Name, err)
+	}
 	meta := capability.Meta{
 		Ref:         capability.Ref{Kind: kind, Domain: ns, Name: decl.Name, Version: decl.Version},
 		Description: decl.Description,
 		Params:      paramsSchema,
 		Risk:        risk,
+		Deliver:     deliver,
 	}
 	return capability.New(meta, plan.run), nil
 }

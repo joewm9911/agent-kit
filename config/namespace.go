@@ -247,6 +247,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 		decl := &skill.Declaration{
 			Kind:         "component",
+			Deliver:      cc.Deliver,
 			Name:         ns.Name + "/" + cc.Name,
 			Prompt:       cc.Prompt,
 			Params:       cc.Params, // 循环族 component 的入参声明:工具面 schema + P4 占位符校验
@@ -349,6 +350,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 		c, err := engine.BuildGraph(ctx, &engine.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
+			Deliver: sc.Deliver,
 			Params: sc.Params, Output: sc.Output,
 			Steps: applyStepDefaults(steps, sc.StepDefaults.Timeout, sc.StepDefaults.Retry, nsEff.stepTimeout(), nsEff.stepRetry()),
 		}, ns.Name, resolver)
@@ -461,7 +463,7 @@ func buildGraphComponent(ctx context.Context, nsName string, cc *ComponentConfig
 		return nil, err
 	}
 	return engine.BuildGraph(ctx, &engine.GraphDeclaration{
-		Kind: "component",
+		Kind: "component", Deliver: cc.Deliver,
 		Name: cc.Name, Params: cc.Params,
 		Steps:  applyStepDefaults(steps, 0, 0, eff.stepTimeout(), eff.stepRetry()),
 		Output: cc.Output,

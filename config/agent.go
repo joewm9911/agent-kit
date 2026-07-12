@@ -302,6 +302,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	}
 	caps = loop.TimeoutTools(caps, eff.toolTimeout().Std())
 	caps = loop.DedupCalls(caps)                            // 重复调用断路器(同轮同参打转拦截)
+	caps = loop.DeliverResults(caps)                        // 交付物捕获(Digest 内侧:捕未消化原文)
 	caps = loop.DigestResults(caps, m, eff.digestOver())    // 大结果消化
 	caps = loop.TruncateResults(caps, eff.digestTruncate()) // 工具结果硬截断(Ring 0)
 	caps = suspend.DurableEffects(caps)                     // 效果日志(挂起恢复的重放不二次执行)

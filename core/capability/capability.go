@@ -73,6 +73,29 @@ func ParseRisk(s string) (Risk, error) {
 // 工具超时闸门对其豁免——等人回复的时间不是执行时间。
 const TagInteractive = "interactive"
 
+// DeliverMode 是能力产出的交付语义:证据(缺省)由大脑消费合成;
+// 交付物由 Ring 0 捕获原文、经出站事实位直达用户——大脑保留策展权
+// (引用哪些、写导读),失去转述权(原文不经它的嘴)。
+// 设计:docs/deliverable-channel-plan.md。
+type DeliverMode string
+
+const (
+	DeliverNone   DeliverMode = ""       // 证据(默认)
+	DeliverAttach DeliverMode = "attach" // 存底;终答引用 #dN 即随行
+	DeliverAlways DeliverMode = "always" // 存底;不待引用恒随行
+	DeliverDirect DeliverMode = "direct" // 独占轮次时原文即终答;否则退化 attach
+)
+
+// ParseDeliver 解析交付语义,未知值报错(配置词汇 fail fast)。
+func ParseDeliver(s string) (DeliverMode, error) {
+	switch DeliverMode(s) {
+	case DeliverNone, DeliverAttach, DeliverAlways, DeliverDirect:
+		return DeliverMode(s), nil
+	default:
+		return DeliverNone, fmt.Errorf("unknown deliver mode %q (want attach|always|direct)", s)
+	}
+}
+
 // TagRawResult 标记能力的结果不参与消化(结果本身就是给模型的原文,
 // 如 read_result 的分页输出)。声明于 core:消化闸门(loop)与引擎的
 // 计划面筛选(engine)都要认它,而 engine 不得依赖 loop。
@@ -86,6 +109,9 @@ type Meta struct {
 	// Params 是工具形态的入参 schema;为 nil 时默认单个 string 入参 {"input": ...}。
 	Params *schema.ParamsOneOf
 	Risk   Risk
+	// Deliver 是产出的交付语义(证据/attach/always/direct),
+	// Ring 0 的 DeliverResults 按此捕获。
+	Deliver DeliverMode
 	Tags   []string
 }
 

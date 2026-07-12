@@ -91,6 +91,40 @@ func (s *ResultStore) Put(ctx context.Context, toolName, text string) string {
 	return id
 }
 
+// PutDeliver 存入一份交付物原文,返回取回 id(d<N>,后端持久序,跨轮
+// 唯一);后端失败返回空串,由 sink 分配轮内降级 id。与 Put 共享单轮
+// 总量软上限。
+func (s *ResultStore) PutDeliver(ctx context.Context, text string) string {
+	s.mu.Lock()
+	if s.bytes+len(text) > storeMaxBytes {
+		s.mu.Unlock()
+		return ""
+	}
+	s.bytes += len(text)
+	s.mu.Unlock()
+
+	scope := rscope(ctx)
+	var n int
+	if err := s.kv.Update(ctx, scope+rsep+"#dseq", func(old []byte, ok bool) ([]byte, error) {
+		if ok {
+			n, _ = strconv.Atoi(string(old))
+		}
+		n++
+		return []byte(strconv.Itoa(n)), nil
+	}, s.ttl); err != nil {
+		slog.Warn("deliver store seq failed, degrading to turn-local id", "err", err)
+		return ""
+	}
+	id := fmt.Sprintf("d%d", n)
+	if err := s.kv.Update(ctx, scope+rsep+id, func(_ []byte, _ bool) ([]byte, error) {
+		return []byte(text), nil
+	}, s.ttl); err != nil {
+		slog.Warn("deliver store put failed, degrading to turn-local id", "id", id, "err", err)
+		return ""
+	}
+	return id
+}
+
 // nextSeq 经后端原子自增取下一个序号,保证跨副本/恢复不撞 id。后端失败
 // 必须上抛:吞掉的话 n 恒为 1,坏后端下每轮都发同一个取不回的 "r1"。
 func (s *ResultStore) nextSeq(ctx context.Context, scope string) (int, error) {
@@ -128,7 +162,7 @@ func (s *ResultStore) List(ctx context.Context) []string {
 	var ids []string
 	for _, k := range keys {
 		id := k[strings.LastIndex(k, rsep)+len(rsep):]
-		if strings.HasPrefix(id, "r") {
+		if strings.HasPrefix(id, "r") || strings.HasPrefix(id, "d") {
 			ids = append(ids, id)
 		}
 	}
@@ -159,7 +193,7 @@ func resultStoreFrom(ctx context.Context) *ResultStore {
 }
 
 // resultIDRe 匹配取回 id 的规范形态(r+序号)。
-var resultIDRe = regexp.MustCompile(`r\d+`)
+var resultIDRe = regexp.MustCompile(`[rd]\d+`)
 
 // digestMaxInput 是送入消化模型的原文上限(rune),防止消化本身打爆窗口。
 const digestMaxInput = 20000
@@ -243,13 +277,22 @@ func (t *digestedTool) InvokableRun(ctx context.Context, argsJSON string, opts .
 // digest 执行消化:入暂存 → 模型提取要点 → 摘要+指针。任何一步不
 // 具备条件都原样返回,让下游截断闸兜底(消化是优化,不是正确性前提)。
 func (d *digested) digest(ctx context.Context, out string) string {
+	// 交付物标记行豁免消化改写:剥出首行标记,消化其余,标记回贴摘要
+	// 头部——原文在暂存里完好,#dN 引用链路不能因消化而断。
+	var deliverMark string
+	if strings.HasPrefix(out, "[交付物#") {
+		if i := strings.IndexByte(out, '\n'); i > 0 {
+			deliverMark, out = out[:i+1], out[i+1:]
+		}
+	}
+	restore := func(s string) string { return deliverMark + s }
 	runes := []rune(out)
 	if len(runes) <= d.over {
-		return out
+		return restore(out)
 	}
 	rs := resultStoreFrom(ctx)
 	if rs == nil {
-		return out
+		return restore(out)
 	}
 	name := d.inner.Meta().Ref.Name
 	id := rs.Put(ctx, name, out)
@@ -278,16 +321,16 @@ func (d *digested) digest(ctx context.Context, out string) string {
 			if len(head) > d.over {
 				head = head[:d.over]
 			}
-			return fmt.Sprintf("[结果过长且消化失败:原始 %d 字符,以下仅为开头片段;全文已存为 %s,可用 read_result(id=%q, offset=N) 分页查看]\n%s",
-				len(runes), id, id, string(head))
+			return restore(fmt.Sprintf("[结果过长且消化失败:原始 %d 字符,以下仅为开头片段;全文已存为 %s,可用 read_result(id=%q, offset=N) 分页查看]\n%s",
+				len(runes), id, id, string(head)))
 		}
-		return out // 暂存也没成:退回原样,截断闸兜底
+		return restore(out) // 暂存也没成:退回原样,截断闸兜底
 	}
 	pointer := "全文未能暂存(本轮暂存已满或后端不可用)"
 	if id != "" {
 		pointer = fmt.Sprintf("全文已存为 %s,需要细节可用 read_result(id=%q, offset=N) 分页查看", id, id)
 	}
-	return fmt.Sprintf("[结果已消化:原始 %d 字符;%s]\n%s", len(runes), pointer, sum.Content)
+	return restore(fmt.Sprintf("[结果已消化:原始 %d 字符;%s]\n%s", len(runes), pointer, sum.Content))
 }
 
 // readResultPage 是 read_result 单页返回的 rune 数。
