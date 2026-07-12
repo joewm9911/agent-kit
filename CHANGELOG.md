@@ -32,6 +32,13 @@ text is the migration guide).
 
 ### Added
 
+- Deliverable channel: skills/components may declare `deliver:
+  attach|always|direct`. Marked outputs are captured verbatim by Ring 0
+  (stored via the result backend), and referencing `#dN` in the final
+  answer ships the original alongside it (separate IM card / HTTP
+  `deliverables` array / CLI section) — the brain keeps curation, loses
+  paraphrase rights. `direct` closes the turn with the original when it
+  is the sole trailing call. Design: docs/deliverable-channel-plan.md.
 - Unified input model: `{$user_input}` reserved variable (the user's
   original message, constant across nesting), step-level `input:` (rendered
   in the caller's scope, becomes the callee's user message and re-sets its
