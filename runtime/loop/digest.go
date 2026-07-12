@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -115,6 +118,31 @@ func (s *ResultStore) Get(ctx context.Context, id string) (string, bool, error) 
 	return string(b), true, nil
 }
 
+// List 返回本 (agent, session) 作用域下可取回的 id(按序,上限 10,
+// 排除内部 #seq 计数键)。read_result miss 时给模型自纠线索。
+func (s *ResultStore) List(ctx context.Context) []string {
+	keys, err := s.kv.Scan(ctx, rscope(ctx)+rsep)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, k := range keys {
+		id := k[strings.LastIndex(k, rsep)+len(rsep):]
+		if strings.HasPrefix(id, "r") {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, _ := strconv.Atoi(ids[i][1:])
+		b, _ := strconv.Atoi(ids[j][1:])
+		return a < b
+	})
+	if len(ids) > 10 {
+		ids = ids[len(ids)-10:] // 留最近的
+	}
+	return ids
+}
+
 type keyResultStore struct{}
 
 // WithResultStore 把结果暂存装入 ctx。
@@ -129,6 +157,9 @@ func resultStoreFrom(ctx context.Context) *ResultStore {
 	s, _ := ctx.Value(keyResultStore{}).(*ResultStore)
 	return s
 }
+
+// resultIDRe 匹配取回 id 的规范形态(r+序号)。
+var resultIDRe = regexp.MustCompile(`r\d+`)
 
 // digestMaxInput 是送入消化模型的原文上限(rune),防止消化本身打爆窗口。
 const digestMaxInput = 20000
@@ -286,13 +317,23 @@ func ReadResult() capability.Capability {
 			Offset int    `json:"offset"`
 		}
 		_ = json.Unmarshal([]byte(argsJSON), &args)
+		// id 归一化:模型实测会传 " r1"/"R1"/"结果r1" 这类脏形态,
+		// 逐字节比对全部落空。抽出规范形态再查。
+		if m := resultIDRe.FindString(strings.ToLower(args.ID)); m != "" {
+			args.ID = m
+		}
 		text, ok, gerr := rs.Get(ctx, args.ID)
 		if gerr != nil {
 			// 后端抖动 ≠ 不存在:引导模型稍后重试同一 id,而不是永久放弃。
 			return fmt.Sprintf("结果暂存后端暂时读取失败(%q 可能仍存在),请稍后重试 read_result。", args.ID), nil
 		}
 		if !ok {
-			return fmt.Sprintf("结果 %q 不存在或已随轮次结束丢弃。", args.ID), nil
+			// 顺带回报本会话真实可取回的 id:模型拿错 id 时能立即自纠,
+			// 排障时也一眼可见"存了什么 vs 查了什么"。
+			if ids := rs.List(ctx); len(ids) > 0 {
+				return fmt.Sprintf("结果 %q 不存在或已随轮次结束丢弃。当前会话可取回的 id:%s。", args.ID, strings.Join(ids, ", ")), nil
+			}
+			return fmt.Sprintf("结果 %q 不存在或已随轮次结束丢弃(当前会话没有任何暂存结果)。", args.ID), nil
 		}
 		runes := []rune(text)
 		if args.Offset < 0 || args.Offset >= len(runes) {
