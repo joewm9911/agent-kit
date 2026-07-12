@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 
@@ -97,9 +98,9 @@ func (r deliverRunner) Stream(ctx context.Context, in []*schema.Message) (*schem
 	return sr, nil
 }
 
-// TestDispatcherDeliverableFollowup:IM 路径终答之后,引用的交付物作为
-// KindDeliverable 独立消息随行,原文零损耗。
-func TestDispatcherDeliverableFollowup(t *testing.T) {
+// TestDispatcherDeliverableMerged:单份小交付物合并进终答卡,单条送达
+// (导读在上、原文紧随),事实位仍带清单。
+func TestDispatcherDeliverableMerged(t *testing.T) {
 	fc := &fakeChannel{}
 	ag := agent.New("a", "", deliverRunner{}, nil, agent.Options{})
 	d := NewDispatcher(nil)
@@ -108,13 +109,58 @@ func TestDispatcherDeliverableFollowup(t *testing.T) {
 	conv := channel.ConvRef{Channel: "fake", Chat: "c-del", User: "u1"}
 	h(context.Background(), channel.Inbound{Conv: conv, Text: "出月报", EventID: "ed1"})
 
+	waitFor(t, func() bool { return len(fc.messages()) >= 1 })
+	msgs := fc.messages()
+	if !strings.Contains(msgs[0], "#d1") || !strings.Contains(msgs[0], "全量数据") {
+		t.Fatalf("merged answer must carry lead + verbatim content, got %q", msgs[0])
+	}
+	// 稳定窗口内确认没有第二条(合并即单条)
+	time.Sleep(300 * time.Millisecond)
+	if n := len(fc.messages()); n != 1 {
+		t.Fatalf("small single deliverable must be one message, got %d", n)
+	}
+}
+
+// bigDeliverRunner 产出超过合并门的交付物(随行路径覆盖)。
+type bigDeliverRunner struct{}
+
+func (bigDeliverRunner) Generate(ctx context.Context, _ []*schema.Message) (*schema.Message, error) {
+	sink := runctx.DeliverableSinkFrom(ctx)
+	sink.NextCallSeq()
+	sink.Emit(runctx.Deliverable{ID: "d1", Title: "大报表", Source: "cap://skill/t/report",
+		Mode: capability.DeliverAttach, Content: "# 大报表\n" + strings.Repeat("行|", deliverMergeMax/2)})
+	return schema.AssistantMessage("总量与结构详见完整大报表 #d1,头部集中度高,建议关注补货节奏。", nil), nil
+}
+
+func (r bigDeliverRunner) Stream(ctx context.Context, in []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	out, err := r.Generate(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	sr, sw := schema.Pipe[*schema.Message](1)
+	sw.Send(out, nil)
+	sw.Close()
+	return sr, nil
+}
+
+// TestDispatcherDeliverableFollowup:超合并门的交付物维持"导读卡 + 随行卡",
+// 原文零损耗在第二条。
+func TestDispatcherDeliverableFollowup(t *testing.T) {
+	fc := &fakeChannel{}
+	ag := agent.New("a", "", bigDeliverRunner{}, nil, agent.Options{})
+	d := NewDispatcher(nil)
+	h := d.Handler(Binding{Channel: fc, Agent: ag})
+
+	conv := channel.ConvRef{Channel: "fake", Chat: "c-del-big", User: "u1"}
+	h(context.Background(), channel.Inbound{Conv: conv, Text: "出大报表", EventID: "ed2"})
+
 	waitFor(t, func() bool { return len(fc.messages()) >= 2 })
 	msgs := fc.messages()
-	if !strings.Contains(msgs[0], "#d1") {
-		t.Fatalf("answer should reference #d1, got %q", msgs[0])
+	if strings.Contains(msgs[0], "行|行|") {
+		t.Fatalf("oversized content must not merge into answer, got %d bytes", len(msgs[0]))
 	}
-	if !strings.Contains(msgs[1], "全量数据") || !strings.Contains(msgs[1], "#d1 · 月报") {
-		t.Fatalf("follow-up must carry verbatim deliverable with default header, got %q", msgs[1])
+	if !strings.Contains(msgs[1], "#d1 · 大报表") || !strings.Contains(msgs[1], "行|行|") {
+		t.Fatalf("follow-up must carry verbatim big deliverable, got head %q", msgs[1][:80])
 	}
 }
 
@@ -169,5 +215,26 @@ func TestCollapseBareReference(t *testing.T) {
 	ans, rest = collapseBareReference("#d1", nil)
 	if ans != "#d1" || rest != nil {
 		t.Fatal("no dels must be identity")
+	}
+}
+
+// TestMergeSingleDeliverable:单份小交付物合并进终答卡;大/多份维持两条。
+func TestMergeSingleDeliverable(t *testing.T) {
+	small := runctx.Deliverable{ID: "d1", Title: "报表", Content: "# 报表全文"}
+	// 小:合并,随行清空
+	ans, rest := mergeSingleDeliverable("导读结论。见 #d1。", []runctx.Deliverable{small})
+	if !strings.Contains(ans, "# 报表全文") || len(rest) != 0 {
+		t.Fatalf("small single must merge, got ans=%q rest=%d", ans, len(rest))
+	}
+	// 大:不合并
+	big := runctx.Deliverable{ID: "d1", Content: strings.Repeat("x", deliverMergeMax)}
+	ans, rest = mergeSingleDeliverable("导读", []runctx.Deliverable{big})
+	if strings.Contains(ans, "xxx") || len(rest) != 1 {
+		t.Fatal("oversized must keep two messages")
+	}
+	// 多份:不合并
+	ans, rest = mergeSingleDeliverable("导读", []runctx.Deliverable{small, {ID: "d2", Content: "y"}})
+	if len(rest) != 2 || strings.Contains(ans, "报表全文") {
+		t.Fatal("multiple must keep followups")
 	}
 }

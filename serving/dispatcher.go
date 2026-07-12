@@ -281,7 +281,11 @@ func (d *Dispatcher) run(key string, j job) {
 	// 把首个交付物原文折进终答卡,单条送达(实测:MiniMax 简洁性偏置下
 	// 这是常见形态)。有实质导读时保持"导读卡 + 随行卡"。
 	answer, dels = collapseBareReference(answer, dels)
-	lc.closeAnswer(ctx, answer, dels)
+	// 单交付物合并:导读+原文一条卡(尺寸门内);事实位仍带全量清单,
+	// 装饰器可辨识合并形态。followups 只发未被合并的。
+	merged := dels
+	answer, dels = mergeSingleDeliverable(answer, dels)
+	lc.closeAnswer(ctx, answer, merged)
 	// 随行消息:每份交付物独立发出(默认呈现);装饰器可对 KindDeliverable
 	// 置 Skip(比如已把内容内联进 answer 卡片)。头部文案走 texts
 	// (deliverable 键),可本地化、可置空(只发原文)。
