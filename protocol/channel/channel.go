@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+
+	"github.com/joewm9911/agent-kit/core/runctx"
 )
 
 // ConvRef 定位一个 IM 会话(以及本次入站的回复路由信息)。
@@ -39,6 +41,9 @@ const (
 	KindAnswer     = "answer"     // 终稿
 	KindQuestion   = "question"   // ask_user/审批问句,或挂起收口
 	KindError      = "error"      // 轮次失败
+	// KindDeliverable 是交付物随行消息(终答之后逐个发出);装饰器可
+	// 重排样式,或在把交付物内联进 answer 后对本类消息置 Skip。
+	KindDeliverable = "deliverable"
 )
 
 // Outbound 是要发出的一条消息:语义事实由框架填充,呈现由装饰器决定
@@ -54,6 +59,10 @@ type Outbound struct {
 	Progress []string
 	// Meta 是元信息事实(耗时/调用数),通道可渲染为脚注或忽略。
 	Meta string
+	// Deliverables 是本轮交付物原文(框架事实位,只在 answer 与
+	// deliverable 两类消息上出现):answer 携带全部随行清单供装饰器
+	// 内联定制;每条 deliverable 随行消息携带自己那一份。
+	Deliverables []runctx.Deliverable
 	// Native 是通道原生载荷:非 nil 时适配器原样透传(飞书 = 完整卡片
 	// JSON),其余字段不再参与渲染。框架永远不填,装饰器专属输出位。
 	Native map[string]any

@@ -69,6 +69,7 @@ import (
 	"github.com/joewm9911/agent-kit/impl/interactor/cli"
 	"github.com/joewm9911/agent-kit/protocol/resource"
 	"github.com/joewm9911/agent-kit/runtime/observe"
+	"github.com/joewm9911/agent-kit/serving"
 )
 
 // setDefault 只在未设置时注入默认值(外部已导出的环境优先)。
@@ -278,11 +279,16 @@ func main() {
 		if input == "exit" {
 			break
 		}
-		answer, err := ag.Run(ctx, sessionID, input)
+		turnCtx, sink := runctx.WithDeliverableSink(ctx)
+		answer, err := ag.Run(turnCtx, sessionID, input)
 		if err != nil {
 			fmt.Println("error:", err)
 			continue
 		}
 		fmt.Println("\n" + answer)
+		// 交付物随行:终答引用的 #dN 原文分节打印(零损耗直达,不经模型转写)
+		for _, d := range serving.ResolveDeliverables(answer, sink) {
+			fmt.Printf("\n── 交付物 #%s · %s(%s)──\n%s\n", d.ID, d.Title, d.Source, d.Content)
+		}
 	}
 }

@@ -218,6 +218,8 @@ func (d *Dispatcher) run(key string, j job) {
 	// 入口层拦截:第三方可在此把传输 baggage 提升/派生进 ctx,与 HTTP/A2A
 	// 统一。此刻 origin 的 baggage 已由 WithoutCancel 保活。
 	ctx = applyContextHooks(ctx, InboundInfo{Channel: j.in.Conv.Channel, User: j.in.Conv.User, Session: key})
+	// 交付物收集器:标记能力的原文经 Ring 0 捕获至此,终答引用即随行。
+	ctx, sink := runctx.WithDeliverableSink(ctx)
 
 	// 挂起模式:共享编排(suspendturn.go)装配可挂起交互通道与效果/
 	// 交互日志,IM 的传输策略是问句发进会话(带 question 语义过装饰器)。
@@ -274,7 +276,19 @@ func (d *Dispatcher) run(key string, j job) {
 		lc.close(ctx, channel.KindError, fmt.Sprintf(j.b.texts().Failure, runErr.Error()))
 		return
 	}
-	lc.close(ctx, channel.KindAnswer, answer)
+	dels := resolveDeliverables(answer, sink, d.logger)
+	lc.closeAnswer(ctx, answer, dels)
+	// 随行消息:每份交付物独立发出(默认呈现);装饰器可对 KindDeliverable
+	// 置 Skip(比如已把内容内联进 answer 卡片)。
+	for _, del := range dels {
+		if _, err := d.send(ctx, j.b, j.in.Conv, channel.Outbound{
+			Kind: channel.KindDeliverable, Markdown: true,
+			Text:         fmt.Sprintf("**交付物 #%s · %s**\n\n%s", del.ID, del.Title, del.Content),
+			Deliverables: []runctx.Deliverable{del},
+		}); err != nil {
+			d.logger.Error("send deliverable failed", slog.String("id", del.ID), slog.String("err", err.Error()))
+		}
+	}
 }
 
 // streamReply 先发占位消息,拿流式增量按节流间隔刷新同一条消息。

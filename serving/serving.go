@@ -137,12 +137,32 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		s.suspendableMessage(w, ctx, a, req.Session, req.Input)
 		return
 	}
+	ctx, sink := runctx.WithDeliverableSink(ctx)
 	answer, err := a.Run(ctx, req.Session, req.Input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"session": req.Session, "status": "done", "answer": answer})
+	writeJSON(w, doneResponse(req.Session, answer, sink, s.logger))
+}
+
+// doneResponse 组装完成响应:answer + 引用随行的交付物数组(无则省略)。
+func doneResponse(session, answer string, sink *runctx.DeliverableSink, logger *slog.Logger) any {
+	dels := resolveDeliverables(answer, sink, logger)
+	if len(dels) == 0 {
+		return map[string]string{"session": session, "status": "done", "answer": answer}
+	}
+	type deliverableJSON struct {
+		ID      string `json:"id"`
+		Title   string `json:"title"`
+		Source  string `json:"source"`
+		Content string `json:"content"`
+	}
+	out := make([]deliverableJSON, 0, len(dels))
+	for _, d := range dels {
+		out = append(out, deliverableJSON{ID: d.ID, Title: d.Title, Source: d.Source, Content: d.Content})
+	}
+	return map[string]any{"session": session, "status": "done", "answer": answer, "deliverables": out}
 }
 
 // suspendableMessage 以挂起模式执行一轮:编排(认领答案/重放/挂起收口)
@@ -163,6 +183,7 @@ func (s *Server) suspendableMessage(w http.ResponseWriter, ctx context.Context, 
 		turnInput, turnID = rec.Input, rec.TurnID
 	}
 	ctx, turn := beginSuspendTurn(ctx, s.suspendKV, turnID, nil)
+	ctx, sink := runctx.WithDeliverableSink(ctx)
 
 	answer, runErr := a.Run(ctx, session, turnInput)
 	question, suspended, err := turn.finish(ctx, session, turnInput, runErr)
@@ -174,7 +195,7 @@ func (s *Server) suspendableMessage(w http.ResponseWriter, ctx context.Context, 
 		writeJSON(w, map[string]string{"session": session, "status": "waiting", "question": question})
 		return
 	}
-	writeJSON(w, map[string]string{"session": session, "status": "done", "answer": answer})
+	writeJSON(w, doneResponse(session, answer, sink, s.logger))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

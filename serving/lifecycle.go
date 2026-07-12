@@ -150,15 +150,24 @@ func (lc *lifecycle) snapshotLocked() []string {
 	return lines
 }
 
+// closeAnswer 以终答收口并携带交付物事实位(装饰器可据此内联定制)。
+func (lc *lifecycle) closeAnswer(ctx context.Context, text string, dels []runctx.Deliverable) {
+	lc.closeOut(ctx, channel.KindAnswer, text, dels)
+}
+
 // close 收口:answer/question/error 统一出口。占位在场先 Update,
 // 失败(通道不支持等)退化 Send;占位不在场直接 Send。
 func (lc *lifecycle) close(ctx context.Context, kind, text string) {
+	lc.closeOut(ctx, kind, text, nil)
+}
+
+func (lc *lifecycle) closeOut(ctx context.Context, kind, text string, dels []runctx.Deliverable) {
 	lc.mu.Lock()
 	lc.closed = true
 	msgID, lines, tools := lc.msgID, lc.snapshotLocked(), lc.tools
 	lc.mu.Unlock()
 
-	out := channel.Outbound{Kind: kind, Text: text, Markdown: true, Progress: lines}
+	out := channel.Outbound{Kind: kind, Text: text, Markdown: true, Progress: lines, Deliverables: dels}
 	if kind == channel.KindAnswer || kind == channel.KindError {
 		out.Meta = fmt.Sprintf(lc.b.texts().Summary, time.Since(lc.start).Seconds(), tools)
 	}
