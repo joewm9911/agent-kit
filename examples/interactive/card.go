@@ -24,10 +24,11 @@ func init() {
 }
 
 var cardStyle = map[string]struct{ title, color string }{
-	channel.KindProcessing: {"运营助手 · 处理中", "grey"},
-	channel.KindAnswer:     {"运营助手", "blue"},
-	channel.KindQuestion:   {"需要你确认", "orange"},
-	channel.KindError:      {"处理失败", "red"},
+	channel.KindProcessing:  {"运营助手 · 处理中", "grey"},
+	channel.KindAnswer:      {"运营助手", "blue"},
+	channel.KindQuestion:    {"需要你确认", "orange"},
+	channel.KindError:       {"处理失败", "red"},
+	channel.KindDeliverable: {"交付物", "turquoise"}, // 原文随行卡(零损耗直达)
 }
 
 // progressVisible 是过程区直接可见的行数上限;更早的步骤收进
@@ -38,6 +39,9 @@ func opsCard(_ context.Context, _ channel.ConvRef, out channel.Outbound) channel
 	style, ok := cardStyle[out.Kind]
 	if !ok {
 		return out // 杂项通知(中断确认等)保持默认渲染
+	}
+	if out.Kind == channel.KindDeliverable && len(out.Deliverables) == 1 {
+		style.title = fmt.Sprintf("交付物 #%s · %s", out.Deliverables[0].ID, out.Deliverables[0].Title)
 	}
 	var elements []any
 	if len(out.Progress) > 0 {

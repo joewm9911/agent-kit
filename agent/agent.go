@@ -165,6 +165,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 	// 背景来源)随 ctx 下发,skill/component 内部同样可见。
 	ctx = loop.WithResultStore(ctx, loop.NewResultStore(a.resultKV, a.resultTTL))
 	ctx = loop.WithConversationSnapshot(ctx, msgs)
+	ctx, sink := runctx.EnsureDeliverableSink(ctx) // direct 判定需要;出站层已装则复用
 	out, err := a.runner.Generate(ctx, msgs)
 	if err != nil {
 		if cs.Interrupted() {
@@ -195,6 +196,12 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 		return "", err
 	}
 	answer := out.Content
+	// direct 交付:本轮唯一交付物为 direct 语义且是最后一次工具调用时,
+	// 终答替换为原文——最后写手拥有交付物,模型的收口留在轨迹里不外发。
+	// 守卫(拒绝核对/收口检查)已在 ReviewModel 作用于模型原终答。
+	if d, ok := directDeliverable(sink); ok {
+		answer = d.Content
+	}
 	if a.structured != nil {
 		enforced, eerr := a.structured.Enforce(ctx, a.model, answer)
 		if eerr != nil {
@@ -549,4 +556,26 @@ func (a *Agent) invokeAsSub(ctx context.Context, argsJSON string) (string, error
 		return "", err
 	}
 	return out.Content, nil
+}
+
+// directDeliverable 判定 direct 交付是否触发:sink 中恰有一个 direct
+// 语义条目,且它是本轮最后一次工具调用(其后模型再无别的动作,说明
+// 这一轮的目的就是取这份交付物)。不满足则退化为 attach 行为。
+// 流式路径(Stream)不做替换:token 已外发,交付物走随行呈现。
+func directDeliverable(sink *runctx.DeliverableSink) (runctx.Deliverable, bool) {
+	var cand *runctx.Deliverable
+	for _, it := range sink.Items() {
+		if it.Mode != capability.DeliverDirect {
+			continue
+		}
+		if cand != nil {
+			return runctx.Deliverable{}, false // 多个 direct:无法独占,退化 attach
+		}
+		c := it
+		cand = &c
+	}
+	if cand == nil || cand.Seq != sink.LastCallSeq() {
+		return runctx.Deliverable{}, false
+	}
+	return *cand, true
 }
