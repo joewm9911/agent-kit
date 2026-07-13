@@ -404,3 +404,57 @@ func TestComponentExportImport(t *testing.T) {
 		t.Fatalf("self import must fail, got %v", err)
 	}
 }
+
+// TestInlineComponentMountsTools:mode: inline 的 component,声明工具直挂
+// 宿主目录("工具不出 ns"的唯一显式豁免);卡片本体经导出 skill 可见。
+func TestInlineComponentMountsTools(t *testing.T) {
+	setupAppTestFakes()
+	appPath := writeTree(t, map[string]string{
+		"app.yaml": `
+model: {provider: marker, config: {resp: hi}}
+agents: [agents/helper.yaml]
+`,
+		"agents/helper.yaml": `
+description: 测试
+namespaces: [../namespaces/inlinens.yaml]
+`,
+		"namespaces/inlinens.yaml": `
+sources:
+  - {name: svc, type: nstest}
+components:
+  - name: qa_card
+    mode: inline
+    prompt: "按步骤:先 search 再总结。问题:{$input}"
+    tools: ["tools/svc/search"]
+skills:
+  - name: quick-qa
+    description: 快速问答过程卡
+    use: "components/qa_card"
+`,
+	})
+	spec, err := LoadApp(appPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := BuildApp(context.Background(), spec, BuildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounted := app.AgentMounts["helper"]
+	// 工具直挂:tools/svc/search 进了 agent 挂载目录
+	if _, err := mounted.Get("cap://tool/svc/search"); err != nil {
+		t.Fatalf("inline component tools must mount to the agent catalog: %v", err)
+	}
+	// 卡片经导出 skill 可见,调用返回执行指引
+	card, err := mounted.Get("cap://skill/inlinens/quick-qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := capability.Invoke(context.Background(), card, `{"input":"降噪耳机多少钱"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[过程卡|") || !strings.Contains(out, "先 search") {
+		t.Fatalf("exported skill must return the guide, got %q", out)
+	}
+}

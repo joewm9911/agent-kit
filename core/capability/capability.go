@@ -101,6 +101,11 @@ func ParseDeliver(s string) (DeliverMode, error) {
 // 计划面筛选(engine)都要认它,而 engine 不得依赖 loop。
 const TagRawResult = "result:raw"
 
+// TagProcedureCard 标记过程卡能力(mode: inline 的 skill):结果是执行
+// 指引而非数据——消化会毁掉指令结构(豁免 digest),一次性计划也编排
+// 不了"照着指引临场干"(rewoo 计划面剔除)。
+const TagProcedureCard = "procedure-card"
+
 // Meta 是能力的自描述清单。Description 会作为工具描述暴露给模型,
 // 是大脑调用决策的直接依据,写得越清楚决策越准。
 type Meta struct {

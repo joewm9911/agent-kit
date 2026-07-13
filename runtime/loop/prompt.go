@@ -56,12 +56,15 @@ You have the todo_write and todo_read tools to manage and plan tasks. Use these 
 - Mark a task completed IMMEDIATELY after finishing it; do not batch up completions.
 - ONLY mark a task completed when it is FULLY accomplished. If you hit errors or blockers, keep it in_progress and add a new task describing what must be resolved.
 - Remove tasks that are no longer relevant from the list entirely.
-- Sequence at the end of a task: finish your bookkeeping (the last todo_write) FIRST, then write the answer. The answer is always your last message — never call todo_write after delivering the result.`
+- Sequence at the end of a task: finish your bookkeeping (the last todo_write) FIRST, then write the answer. The answer is always your last message — never call todo_write after delivering the result.
+- When a [过程卡|name] guide lists 3 or more steps, record them with todo_write before executing, and mark each completed as you go.
+`
 
 const loopPromptTail = `
 
 # Completion and stopping
 - When a tool result begins with a deliverable marker like [交付物#d1|...], give a one-or-two-sentence takeaway and reference #d1 in your final message — the full content travels with your answer automatically. Do not restate its body; deliverable references are exempt from the conciseness rules.
+- A tool result beginning with [过程卡|name] is an execution guide, not a completed result: immediately carry out its steps with the tools you have, and do not switch to other work until the guide is fulfilled. Acknowledging the guide without executing it is a failed turn.
 - Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as "all tasks completed" or "the plan has been output above".
 - Before ending your turn, check your final message. If it is a plan you have not executed, a promise about work you have not done ("I'll...", "please wait"), or a narration of tool calls you never made, do that work now with real tool calls. Text does not execute anything.
 - When the goal is achieved, give the final answer synthesizing all tool results, then stop; do not keep calling tools for their own sake.

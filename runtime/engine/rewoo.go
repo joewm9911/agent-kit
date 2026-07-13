@@ -56,7 +56,8 @@ func BuildRewoo(ctx context.Context, asm *Assembly) (Runner, error) {
 		// 反应式工具进不了一次性计划:read_result 的 id、ask_user 的答复
 		// 都依赖运行期状态,planner 无从预知只能编造(实测编出的 read_result
 		// 步全部失败进证据)。从计划面剔除,证据不足由 solver 如实说明。
-		if hasTag(meta.Tags, capability.TagInteractive) || hasTag(meta.Tags, capability.TagRawResult) {
+		if hasTag(meta.Tags, capability.TagInteractive) || hasTag(meta.Tags, capability.TagRawResult) ||
+			hasTag(meta.Tags, capability.TagProcedureCard) {
 			continue
 		}
 		tools[meta.Ref.Name] = c

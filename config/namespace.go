@@ -233,20 +233,38 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			continue
 		}
 
-		// 循环族:engine 同样必填——执行形态决定成本模型(direct 1~2 次
+		// 循环族:engine 必填——执行形态决定成本模型(direct 1~2 次
 		// 调用,react N 次,plan-execute N×M 次),不做隐式默认。
-		switch cc.Engine {
-		case "":
-			return fmt.Errorf("namespace %s: component %s: engine must be declared explicitly: direct (single shot) | react (loop) | plan-execute (planning loop) | reflection | router (triage) | rewoo (plan once, execute in parallel) | a registered template", ns.Name, cc.Name)
-		case "graph", "workflow":
-			return fmt.Errorf("namespace %s: component %s: engine %s requires a steps declaration (orchestration family)", ns.Name, cc.Name, cc.Engine)
+		// 例外:mode: inline(过程卡)没有内部循环,engine 必须缺席
+		// (互斥校验在 skill.Build,含 deliver/todo/model 等全套)。
+		if cc.Mode != "inline" {
+			switch cc.Engine {
+			case "":
+				return fmt.Errorf("namespace %s: component %s: engine must be declared explicitly: direct (single shot) | react (loop) | plan-execute (planning loop) | reflection | router (triage) | rewoo (plan once, execute in parallel) | a registered template (or mode: inline for a procedure card)", ns.Name, cc.Name)
+			case "graph", "workflow":
+				return fmt.Errorf("namespace %s: component %s: engine %s requires a steps declaration (orchestration family)", ns.Name, cc.Name, cc.Engine)
+			}
 		}
 		caps, err := resolveToolFace(ns.Name, cc.Tools, local, comps, imports, deps.exports, deps.global)
 		if err != nil {
 			return fmt.Errorf("namespace %s: component %s: %w", ns.Name, cc.Name, err)
 		}
+		// inline 过程卡:声明的工具直挂宿主目录(主循环亲自执行是该形态
+		// 的定义,此为"工具不出命名空间"的唯一显式豁免);同工具被多张
+		// 卡引用时幂等跳过。
+		if cc.Mode == "inline" {
+			for _, tc := range caps {
+				if _, err := deps.global.Get(tc.Meta().Ref.String()); err == nil {
+					continue // 已挂载(多卡共用/多 ns 同源)
+				}
+				if err := deps.global.Add(tc); err != nil {
+					return fmt.Errorf("namespace %s: component %s: mount inline tool %s: %w", ns.Name, cc.Name, tc.Meta().Ref, err)
+				}
+			}
+		}
 		decl := &skill.Declaration{
 			Kind:         "component",
+			Mode:         cc.Mode,
 			Deliver:      cc.Deliver,
 			Name:         ns.Name + "/" + cc.Name,
 			Prompt:       cc.Prompt,

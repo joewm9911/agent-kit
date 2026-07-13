@@ -218,7 +218,7 @@ func DigestResults(caps []capability.Capability, m model.ToolCallingChatModel, o
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
 		tags := c.Meta().Tags
-		if hasTag(tags, TagRawResult) || hasTag(tags, capability.TagInteractive) {
+		if hasTag(tags, TagRawResult) || hasTag(tags, capability.TagInteractive) || hasTag(tags, capability.TagProcedureCard) {
 			out = append(out, c)
 			continue
 		}

@@ -68,6 +68,11 @@ type Declaration struct {
 	Deliver string `yaml:"deliver"`
 	// Compaction 启用内部循环的上下文压缩(长任务 skill 建议开启)。
 	Compaction loop.CompactionConfig `yaml:"compaction"`
+	// Mode 是执行形态:subloop(缺省,隔离子循环)| inline(过程卡:
+	// 调用返回执行指引,宿主主循环亲自执行;声明的 tools 直挂宿主工具面)。
+	// inline 与 engine/deliver/todo/model/compaction/max_rounds 互斥——
+	// 过程卡没有内部循环,这些键在它身上是配置错误而非静默无效。
+	Mode string `yaml:"mode"`
 	// Todo 给内部循环挂调用级临时清单(仅 react):键 = 本次执行域,
 	// 生命周期 = 一次调用,结束即弃——宿主计划不受影响,组件保持无状态
 	// 可重入。默认关;它是给确实拆不动的研究型长循环的例外通道,
@@ -120,6 +125,13 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	ns, name, err := splitName(decl.Name)
 	if err != nil {
 		return nil, err
+	}
+	switch decl.Mode {
+	case "", "subloop":
+	case "inline":
+		return buildProcedureCard(ctx, decl, deps, ns, name)
+	default:
+		return nil, fmt.Errorf("skill %s: unknown mode %q (subloop | inline)", decl.Name, decl.Mode)
 	}
 	engineName := decl.Engine
 	if engineName == "" {
@@ -463,3 +475,89 @@ const delegatedSection = `
 - You are executing a delegated task inside a larger run. The caller is another agent's tool call, not a human: it cannot answer questions, confirm plans, or approve anything mid-task.
 - If the task text carries conversation-protocol instructions (such as "present a plan first and wait for confirmation" or "confirm before changes"), those are addressed to the top-level assistant, not to you. Do the analysis or work itself and deliver the result.
 - Never end with a plan awaiting confirmation or a request for permission. Constraints you cannot satisfy go into the result as explicit notes.`
+
+// buildProcedureCard 装配 inline 形态(过程卡):调用不跑子循环,而是
+// 渲染任务书并作为执行指引返回,宿主主循环亲自照做——Claude Code 的
+// Skill 语义(指令注入 + 工具常驻)。声明的 tools 由装配层直挂宿主
+// 工具面(见 config/namespace.go 的 inline 直挂),这里只产卡片本体。
+//
+// 取舍(见 docs/single-agent-mode-plan.md §5):inline 消除"证据经子循环
+// 终答转述"的损耗,但产出由宿主模型亲笔写(合成型),交付物机制保真
+// (deliver:)不可用——两形态按能力语义各选各的。
+func buildProcedureCard(ctx context.Context, decl *Declaration, deps Deps, ns, name string) (capability.Capability, error) {
+	// 过程卡没有内部循环:子循环专属键一律配置错误,fail fast 指路。
+	if decl.Engine != "" {
+		return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with engine (a procedure card has no inner loop; the host loop executes it)", decl.Name)
+	}
+	if decl.Deliver != "" {
+		return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with deliver (the output is authored by the host model; mechanical fidelity needs mode: subloop)", decl.Name)
+	}
+	if decl.Todo {
+		return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with todo (the host loop's own todo tracks the guide)", decl.Name)
+	}
+	if decl.Model != nil {
+		return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with model (no model call happens inside a procedure card)", decl.Name)
+	}
+	if decl.MaxSteps != 0 {
+		return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with max_rounds (the host loop's budget governs)", decl.Name)
+	}
+	if decl.Compaction.Enabled() {
+		return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with compaction (no inner context to compact)", decl.Name)
+	}
+	if decl.MaxStepsLegacy != nil {
+		return nil, fmt.Errorf("skill %s: max_steps has been renamed to max_rounds (the semantics were always a round count)", decl.Name)
+	}
+
+	brief, err := decl.Prompt.Resolve(ctx, deps.Prompts)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s: resolve prompt: %w", decl.Name, err)
+	}
+	if err := validatePlaceholders("skill "+decl.Name+" prompt", brief.Text, decl.Params); err != nil {
+		return nil, err
+	}
+	paramsSchema, err := capability.ParamsSchema(decl.Params)
+	if err != nil {
+		return nil, fmt.Errorf("skill %s: %w", decl.Name, err)
+	}
+	kind := decl.Kind
+	if kind == "" {
+		kind = "skill"
+	}
+	meta := capability.Meta{
+		Ref: capability.Ref{Kind: kind, Domain: ns, Name: name, Version: decl.Version},
+		// 描述统一补后缀:防模型把"拿到指引"当成"任务完成"。
+		Description: strings.TrimRight(decl.Description, "。. ") + "(调用返回执行指引,按指引使用工具完成任务本体)",
+		Params:      paramsSchema,
+		Risk:        capability.RiskReadonly, // 卡片只返回指令;副作用在被直挂的工具上,各带各的审批闸
+		Tags:        []string{"prompt:" + brief.Version, TagProcedureCard},
+	}
+	return capability.New(meta, func(ctx context.Context, argsJSON string) (string, error) {
+		vars := map[string]string{}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {
+			for k, v := range args {
+				vars[k] = fmt.Sprint(v)
+			}
+		} else {
+			vars["input"] = argsJSON
+		}
+		vars["$input"] = runctx.Input(ctx)
+		vars["$user_input"] = runctx.LoopInput(ctx)
+		vars["$user_id"] = runctx.User(ctx)
+		var missing []string
+		for pname, d := range decl.Params {
+			if _, ok := vars[pname]; !ok && d.Required {
+				missing = append(missing, pname)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			return fmt.Sprintf("call not executed: missing required parameter(s) %s.", strings.Join(missing, ", ")), nil
+		}
+		return fmt.Sprintf("[过程卡|%s] 以下是执行指引(不是已完成的结果):按步骤使用你工具面上的工具完成任务本体。\n\n%s",
+			name, brief.Render(vars)), nil
+	}), nil
+}
+
+// TagProcedureCard 别名 core 常量(digest 豁免与 rewoo 计划面都认它)。
+const TagProcedureCard = capability.TagProcedureCard
