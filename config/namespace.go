@@ -271,9 +271,21 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			Params:       cc.Params, // 循环族 component 的入参声明:工具面 schema + P4 占位符校验
 			Engine:       cc.Engine,
 			EngineConfig: cc.EngineConfig,
-			MaxSteps:     eff.maxSteps(),
-			Compaction:   eff.compaction(),
 			Todo:         cc.Todo,
+		}
+		if cc.Mode == "inline" {
+			// 过程卡没有内部循环:画像链继承的 max_rounds/compaction 不注入
+			// (注入会误触互斥校验);组件级**显式**声明仍要报错——那是
+			// 真配置错误,不是继承的背景值。
+			if cc.Profile.Loop.MaxSteps != nil {
+				return fmt.Errorf("namespace %s: component %s: mode: inline is mutually exclusive with loop.max_rounds (no inner loop)", ns.Name, cc.Name)
+			}
+			if cc.Profile.Loop.Compaction != nil {
+				return fmt.Errorf("namespace %s: component %s: mode: inline is mutually exclusive with loop.compaction (no inner context)", ns.Name, cc.Name)
+			}
+		} else {
+			decl.MaxSteps = eff.maxSteps()
+			decl.Compaction = eff.compaction()
 		}
 		// model 走执行画像三级链(mount > agent > app;ns/component 不可自指)。
 		// 解析出的 model 与 app 默认相同 → 复用共享 DefaultModel(不重建);
