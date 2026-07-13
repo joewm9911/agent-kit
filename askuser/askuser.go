@@ -35,6 +35,9 @@ func New() capability.Capability {
 			}
 			return "提问失败:" + err.Error() + "。请基于已有信息继续。", nil
 		}
+		// 问答是真实用户对话:记入轮级交互日志,由 agent 收口落会话——
+		// 子循环内的问答不再随子循环丢弃(下一轮大脑可见,不重问)。
+		runctx.RecordInteraction(ctx, question, answer)
 		return "用户回答:" + answer, nil
 	})
 }

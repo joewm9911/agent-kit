@@ -265,6 +265,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		decl := &skill.Declaration{
 			Kind:         "component",
 			Mode:         cc.Mode,
+			Context:      cc.Context,
 			Deliver:      cc.Deliver,
 			Name:         ns.Name + "/" + cc.Name,
 			Prompt:       cc.Prompt,

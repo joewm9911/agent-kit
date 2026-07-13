@@ -68,6 +68,11 @@ type Declaration struct {
 	Deliver string `yaml:"deliver"`
 	// Compaction 启用内部循环的上下文压缩(长任务 skill 建议开启)。
 	Compaction loop.CompactionConfig `yaml:"compaction"`
+	// Context 是子循环起始上下文:fresh(缺省,零上下文起步)| fork
+	// (以调用方对话快照+任务书起步;背景无损继承,内部过程仍不回流)。
+	// 与编排步骤的同名键同一词汇;fork 每次调用复制一份历史 token,
+	// 按需声明。inline 形态与它互斥(过程卡本就共享宿主上下文)。
+	Context string `yaml:"context"`
 	// Mode 是执行形态:subloop(缺省,隔离子循环)| inline(过程卡:
 	// 调用返回执行指引,宿主主循环亲自执行;声明的 tools 直挂宿主工具面)。
 	// inline 与 engine/deliver/todo/model/compaction/max_rounds 互斥——
@@ -129,9 +134,17 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	if err != nil {
 		return nil, err
 	}
+	switch decl.Context {
+	case "", "fresh", "fork":
+	default:
+		return nil, fmt.Errorf("skill %s: unknown context %q (fresh | fork)", decl.Name, decl.Context)
+	}
 	switch decl.Mode {
 	case "", "subloop":
 	case "inline":
+		if decl.Context == "fork" {
+			return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with context: fork (a procedure card already shares the host context)", decl.Name)
+		}
 		return buildProcedureCard(ctx, decl, deps, ns, name)
 	default:
 		return nil, fmt.Errorf("skill %s: unknown mode %q (subloop | inline)", decl.Name, decl.Mode)
@@ -326,8 +339,11 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 			ctx = runctx.WithPersona(ctx, persona)
 		}
 		// 上下文边界:独立会话,内部过程不回流宿主,只返回最终结果。
-		// 使用点声明 context: fork 时,以调用方对话快照 + 任务起步
-		// (背景无损继承,隔离方向不变)。
+		// 使用点(编排步骤)或声明级 context: fork 时,以调用方对话快照
+		// + 任务起步(背景无损继承,隔离方向不变)。
+		if decl.Context == "fork" {
+			ctx = runctx.WithForkContext(ctx)
+		}
 		out, err := runner.Generate(ctx, loop.ForkMessages(ctx, schema.UserMessage(task)))
 		if err != nil {
 			return "", err

@@ -438,6 +438,9 @@ type ComponentConfig struct {
 	// Mode 是执行形态:subloop(缺省)| inline(过程卡,工具直挂宿主;
 	// 语义见 skill.Declaration.Mode 与 docs/single-agent-mode-plan.md)。
 	Mode string `yaml:"mode"`
+	// Context 是子循环起始上下文:fresh(缺省)| fork(调用方对话快照
+	// 起步)。声明级缺省;编排步骤的同名键按使用点覆盖。
+	Context string `yaml:"context"`
 	// Todo 给内部循环挂调用级临时清单(仅 react;调用结束即弃)。
 	// 默认关——component 长到需要计划通常是"该拆成结构"的信号,
 	// 这是给确实拆不动的研究型长循环的例外通道。

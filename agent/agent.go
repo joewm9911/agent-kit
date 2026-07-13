@@ -172,7 +172,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 			// 用户主动叫停:以正常回答收束,轮次照常入会话。
 			answer := "已按你的要求中断当前任务。中断前的执行情况见记录,需要时告诉我从哪里继续。"
 			if a.store != nil {
-				if aerr := a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...); aerr != nil {
+				if aerr := a.store.Append(ctx, sessionID, a.turnMessages(ctx, rec, input, answer)...); aerr != nil {
 					slog.Warn("agent: append interrupted-turn record", "agent", a.name, "session", sessionID, "err", aerr)
 				}
 			}
@@ -208,7 +208,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 			// 与失败轮落痕政策一致:本轮工作(原始回答+执行记录)进会话,
 			// 下一轮可基于它修复格式,而不是整轮从零重来。
 			if a.store != nil {
-				turn := a.turnMessages(rec, input, answer)
+				turn := a.turnMessages(ctx, rec, input, answer)
 				turn = append(turn, schema.SystemMessage(fmt.Sprintf(
 					"[结构化输出失败] 上面的回答未能通过 schema 校验:%v。重试时修复格式即可,不要重做已完成的工作。", eerr)))
 				if aerr := a.store.Append(ctx, sessionID, turn...); aerr != nil {
@@ -220,7 +220,7 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 		answer = enforced
 	}
 	if a.store != nil {
-		if err := a.store.Append(ctx, sessionID, a.turnMessages(rec, input, answer)...); err != nil {
+		if err := a.store.Append(ctx, sessionID, a.turnMessages(ctx, rec, input, answer)...); err != nil {
 			return "", fmt.Errorf("append session: %w", err)
 		}
 		a.scheduleCompact(ctx, sessionID) // 异步:摘要是维护工作,不让用户等
@@ -239,14 +239,32 @@ func (a *Agent) withRecorder(ctx context.Context) (context.Context, *loop.ToolRe
 
 // turnMessages 组装一轮的持久化消息:user → [执行记录] → assistant。
 // 工具轨迹入会话后,下一轮模型知道自己做过什么、看到过什么。
-func (a *Agent) turnMessages(rec *loop.ToolRecorder, input, answer string) []*schema.Message {
+func (a *Agent) turnMessages(ctx context.Context, rec *loop.ToolRecorder, input, answer string) []*schema.Message {
 	msgs := []*schema.Message{schema.UserMessage(input)}
 	if rec != nil {
 		if tm := loop.TrajectoryMessage(rec.Records(), a.record); tm != nil {
 			msgs = append(msgs, tm)
 		}
 	}
+	if im := interactionMessage(ctx); im != nil {
+		msgs = append(msgs, im)
+	}
 	return append(msgs, schema.AssistantMessage(answer, nil))
+}
+
+// interactionMessage 把本轮用户问答(含子循环内发生的)整理成会话记录:
+// 它们是用户亲口给的事实,丢了下一轮就会被再问一遍。
+func interactionMessage(ctx context.Context) *schema.Message {
+	items := runctx.Interactions(ctx)
+	if len(items) == 0 {
+		return nil
+	}
+	var sb strings.Builder
+	sb.WriteString("[用户交互记录] 本轮向用户确认过以下信息(后续轮次直接使用,不要重复询问):")
+	for _, it := range items {
+		fmt.Fprintf(&sb, "\n- 问:%s\n  答:%s", it.Question, it.Answer)
+	}
+	return schema.SystemMessage(sb.String())
 }
 
 // Stream 流式执行一轮对话。返回的流复制两份:一份给调用方,
@@ -318,7 +336,7 @@ func (a *Agent) Stream(ctx context.Context, sessionID, input string) (*schema.St
 			return
 		}
 		// 流结束即主循环结束,记录器此时已收齐本轮全部工具调用。
-		turn := a.turnMessages(rec, input, full.Content)
+		turn := a.turnMessages(ctx, rec, input, full.Content)
 		turn[len(turn)-1] = full
 		if recvErr != nil {
 			// 与 Run 的失败落痕同规:截断的回答带上失败标注入史,
