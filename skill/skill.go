@@ -107,6 +107,9 @@ type Deps struct {
 	// Truncate 是工具结果硬截断上限(rune;0 用内置默认)。与宿主 agent
 	// 同一画像键(digest.truncate),装配层透传,保证子循环同一纪律。
 	Truncate int
+	// DegradeKeep 是暂存降级时的应急保留量(rune;0 用内置默认 24000),
+	// 画像键 digest.degrade_keep。
+	DegradeKeep int
 	// Todo 是组件级调用清单的持有对象(仅 decl.Todo 时用),由装配层注入
 	// 后端。component 的清单是调用级临时草稿(结束即弃),用进程内后端即可。
 	Todo *todo.Todo
@@ -458,7 +461,7 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
 	caps = loop.DedupCalls(caps) // 重复调用断路器(执行域按调用唯一,计数互不串)
 	caps = loop.DeliverResults(caps) // 交付物捕获(嵌套 skill 的产出同样进轮级 sink)
-	caps = loop.DigestResults(caps, m, deps.DigestOver)
+	caps = loop.DigestResults(caps, m, deps.DigestOver, deps.DegradeKeep)
 	caps = loop.TruncateResults(caps, deps.Truncate)
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)

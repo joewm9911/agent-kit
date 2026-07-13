@@ -25,7 +25,7 @@ func TestProgressNestedSpan(t *testing.T) {
 		return strings.Repeat("库存流水;", 2000), nil // 超阈值触发消化
 	})
 	m := testmodel.New(schema.AssistantMessage("要点:库存充足", nil))
-	caps := loop.DigestResults([]capability.Capability{big}, m, 3000)
+	caps := loop.DigestResults([]capability.Capability{big}, m, 3000, 0)
 
 	var sb strings.Builder
 	ctx := callbacks.InitCallbacks(context.Background(),

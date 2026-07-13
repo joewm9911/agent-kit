@@ -23,6 +23,7 @@ import (
 	"github.com/joewm9911/agent-kit/runtime/engine"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/runtime/suspend"
+	"github.com/joewm9911/agent-kit/skill"
 	"github.com/joewm9911/agent-kit/todo"
 )
 
@@ -207,6 +208,16 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	if ac.Capabilities.AskUser == nil || *ac.Capabilities.AskUser {
 		caps = append(caps, askuser.New())
 	}
+	// 动态委派:入口能力后加(host 快照不含它,深度 1 天然成立)。
+	// host 传原始工具面,子循环用 applyGates 自套门闸(与 component
+	// 同一纪律);digest/truncate 画像沿用本 agent 的生效值。
+	if ac.Delegate.Enabled {
+		caps = append(caps, skill.NewDelegate(m, caps, ac.Delegate, skill.Deps{
+			DefaultModel: m, Retry: eff.retry(),
+			ToolTimeout: eff.toolTimeout().Std(),
+			DigestOver:  eff.digestOver(), Truncate: eff.digestTruncate(),
+		}))
+	}
 	// 召回配置:两路各自独立(session.recall / memory.recall),负值=关闭。
 	sessK := ac.Session.Recall.TopK
 	kvK := ac.Memory.Recall.TopK
@@ -303,7 +314,7 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 	caps = loop.TimeoutTools(caps, eff.toolTimeout().Std())
 	caps = loop.DedupCalls(caps)                            // 重复调用断路器(同轮同参打转拦截)
 	caps = loop.DeliverResults(caps)                        // 交付物捕获(Digest 内侧:捕未消化原文)
-	caps = loop.DigestResults(caps, m, eff.digestOver())    // 大结果消化
+	caps = loop.DigestResults(caps, m, eff.digestOver(), eff.degradeKeep()) // 大结果消化
 	caps = loop.TruncateResults(caps, eff.digestTruncate()) // 工具结果硬截断(Ring 0)
 	caps = suspend.DurableEffects(caps)                     // 效果日志(挂起恢复的重放不二次执行)
 	caps = loop.GateApprovalCtx(caps)

@@ -27,7 +27,7 @@ func bigTool(name string, out string) capability.Capability {
 func TestDigestOverThreshold(t *testing.T) {
 	raw := strings.Repeat("日志行\n", 2000) // 8000 字符
 	m := testmodel.New(schema.AssistantMessage("要点:三次超时,错误码 504", nil))
-	caps := DigestResults([]capability.Capability{bigTool("search", raw)}, m, 4000)
+	caps := DigestResults([]capability.Capability{bigTool("search", raw)}, m, 4000, 0)
 
 	store := memResultStore()
 	ctx := WithResultStore(runctx.WithInput(context.Background(), "查支付超时原因"), store)
@@ -53,7 +53,7 @@ func TestDigestOverThreshold(t *testing.T) {
 
 func TestDigestUnderThresholdPassthrough(t *testing.T) {
 	m := testmodel.New()
-	caps := DigestResults([]capability.Capability{bigTool("small", "短结果")}, m, 4000)
+	caps := DigestResults([]capability.Capability{bigTool("small", "短结果")}, m, 4000, 0)
 	ctx := WithResultStore(context.Background(), memResultStore())
 	out, _ := capability.Invoke(ctx, caps[0], `{}`)
 	if out != "短结果" || m.Calls != 0 {
@@ -64,7 +64,7 @@ func TestDigestUnderThresholdPassthrough(t *testing.T) {
 func TestDigestNoStoreFallsBack(t *testing.T) {
 	raw := strings.Repeat("x", 9000)
 	m := testmodel.New()
-	caps := DigestResults([]capability.Capability{bigTool("search", raw)}, m, 4000)
+	caps := DigestResults([]capability.Capability{bigTool("search", raw)}, m, 4000, 0)
 	// ctx 无暂存(库方式直接调用):原样返回,不消化
 	out, _ := capability.Invoke(context.Background(), caps[0], `{}`)
 	if len(out) != 9000 || m.Calls != 0 {
@@ -79,7 +79,7 @@ func TestDigestRawTagExempt(t *testing.T) {
 		Tags: []string{TagRawResult},
 	}, func(ctx context.Context, _ string) (string, error) { return raw, nil })
 	m := testmodel.New()
-	caps := DigestResults([]capability.Capability{exempt}, m, 4000)
+	caps := DigestResults([]capability.Capability{exempt}, m, 4000, 0)
 	ctx := WithResultStore(context.Background(), memResultStore())
 	out, _ := capability.Invoke(ctx, caps[0], `{}`)
 	if len(out) != 9000 || m.Calls != 0 {
@@ -182,7 +182,7 @@ func TestDigestFailureKeepsPointer(t *testing.T) {
 	caps := DigestResults([]capability.Capability{
 		capability.New(capability.Meta{Ref: capability.Ref{Kind: "tool", Domain: "d", Name: "metrics_config_query"}},
 			func(context.Context, string) (string, error) { return raw, nil }),
-	}, failGenModel{}, 3000)
+	}, failGenModel{}, 3000, 0)
 	out, err := capability.Invoke(ctx, caps[0], `{}`)
 	if err != nil {
 		t.Fatal(err)

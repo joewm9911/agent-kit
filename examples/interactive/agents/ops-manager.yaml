@@ -79,6 +79,10 @@ digest:                                      # ④ 大工具结果处理:消化 
 
 budget: {max_model_calls: 200, max_tokens: 2000000}  # 交互会话放宽
 
+# 动态委派:模型可把独立子任务(并行线索/大中间数据)委派给隔离子循环
+# (builtin delegate;深度 1,预算审批与本 agent 共账)。
+delegate: {enabled: true, max_rounds: 8, max_parallel: 4}
+
 approval:                     # 治理:审批模式 + 参数级策略(合一)
   mode: interactive
   remember: true

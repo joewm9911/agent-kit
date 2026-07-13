@@ -125,7 +125,7 @@ func TestDigestPreservesDeliverMarker(t *testing.T) {
 	big := "# 大报表\n" + strings.Repeat("行数据|", 3000)
 	inner := deliverCap("big", capability.DeliverAttach, big)
 	caps := DeliverResults([]capability.Capability{inner})
-	caps = DigestResults(caps, testmodel.New(schema.AssistantMessage("摘要要点", nil)), 1000)
+	caps = DigestResults(caps, testmodel.New(schema.AssistantMessage("摘要要点", nil)), 1000, 0)
 
 	out, err := capability.Invoke(ctx, caps[0], "{}")
 	if err != nil {

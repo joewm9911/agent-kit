@@ -55,6 +55,19 @@ sources:
             delta:     {type: number, desc: 增减数量, required: true, in: body}
 
 components:
+  # inline 过程卡样板(单 agent 模式):调用返回执行指引,宿主主循环亲自
+  # 执行;声明的工具直挂宿主工具面("工具不出 ns"的唯一显式豁免)。
+  # 轻查询类任务的推荐形态——A/B 实测:质量持平 subloop,模型调用 -25%。
+  - name: price_check_guide
+    mode: inline
+    prompt: |
+      商品比价核查流程(严格按步骤):
+      1. 用 search_products 按关键词找到目标商品,拿到 SKU 与售价;
+      2. 用 get_product 查该 SKU 的成本;
+      3. 输出:售价、成本、毛利率(=(售价-成本)/售价×100%),一句话结论。
+      用户诉求:{$input}
+    tools: ["tools/shop/search_products", "tools/shop/get_product"]
+
   # react:价格分析师——工具子集 + 大结果消化 + 内部压缩,fork 的接收方
   # 执行画像内嵌:loop(步数+压缩)、digest(大结果消化)。
   - name: price_analyst
@@ -118,6 +131,11 @@ skills:
       - {name: brief, use: model, needs: [analysis],
          prompt: "把分析结论「{analysis}」压成一句话汇报。"}
     output: brief
+
+  # inline 过程卡的导出面:调用即拿指引,主循环照做
+  - name: price-check
+    description: 商品比价核查(轻流程,主循环按指引直接执行)
+    use: "components/price_check_guide"
 
   # use: 入口引用:skill 退化为纯接口,执行委托给私有 graph
   - name: quick-product-qa

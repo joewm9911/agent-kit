@@ -57,6 +57,11 @@ type ReliabilityProfile struct {
 type DigestProfile struct {
 	Over        *int           `yaml:"over"`
 	Truncate    *int           `yaml:"truncate"`
+	// DegradeKeep 是暂存后端不可用时的应急保留量(rune,缺省 24000):
+	// 指针发不出去还只留 truncate 的量 = 不必要的数据损失;完全不截又会
+	// 炸上下文窗(生产实测单结果 10 万字符)。中小结果在降级态零损失,
+	// 极端长文仍有物理护栏。
+	DegradeKeep *int           `yaml:"degrade_keep"`
 	Store       string         `yaml:"store"`
 	StoreConfig map[string]any `yaml:"store_config"`
 }
@@ -94,6 +99,9 @@ func (p Profile) merge(nearer Profile) Profile {
 	}
 	if nearer.Digest.Truncate != nil {
 		out.Digest.Truncate = nearer.Digest.Truncate
+	}
+	if nearer.Digest.DegradeKeep != nil {
+		out.Digest.DegradeKeep = nearer.Digest.DegradeKeep
 	}
 	if nearer.Digest.Store != "" {
 		out.Digest.Store = nearer.Digest.Store
@@ -167,6 +175,13 @@ func (p Profile) digestTruncate() int {
 		return *p.Digest.Truncate
 	}
 	return 0
+}
+
+func (p Profile) degradeKeep() int {
+	if p.Digest.DegradeKeep != nil {
+		return *p.Digest.DegradeKeep
+	}
+	return 0 // 0 = 用 loop 内置默认(24000)
 }
 
 func (p Profile) stepTimeout() loop.Duration {

@@ -211,9 +211,15 @@ const digestSystem = `You are a result digester. Compress the raw tool output in
 // over<=0 关闭;带 TagRawResult 或 TagInteractive 的能力豁免;ctx 无
 // 暂存(直接以库方式调用)或消化失败时退化为原样返回(下游仍有截断
 // 闸兜底)。消化模型调用计入调用方会话预算(m 应为已包装的模型)。
-func DigestResults(caps []capability.Capability, m model.ToolCallingChatModel, over int) []capability.Capability {
+// degradeKeepDefault 是暂存降级时的应急保留量缺省(rune)。
+const degradeKeepDefault = 24000
+
+func DigestResults(caps []capability.Capability, m model.ToolCallingChatModel, over, degradeKeep int) []capability.Capability {
 	if over <= 0 || m == nil {
 		return caps
+	}
+	if degradeKeep <= 0 {
+		degradeKeep = degradeKeepDefault
 	}
 	out := make([]capability.Capability, 0, len(caps))
 	for _, c := range caps {
@@ -222,14 +228,15 @@ func DigestResults(caps []capability.Capability, m model.ToolCallingChatModel, o
 			out = append(out, c)
 			continue
 		}
-		out = append(out, &digested{inner: c, m: m, over: over})
+		out = append(out, &digested{inner: c, m: m, over: over, degradeKeep: degradeKeep})
 	}
 	return out
 }
 
 type digested struct {
-	inner capability.Capability
-	m     model.ToolCallingChatModel
+	inner       capability.Capability
+	degradeKeep int
+	m           model.ToolCallingChatModel
 	over  int
 }
 
@@ -296,6 +303,20 @@ func (d *digested) digest(ctx context.Context, out string) string {
 	}
 	name := d.inner.Meta().Ref.Name
 	id := rs.Put(ctx, name, out)
+	if id == "" {
+		// 暂存不可用(后端故障/本轮已满):指针发不出去,消化摘要 = 纯
+		// 损失。应急降级:保留 degrade_keep 的原文头 + 醒目告警,损失量
+		// 可见可告警;中小结果在降级态零损失,极端长文由此上限兜住
+		// (完全不截会炸上下文窗,炸轮比丢数据更糟)。
+		if len(runes) <= d.degradeKeep {
+			slog.Warn("result store unavailable; keeping full result in context", "tool", name, "chars", len(runes))
+			return restore(out)
+		}
+		slog.Warn("result store unavailable; keeping degraded head in context",
+			"tool", name, "kept", d.degradeKeep, "total", len(runes))
+		return restore(fmt.Sprintf("[结果过长且暂存不可用:原始 %d 字符,以下保留前 %d 字符,其余本轮不可取回]\n%s",
+			len(runes), d.degradeKeep, string(runes[:d.degradeKeep])))
+	}
 
 	clipped := out
 	if len(runes) > digestMaxInput {

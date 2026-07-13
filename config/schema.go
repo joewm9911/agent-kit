@@ -221,6 +221,9 @@ type AgentConfig struct {
 	// 治理边界(Ring 0,agent 独占、不被 namespace 覆盖):审批 + 预算 +
 	// 结构化输出,三块各自顶层。
 	Approval         ApprovalConfig        `yaml:"approval"`
+	// Delegate 启用动态委派(builtin delegate 工具):模型运行期把子任务
+	// 委派给隔离子循环,治理面见 skill.DelegateConfig。缺省关。
+	Delegate skill.DelegateConfig `yaml:"delegate"`
 	Budget           BudgetConfig          `yaml:"budget"`
 	StructuredOutput loop.StructuredConfig `yaml:"structured_output"`
 }

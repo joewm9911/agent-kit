@@ -1,6 +1,6 @@
 # 单 agent 优先执行模式(CC 形态)详细方案
 
-> 状态:定稿待评审。演进自 design-a-single-agent-first.md(草案),两处
+> 状态:已实施(批1-6,收窄项见测试报告)。数据:single-agent-mode-test-report.md。演进自 design-a-single-agent-first.md(草案),两处
 > 关键修正见 §1.2;与已上线的交付物直达通道(deliverable-channel-plan.md)
 > 的交互见 §5。参照:Claude Code 的 Skill/Task 机制、Cognition
 > "Don't Build Multi-Agents"、Anthropic 多智能体研究系统复盘。
