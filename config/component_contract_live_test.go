@@ -167,8 +167,8 @@ func TestLiveComponentReturnContract(t *testing.T) {
 	conds := []cond{
 		{"plain", taskPlain, false, false},
 		{"plan", taskPlan, false, false},
-		{"plan+fork", taskPlan, true, false},          // ← 最接近真实场景
-		{"plan+fork+contract", taskPlan, true, true},  // ← 契约能否救回
+		{"plan+fork", taskPlan, true, false},         // ← 最接近真实场景
+		{"plan+fork+contract", taskPlan, true, true}, // ← 契约能否救回
 	}
 	type cell struct{ cover, status int }
 	res := map[string]cell{}

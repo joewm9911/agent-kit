@@ -233,14 +233,22 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			continue
 		}
 
-		// 循环族:engine 必填——执行形态决定成本模型(direct 1~2 次
-		// 调用,react N 次,plan-execute N×M 次),不做隐式默认。
-		// 例外:mode: inline(过程卡)没有内部循环,engine 必须缺席
-		// (互斥校验在 skill.Build,含 deliver/todo/model 等全套)。
-		if cc.Mode != "inline" {
+		// 有效执行形态(CC 缺省):声明里带子循环专属键 → subloop
+		// (engine 此时必填,执行形态决定成本模型,不做隐式默认);
+		// 纯"prompt+tools"轻声明 → inline(主循环亲自执行)。
+		effMode := cc.Mode
+		if effMode == "" {
+			if cc.Engine != "" || cc.EngineConfig != nil || cc.Deliver != "" || cc.Todo ||
+				cc.Context != "" || cc.Profile.Loop.MaxSteps != nil || cc.Profile.Loop.Compaction != nil {
+				effMode = "subloop"
+			} else {
+				effMode = "inline"
+			}
+		}
+		if effMode != "inline" {
 			switch cc.Engine {
 			case "":
-				return fmt.Errorf("namespace %s: component %s: engine must be declared explicitly: direct (single shot) | react (loop) | plan-execute (planning loop) | reflection | router (triage) | rewoo (plan once, execute in parallel) | a registered template (or mode: inline for a procedure card)", ns.Name, cc.Name)
+				return fmt.Errorf("namespace %s: component %s: subloop execution requires an explicit engine: direct (single shot) | react (loop) | plan-execute | reflection | router | rewoo | a registered template (a plain prompt+tools declaration runs inline on the host loop by default)", ns.Name, cc.Name)
 			case "graph", "workflow":
 				return fmt.Errorf("namespace %s: component %s: engine %s requires a steps declaration (orchestration family)", ns.Name, cc.Name, cc.Engine)
 			}
@@ -252,7 +260,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		// inline 过程卡:声明的工具直挂宿主目录(主循环亲自执行是该形态
 		// 的定义,此为"工具不出命名空间"的唯一显式豁免);同工具被多张
 		// 卡引用时幂等跳过。
-		if cc.Mode == "inline" {
+		if effMode == "inline" {
 			for _, tc := range caps {
 				if _, err := deps.global.Get(tc.Meta().Ref.String()); err == nil {
 					continue // 已挂载(多卡共用/多 ns 同源)
@@ -264,7 +272,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 		decl := &skill.Declaration{
 			Kind:         "component",
-			Mode:         cc.Mode,
+			Mode:         effMode,
 			Context:      cc.Context,
 			Deliver:      cc.Deliver,
 			Name:         ns.Name + "/" + cc.Name,
@@ -274,7 +282,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			EngineConfig: cc.EngineConfig,
 			Todo:         cc.Todo,
 		}
-		if cc.Mode == "inline" {
+		if effMode == "inline" {
 			// 过程卡没有内部循环:画像链继承的 max_rounds/compaction 不注入
 			// (注入会误触互斥校验);组件级**显式**声明仍要报错——那是
 			// 真配置错误,不是继承的背景值。
@@ -382,7 +390,7 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		c, err := engine.BuildGraph(ctx, &engine.GraphDeclaration{
 			Name: sc.Name, Version: sc.Version, Description: sc.Description,
 			Deliver: sc.Deliver,
-			Params: sc.Params, Output: sc.Output,
+			Params:  sc.Params, Output: sc.Output,
 			Steps: applyStepDefaults(steps, sc.StepDefaults.Timeout, sc.StepDefaults.Retry, nsEff.stepTimeout(), nsEff.stepRetry()),
 		}, ns.Name, resolver)
 		if err != nil {

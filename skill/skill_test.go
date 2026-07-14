@@ -32,6 +32,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 		schema.AssistantMessage("报告完成", nil),
 	)
 	decl := &Declaration{
+		Mode:        "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
 		Name:        "research/report",
 		Version:     "1",
 		Description: "生成报告",
@@ -67,6 +68,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 
 func TestSkillDependencyCheck(t *testing.T) {
 	decl := &Declaration{
+		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
 		Name:   "x/y",
 		Prompt: prompt.Value{Literal: "do {input}"},
 		Capabilities: struct {

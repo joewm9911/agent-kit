@@ -139,15 +139,26 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	default:
 		return nil, fmt.Errorf("skill %s: unknown context %q (fresh | fork)", decl.Name, decl.Context)
 	}
-	switch decl.Mode {
-	case "", "subloop":
-	case "inline":
+	mode := decl.Mode
+	switch mode {
+	case "", "subloop", "inline":
+	default:
+		return nil, fmt.Errorf("skill %s: unknown mode %q (subloop | inline)", decl.Name, decl.Mode)
+	}
+	if mode == "" {
+		// CC 语义的缺省推断:声明里出现任何子循环专属键 = 明确要隔离
+		// 执行;纯"prompt+tools"的轻声明缺省进主循环(过程卡)。
+		if hasSubloopKeys(decl) {
+			mode = "subloop"
+		} else {
+			mode = "inline"
+		}
+	}
+	if mode == "inline" {
 		if decl.Context == "fork" {
 			return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with context: fork (a procedure card already shares the host context)", decl.Name)
 		}
 		return buildProcedureCard(ctx, decl, deps, ns, name)
-	default:
-		return nil, fmt.Errorf("skill %s: unknown mode %q (subloop | inline)", decl.Name, decl.Mode)
 	}
 	engineName := decl.Engine
 	if engineName == "" {
@@ -475,13 +486,13 @@ func applyGates(caps []capability.Capability, m einomodel.ToolCallingChatModel, 
 		caps = append(caps, loop.ReadResult()) // 消化结果的原文取回
 	}
 	caps = loop.TimeoutTools(caps, deps.ToolTimeout)
-	caps = loop.DedupCalls(caps) // 重复调用断路器(执行域按调用唯一,计数互不串)
+	caps = loop.DedupCalls(caps)     // 重复调用断路器(执行域按调用唯一,计数互不串)
 	caps = loop.DeliverResults(caps) // 交付物捕获(嵌套 skill 的产出同样进轮级 sink)
 	caps = loop.DigestResults(caps, m, deps.DigestOver, deps.DegradeKeep)
 	caps = loop.TruncateResults(caps, deps.Truncate)
 	caps = suspend.DurableEffects(caps)
 	caps = loop.GateApprovalCtx(caps)
-	caps = loop.ControlTools(caps) // 中断/插话检查点(与宿主循环同一栈,插话不再等到 skill 返回)
+	caps = loop.ControlTools(caps)  // 中断/插话检查点(与宿主循环同一栈,插话不再等到 skill 返回)
 	caps = loop.ProgressTools(caps) // 进度事件发射(子循环步骤带执行域)
 	return caps
 }
@@ -580,3 +591,13 @@ func buildProcedureCard(ctx context.Context, decl *Declaration, deps Deps, ns, n
 
 // TagProcedureCard 别名 core 常量(digest 豁免与 rewoo 计划面都认它)。
 const TagProcedureCard = capability.TagProcedureCard
+
+// hasSubloopKeys 报告声明是否带子循环专属键——出现任一即视为显式要求
+// 隔离执行(engine 的执行形态、专属 model、交付语义、内部清单、内部
+// 压缩、轮数上限、起始上下文都只对子循环有意义)。缺省推断的依据:
+// 参考 Claude Code,纯指令+工具的 skill 默认由主循环亲自执行。
+func hasSubloopKeys(decl *Declaration) bool {
+	return decl.Engine != "" || decl.EngineConfig != nil || decl.Model != nil ||
+		decl.Deliver != "" || decl.Todo || decl.MaxSteps != 0 ||
+		decl.MaxStepsLegacy != nil || decl.Compaction.Enabled() || decl.Context != ""
+}

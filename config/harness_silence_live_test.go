@@ -93,7 +93,6 @@ func (c *todoCountModel) WithTools(tools []*schema.ToolInfo) (einomodel.ToolCall
 	return &todoCountModel{inner: inner, todo: c.todo}, nil
 }
 
-
 // harness 叙述词:出现即视为污染(中英各覆盖)。刻意避开会误伤正常业务表述的
 // 泛词(如单独的"已完成"——"退款已完成"是合法答案)。
 var narrationMarkers = []string{
@@ -190,7 +189,7 @@ func TestLiveHarnessSilence(t *testing.T) {
 				DefaultModel: loop.RetryModel(&todoCountModel{inner: raw, todo: &todo}, retry),
 				Capabilities: []capability.Capability{inv, price, refund},
 				Todo:         td,
-				LoopPrompt:   l1, // A 臂空 = 现状 DefaultLoopPrompt;B 臂 = todo 段内嵌契约
+				LoopPrompt:   l1,  // A 臂空 = 现状 DefaultLoopPrompt;B 臂 = todo 段内嵌契约
 				DigestOver:   200, // 触发消化 → 挂 read_result
 			})
 			if err != nil {

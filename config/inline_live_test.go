@@ -81,7 +81,7 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 	anchors := []string{"200", "120", "340", "40"}
 	type result struct {
 		complete, followed int
-		modelCalls int64
+		modelCalls         int64
 	}
 
 	runArm := func(name, mode string, runs int) result {
@@ -98,9 +98,11 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 				Params:      map[string]capability.ParamDecl{"sku": {Type: "string", Required: true}},
 				Prompt:      prompt.Value{Literal: brief},
 			}
+			// 有效形态:缺省已切 inline(纯 prompt+tools 推断为过程卡)
+			effInline := mode == "inline" || mode == ""
 			var deps skill.Deps
 			deps.DefaultModel = m
-			if mode != "inline" {
+			if !effInline {
 				deps.Capabilities = tools // 子循环:工具在 skill 内部
 			}
 			card, err := skill.Build(ctx, decl, deps)
@@ -108,7 +110,7 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 				t.Fatal(err)
 			}
 			hostCaps := []capability.Capability{card}
-			if mode == "inline" {
+			if effInline {
 				hostCaps = append(hostCaps, tools...) // 过程卡:工具直挂宿主
 			}
 			layers := loop.PromptLayers{Loop: loop.DefaultLoopPromptNoTodo}
@@ -145,8 +147,8 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 	}
 
 	const runs = 6
-	sub := runArm("subloop", "", runs)
-	inl := runArm("inline", "inline", runs)
+	sub := runArm("subloop", "subloop", runs) // 缺省已切 inline,基线臂显式声明
+	inl := runArm("inline", "", runs) // 裸声明:验证新缺省(纯 prompt+tools → inline)
 	t.Logf("A/B(n=%d):subloop 完成 %d/%d 贯彻 %d/%d 模型调用均值 %.1f | inline 完成 %d/%d 贯彻 %d/%d 模型调用均值 %.1f",
 		runs, sub.complete, runs, sub.followed, runs, float64(sub.modelCalls)/runs,
 		inl.complete, runs, inl.followed, runs, float64(inl.modelCalls)/runs)

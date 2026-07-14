@@ -33,6 +33,7 @@ func TestSkillInternalApprovalGate(t *testing.T) {
 			schema.AssistantMessage("done", nil),
 		)
 		decl := &Declaration{
+			Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
 			Name:   "ops/writer",
 			Prompt: prompt.Value{Literal: "写入 {input}"},
 		}
@@ -80,6 +81,7 @@ func TestSkillInternalBudget(t *testing.T) {
 		schema.AssistantMessage("summary", nil),
 	))
 	decl := &Declaration{
+		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
 		Name:   "ops/reader",
 		Prompt: prompt.Value{Literal: "读取 {input}"},
 	}

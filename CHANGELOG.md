@@ -11,6 +11,13 @@ text is the migration guide).
 ## [Unreleased]
 
 ### Breaking
+- skill/component 执行形态缺省切换(CC 语义):纯 `prompt+tools` 声明
+  缺省 `mode: inline`(主循环亲自执行,工具直挂宿主);声明里带任何
+  子循环专属键(`engine`/`model`/`deliver`/`todo`/`compaction`/
+  `max_rounds`/`context`/`engine_config`)即推断 `subloop`,行为不变。
+  要隔离执行的轻声明需显式 `mode: subloop`(subloop 下 engine 必填)。
+
+### Breaking
 
 - Component and `use: model` step `prompt` now renders as the **system**
   message (persona/instruction), with the step input as the user message —

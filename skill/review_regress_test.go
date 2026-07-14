@@ -18,6 +18,7 @@ import (
 func TestPersonaNotLeakedOnEmptyInput(t *testing.T) {
 	em := &echoInputModel{}
 	comp, err := Build(context.Background(), &Declaration{
+		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
 		Name:   "t/inner",
 		Prompt: prompt.Value{Literal: "你是内层组件"},
 	}, Deps{DefaultModel: em})
@@ -59,6 +60,7 @@ func TestPersonaNotLeakedOnEmptyInput(t *testing.T) {
 func TestLoopFamilyRequiredParams(t *testing.T) {
 	em := &echoInputModel{}
 	comp, err := Build(context.Background(), &Declaration{
+		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
 		Name:   "t/strict",
 		Params: map[string]capability.ParamDecl{"category": {Type: "string", Required: true}},
 		Prompt: prompt.Value{Literal: "盘点品类「{category}」"},

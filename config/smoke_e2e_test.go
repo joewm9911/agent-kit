@@ -64,7 +64,7 @@ func resetSmokeSeen() {
 }
 
 func smokeSawSystemContaining(sub string) bool { return smokeSawRoleContaining(schema.System, sub) }
-func smokeSawUserContaining(sub string) bool    { return smokeSawRoleContaining(schema.User, sub) }
+func smokeSawUserContaining(sub string) bool   { return smokeSawRoleContaining(schema.User, sub) }
 
 func smokeSawRoleContaining(role schema.RoleType, sub string) bool {
 	smokeSeen.mu.Lock()

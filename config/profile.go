@@ -55,8 +55,8 @@ type ReliabilityProfile struct {
 // DigestProfile 是"大工具结果进上下文前的处理":over 触发消化、truncate 硬
 // 截断兜底、store 暂存后端(供 read_result 取回)。
 type DigestProfile struct {
-	Over        *int           `yaml:"over"`
-	Truncate    *int           `yaml:"truncate"`
+	Over     *int `yaml:"over"`
+	Truncate *int `yaml:"truncate"`
 	// DegradeKeep 是暂存后端不可用时的应急保留量(rune,缺省 24000):
 	// 指针发不出去还只留 truncate 的量 = 不必要的数据损失;完全不截又会
 	// 炸上下文窗(生产实测单结果 10 万字符)。中小结果在降级态零损失,
