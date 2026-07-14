@@ -435,9 +435,9 @@ type ComponentConfig struct {
 	// 自己这一层,最近,压过 namespace/agent/app。
 	Profile `yaml:",inline"`
 
-	// Mode 是执行形态:subloop(缺省)| inline(过程卡,工具直挂宿主;
-	// 语义见 skill.Declaration.Mode 与 docs/single-agent-mode-plan.md)。
-	Mode string `yaml:"mode"`
+	// ModeLegacy 已移除(形态由声明结构决定,见 skill.Declaration):
+	// prompt+tools = 过程卡;声明 engine = 子执行体。误写报错指路。
+	ModeLegacy *string `yaml:"mode"`
 	// Context 是子循环起始上下文:fresh(缺省)| fork(调用方对话快照
 	// 起步)。声明级缺省;编排步骤的同名键按使用点覆盖。
 	Context string `yaml:"context"`

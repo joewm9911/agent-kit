@@ -93,7 +93,7 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 			tools := newTools(&prodN, &salesN)
 
 			decl := &skill.Declaration{
-				Name: "live/price_review", Mode: mode,
+				Name: "live/price_review", Engine: engineOf(mode),
 				Description: "按标准流程完成一次定价审查",
 				Params:      map[string]capability.ParamDecl{"sku": {Type: "string", Required: true}},
 				Prompt:      prompt.Value{Literal: brief},
@@ -159,4 +159,13 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 	if inl.followed < runs-1 {
 		t.Fatalf("inline 贯彻率不足:%d/%d(过程卡被'知道了'带过,L1 纪律需要加强)", inl.followed, runs)
 	}
+}
+
+// engineOf 把 A/B 臂名映射为声明结构(mode 键已移除,结构决定形态):
+// subloop 臂声明 engine: react;inline 臂纯 prompt+tools。
+func engineOf(arm string) string {
+	if arm == "subloop" {
+		return "react"
+	}
+	return ""
 }

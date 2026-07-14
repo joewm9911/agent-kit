@@ -45,7 +45,7 @@ func (m *echoInputModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatMod
 func TestGraphStepFork(t *testing.T) {
 	em := &echoInputModel{}
 	comp, err := Build(context.Background(), &Declaration{
-		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
+		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
 		Name:   "t/analyzer",
 		Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
 		Prompt: prompt.Value{Literal: "分析 {q}"},

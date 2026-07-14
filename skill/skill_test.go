@@ -32,7 +32,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 		schema.AssistantMessage("报告完成", nil),
 	)
 	decl := &Declaration{
-		Mode:        "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
+		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
 		Name:        "research/report",
 		Version:     "1",
 		Description: "生成报告",
@@ -68,7 +68,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 
 func TestSkillDependencyCheck(t *testing.T) {
 	decl := &Declaration{
-		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
+		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
 		Name:   "x/y",
 		Prompt: prompt.Value{Literal: "do {input}"},
 		Capabilities: struct {

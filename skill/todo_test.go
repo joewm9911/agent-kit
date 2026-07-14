@@ -36,7 +36,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 		schema.AssistantMessage("done", nil),
 	)
 	sk, err := Build(context.Background(), &Declaration{
-		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
+		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
 		Name:   "t/researcher",
 		Prompt: prompt.Value{Literal: "研究 {input}"},
 		Todo:   true,
@@ -61,7 +61,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 		schema.AssistantMessage("checked", nil),
 	)
 	sk2, err := Build(context.Background(), &Declaration{
-		Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
+		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
 		Name:   "t/researcher2",
 		Prompt: prompt.Value{Literal: "研究 {input}"},
 		Todo:   true,
@@ -97,7 +97,7 @@ func TestComponentL1MatchesToolFace(t *testing.T) {
 			name = "t/todoful"
 		}
 		sk, err := Build(context.Background(), &Declaration{
-			Mode:   "subloop", // 夹具意图:隔离子循环(缺省已切 inline)
+			Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
 			Name:   name,
 			Prompt: prompt.Value{Literal: "做 {input}"},
 			Todo:   todo,

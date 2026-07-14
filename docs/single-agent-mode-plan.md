@@ -1,8 +1,10 @@
 # 单 agent 优先执行模式(CC 形态)详细方案
 
-> 状态:已实施(批1-6)+ **缺省已切换**:纯 prompt+tools 声明缺省 inline
-> (主循环执行),带任何子循环专属键(engine/model/deliver/todo/compaction/
-> max_rounds/context/engine_config)即推断 subloop——CC 语义,零配置破坏。数据:single-agent-mode-test-report.md。演进自 design-a-single-agent-first.md(草案),两处
+> 状态:已实施(批1-6)+ **CC 方案硬切完成:mode 键已移除**,形态由
+> 声明结构决定——纯 prompt+tools = 过程卡(主循环);带子循环专属键
+> (engine/model/deliver/todo/compaction/max_rounds/context/engine_config)
+> = 子执行体;运行期隔离 = delegate。与 Claude Code 的
+> Skill(指令注入)/ Task(子代理)二元结构一一对应。数据:single-agent-mode-test-report.md。演进自 design-a-single-agent-first.md(草案),两处
 > 关键修正见 §1.2;与已上线的交付物直达通道(deliverable-channel-plan.md)
 > 的交互见 §5。参照:Claude Code 的 Skill/Task 机制、Cognition
 > "Don't Build Multi-Agents"、Anthropic 多智能体研究系统复盘。

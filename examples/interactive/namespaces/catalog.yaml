@@ -55,11 +55,11 @@ sources:
             delta:     {type: number, desc: 增减数量, required: true, in: body}
 
 components:
-  # inline 过程卡样板(单 agent 模式):调用返回执行指引,宿主主循环亲自
-  # 执行;声明的工具直挂宿主工具面("工具不出 ns"的唯一显式豁免)。
-  # 轻查询类任务的推荐形态——A/B 实测:质量持平 subloop,模型调用 -25%。
+  # 过程卡样板(CC 语义:纯 prompt+tools 声明即过程卡,无需任何开关):
+  # 调用返回执行指引,宿主主循环亲自执行;声明的工具直挂宿主工具面
+  # ("工具不出 ns"的唯一显式豁免)。要隔离执行就声明 engine(子执行体)。
+  # A/B 实测:质量持平子循环,模型调用 -25%。
   - name: price_check_guide
-    mode: inline
     prompt: |
       商品比价核查流程(严格按步骤):
       1. 用 search_products 按关键词找到目标商品,拿到 SKU 与售价;

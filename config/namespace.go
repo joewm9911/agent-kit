@@ -233,17 +233,16 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 			continue
 		}
 
-		// 有效执行形态(CC 缺省):声明里带子循环专属键 → subloop
-		// (engine 此时必填,执行形态决定成本模型,不做隐式默认);
-		// 纯"prompt+tools"轻声明 → inline(主循环亲自执行)。
-		effMode := cc.Mode
-		if effMode == "" {
-			if cc.Engine != "" || cc.EngineConfig != nil || cc.Deliver != "" || cc.Todo ||
-				cc.Context != "" || cc.Profile.Loop.MaxSteps != nil || cc.Profile.Loop.Compaction != nil {
-				effMode = "subloop"
-			} else {
-				effMode = "inline"
-			}
+		if cc.ModeLegacy != nil {
+			return fmt.Errorf("namespace %s: component %s: mode has been removed (the declaration's structure decides the form): a prompt+tools declaration runs inline on the host loop; declare an engine for an isolated sub-executor", ns.Name, cc.Name)
+		}
+		// 形态由结构决定(CC 语义,无开关):子循环专属键任一出现 →
+		// 子执行体(engine 必填,执行形态决定成本模型,不做隐式默认);
+		// 纯"prompt+tools"轻声明 → 过程卡,主循环亲自执行。
+		effMode := "inline"
+		if cc.Engine != "" || cc.EngineConfig != nil || cc.Deliver != "" || cc.Todo ||
+			cc.Context != "" || cc.Profile.Loop.MaxSteps != nil || cc.Profile.Loop.Compaction != nil {
+			effMode = "subloop"
 		}
 		if effMode != "inline" {
 			switch cc.Engine {
@@ -272,7 +271,6 @@ func buildNamespace(ctx context.Context, ns *NamespaceConfig, deps nsDeps) error
 		}
 		decl := &skill.Declaration{
 			Kind:         "component",
-			Mode:         effMode,
 			Context:      cc.Context,
 			Deliver:      cc.Deliver,
 			Name:         ns.Name + "/" + cc.Name,

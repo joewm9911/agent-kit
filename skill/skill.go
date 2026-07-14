@@ -73,11 +73,10 @@ type Declaration struct {
 	// 与编排步骤的同名键同一词汇;fork 每次调用复制一份历史 token,
 	// 按需声明。inline 形态与它互斥(过程卡本就共享宿主上下文)。
 	Context string `yaml:"context"`
-	// Mode 是执行形态:subloop(缺省,隔离子循环)| inline(过程卡:
-	// 调用返回执行指引,宿主主循环亲自执行;声明的 tools 直挂宿主工具面)。
-	// inline 与 engine/deliver/todo/model/compaction/max_rounds 互斥——
-	// 过程卡没有内部循环,这些键在它身上是配置错误而非静默无效。
-	Mode string `yaml:"mode"`
+	// ModeLegacy 已移除(Claude Code 语义:实体形态由声明结构决定,
+	// 没有开关):prompt+tools = 过程卡(主循环执行);声明 engine 等
+	// 子循环键 = 子执行体(隔离运行)。误写报错指路。
+	ModeLegacy *string `yaml:"mode"`
 	// Todo 给内部循环挂调用级临时清单(仅 react):键 = 本次执行域,
 	// 生命周期 = 一次调用,结束即弃——宿主计划不受影响,组件保持无状态
 	// 可重入。默认关;它是给确实拆不动的研究型长循环的例外通道,
@@ -139,25 +138,13 @@ func Build(ctx context.Context, decl *Declaration, deps Deps) (capability.Capabi
 	default:
 		return nil, fmt.Errorf("skill %s: unknown context %q (fresh | fork)", decl.Name, decl.Context)
 	}
-	mode := decl.Mode
-	switch mode {
-	case "", "subloop", "inline":
-	default:
-		return nil, fmt.Errorf("skill %s: unknown mode %q (subloop | inline)", decl.Name, decl.Mode)
+	if decl.ModeLegacy != nil {
+		return nil, fmt.Errorf("skill %s: mode has been removed (Claude Code semantics: the declaration's structure decides the form) — a prompt+tools declaration IS a procedure card on the host loop; declare an engine for an isolated sub-executor", decl.Name)
 	}
-	if mode == "" {
-		// CC 语义的缺省推断:声明里出现任何子循环专属键 = 明确要隔离
-		// 执行;纯"prompt+tools"的轻声明缺省进主循环(过程卡)。
-		if hasSubloopKeys(decl) {
-			mode = "subloop"
-		} else {
-			mode = "inline"
-		}
-	}
-	if mode == "inline" {
-		if decl.Context == "fork" {
-			return nil, fmt.Errorf("skill %s: mode: inline is mutually exclusive with context: fork (a procedure card already shares the host context)", decl.Name)
-		}
+	// 形态由结构决定(无开关):子循环专属键(engine/model/deliver/todo/
+	// compaction/max_rounds/context/engine_config)任一出现 = 子执行体;
+	// 纯 prompt+tools = 过程卡,主循环亲自执行。
+	if !hasSubloopKeys(decl) {
 		return buildProcedureCard(ctx, decl, deps, ns, name)
 	}
 	engineName := decl.Engine

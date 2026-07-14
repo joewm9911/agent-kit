@@ -14,8 +14,7 @@ import (
 
 func TestInlineCardBuildAndInvoke(t *testing.T) {
 	sk, err := Build(context.Background(), &Declaration{
-		Name:        "t/price_review",
-		Mode:        "inline",
+		Name:        "t/price_review", // 纯 prompt+tools:结构即过程卡(无 mode 键)
 		Description: "定价审查",
 		Params:      map[string]capability.ParamDecl{"sku": {Type: "string", Required: true}},
 		Prompt:      prompt.Value{Literal: "审查 {sku}:先查详情,再查销量,输出毛利率。原始诉求:{$user_input}"},
@@ -59,31 +58,16 @@ func TestInlineCardBuildAndInvoke(t *testing.T) {
 
 // 互斥校验:inline 与子循环专属键同时出现必须装配期报错。
 func TestInlineMutualExclusions(t *testing.T) {
-	base := func() *Declaration {
-		return &Declaration{Name: "t/x", Mode: "inline", Prompt: prompt.Value{Literal: "p"}}
+	// 结构决定形态:带子循环键 = 子执行体(照常装配,不再是互斥错误);
+	// mode 键本身已移除,误写必须报错指路。
+	legacy := "subloop"
+	d := &Declaration{Name: "t/x", ModeLegacy: &legacy, Prompt: prompt.Value{Literal: "p"}}
+	if _, err := Build(context.Background(), d, Deps{}); err == nil || !strings.Contains(err.Error(), "mode has been removed") {
+		t.Fatalf("legacy mode key must fail fast with migration hint, got %v", err)
 	}
-	cases := []struct {
-		name string
-		mut  func(*Declaration)
-		want string
-	}{
-		{"engine", func(d *Declaration) { d.Engine = "react" }, "engine"},
-		{"deliver", func(d *Declaration) { d.Deliver = "attach" }, "deliver"},
-		{"todo", func(d *Declaration) { d.Todo = true }, "todo"},
-		{"model", func(d *Declaration) { d.Model = &ModelDecl{Provider: "x"} }, "model"},
-		{"max_rounds", func(d *Declaration) { d.MaxSteps = 5 }, "max_rounds"},
-	}
-	for _, c := range cases {
-		d := base()
-		c.mut(d)
-		if _, err := Build(context.Background(), d, Deps{}); err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("[%s] want assembly error mentioning %q, got %v", c.name, c.want, err)
-		}
-	}
-	// 未知 mode
-	d := base()
-	d.Mode = "inlien"
-	if _, err := Build(context.Background(), d, Deps{}); err == nil || !strings.Contains(err.Error(), "inlien") {
-		t.Fatalf("unknown mode must fail fast, got %v", err)
+	// 带 deliver 的声明自动成为子执行体(engine 缺省 react),不报互斥
+	d2 := &Declaration{Name: "t/y", Deliver: "attach", Prompt: prompt.Value{Literal: "p"}}
+	if _, err := Build(context.Background(), d2, Deps{DefaultModel: &echoInputModel{}}); err != nil {
+		t.Fatalf("deliver implies sub-executor, must assemble: %v", err)
 	}
 }

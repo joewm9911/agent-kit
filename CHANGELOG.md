@@ -11,11 +11,12 @@ text is the migration guide).
 ## [Unreleased]
 
 ### Breaking
-- skill/component 执行形态缺省切换(CC 语义):纯 `prompt+tools` 声明
-  缺省 `mode: inline`(主循环亲自执行,工具直挂宿主);声明里带任何
-  子循环专属键(`engine`/`model`/`deliver`/`todo`/`compaction`/
-  `max_rounds`/`context`/`engine_config`)即推断 `subloop`,行为不变。
-  要隔离执行的轻声明需显式 `mode: subloop`(subloop 下 engine 必填)。
+- skill/component 执行形态按 Claude Code 语义硬切,**`mode` 键移除**:
+  形态由声明结构决定,没有开关——纯 `prompt+tools` 声明即过程卡
+  (主循环亲自执行,工具直挂宿主);声明里带任何子循环专属键
+  (`engine`/`model`/`deliver`/`todo`/`compaction`/`max_rounds`/
+  `context`/`engine_config`)即为子执行体(隔离运行,engine 必填)。
+  误写 `mode:` 装配期报错指路;运行期临时隔离用 `delegate`。
 
 ### Breaking
 

@@ -423,7 +423,6 @@ sources:
   - {name: svc, type: nstest}
 components:
   - name: qa_card
-    mode: inline
     prompt: "按步骤:先 search 再总结。问题:{$input}"
     tools: ["tools/svc/search"]
 skills:
