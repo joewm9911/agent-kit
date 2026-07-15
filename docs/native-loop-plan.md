@@ -208,3 +208,28 @@ Drive + Handle),批4/5 各 ~200 行;全程每批可独立提交回退。
 - 不做嵌套移交(inline 段落里再调 inline 引擎 → 按 fresh 降级,防止
   段落栈复杂度);
 - 不承诺 eino 生态之外的模型接入方式(模型层契约不变)。
+
+
+## 13. 证据修订(2026-07-14,eino adk 源码核实后)
+
+本地核实 eino v0.9.12 的 adk 包(adk/chatmodel.go、adk/flow.go、
+adk/middlewares/skill、adk/prebuilt/deep)后,两条结论修订本方案:
+
+1. **批3(控制权移交/引擎入主上下文)预期收益调低**:eino adk 的
+   Transfer/Sequential/Loop/ParallelAgent 就是"共享全上下文的代码驱动
+   编排",官方注释明示 "full context sharing has not proven to be more
+   effective empirically, use ChatModelAgent with AgentTool or DeepAgent
+   instead"——同一方向的先行实证为负。批3 保留为 A/B 门后的实验,
+   不再作为自研的主要理由;不达标的收窄路径(直接砍掉批3)预案化。
+2. **批1-2 出现替代路径**:adk ChatModelAgent 的 AgentMiddleware
+   (BeforeChatModel/AfterChatModel 可改含历史的可变状态、WrapToolCall)
+   提供了 flow/agent/react 缺失的循环级缝——流式评审/上下文编辑/精确
+   轮控可能不需要自研宿主。**启动批1 之前先做 adk 宿主 spike(1-2 天)**:
+   移植 L1/PromptLayers/ReviewModel/挂起穿透到 ChatModelAgent,对比
+   迁移成本与缝的完备性,再定自研还是迁移。
+3. 佐证记录:adk skill 中间件的执行形态词汇为 context: inline(缺省)/
+   fork / fork_with_context——与本仓库独立收敛的 过程卡/fresh/fork
+   三元组语义一致,缺省相同;DeepAgent(主循环+task_tool+文件系统+
+   skills)即 CC 形态的 eino 官方版。"主 agent 干绝大部分、必要才隔离"
+   已是三方(CC/DeerFlow 2.0/eino adk)共同的推荐形态,本仓库现架构
+   与之对齐,该目标不需要额外机制。
