@@ -3,8 +3,8 @@
 > 日期:2026-07-17;前置:single-agent-mode-plan.md(已完成,mode 已移除)。
 > 一句话:把 agent-kit 收敛成 **CC 同构的 Go harness**——概念表只剩
 > agent / skill(业界标准)/ sub-agent(同构声明)/ delegate / tool,
-> 编排下沉给 eino compose,配置面砍掉一半词汇,cap:// 退出配置面、
-> 保留为内部身份协议。
+> 编排下沉给 eino compose;配置词汇随概念砍掉一批,已配置在用的面
+> (store 槽/模式语法/prompt 引用)保持现状,cap:// 内部身份协议不动。
 
 ## 1. 背景与动机
 
@@ -76,8 +76,7 @@ agents:                         # 声明式 sub-agent(同构,永远隔离)
 
 delegate: { enabled: true }     # 运行时动态派生(CC Task 同位)
 
-session: { window: 20 }
-store: { type: redis, config: { addr: "..." } }   # 全模块缺省后端(§5)
+session: { window: 20 }         # store 槽照旧:裸 type 或 cap://store/session/<name>(§5)
 ```
 
 上下文心法(写进文档,一条通吃):**先把事实显式写进输入;写不进或
@@ -105,7 +104,6 @@ agent-kit 负责把 agent 做成合格的图节点,eino 负责连线。
 | ComponentConfig + components: 配置节 | config/schema.go / namespace.go | ~200 行 |
 | NamespaceSkill 的 steps/use/engine/output/step_defaults | config/schema.go | ~80 行 |
 | imports/exports + cap://component 可见性规则 | config/namespace.go | ~150 行 |
-| StoreInstance/RetrieverInstance 具名实例 + cap://store\|retriever 解析 | config/schema.go / agent.go | ~150 行 |
 | skill.Declaration 的 Engine/EngineConfig + hasSubloopKeys 推断 | skill/skill.go | ~100 行 |
 
 净删约 **2000+ 行**,且删的全是最贵的部分(自持 DAG 执行器的挂起
@@ -117,11 +115,15 @@ BuildPack/沙箱)、serving、observe、approval/budget。
 
 ## 4. 评估一:配置能否简化 —— 能,词汇砍约一半
 
-### 4.1 删除的配置词汇
+### 4.1 删除的配置词汇(只删随概念死掉的)
 
 `engine` `engine_config` `steps` `needs` `args` `output` `step_defaults`
-`use` `export` `imports` `components` `stores`(具名实例列表)
-`retrievers`(具名实例列表)`mode`(已删)。
+`use` `export` `imports` `components` `mode`(已删)。
+
+**明确不动的**(已配置在用,改动是纯迁移成本无功能收益):具名
+`stores`/`retrievers` 实例及其 `cap://store|retriever/` 槽引用、
+include/exclude 与 approval rules 的 `cap://` 模式语法、
+`cap://prompt/` 引用。
 
 ### 4.2 简化的结构
 
@@ -131,14 +133,13 @@ BuildPack/沙箱)、serving、observe、approval/budget。
   不需要理解任何规则。
 - **profile 链 4 级 → 3 级**:app → agent →(挂载文件缺省)→
   sub-agent;component 层消失。
-- **store 从"具名实例 + URI 引用"改为"缺省后端 + 就地覆盖"**:
-  顶层 `store: {type, config}` 一次声明,session/todo/result/suspend/
-  budget/approval 全模块共用;个别模块要不同后端就在自己节里就地写
-  `store: {type: file, config: ...}`(该形态今天已支持)。DRY 保住,
-  URI 间接层删掉。
+- **store/retriever 具名实例保持现状**:`cap://store/<kind>/<name>`
+  槽引用已在生产配置里铺开(session/todo/result/suspend/…),间接层
+  承载着"一处声明、多模块共享同一后端"的真实价值,改动是纯迁移
+  成本——不动。
 - **namespace 减负为"能力清单文件"**:只剩 sources+skills+agents+
-  profile 缺省,挂载即合并;imports/exports/可见性顺序规则全删,
-  跨文件同名冲突装配期直接报错(单一维护者场景不需要可见性治理)。
+  profile 缺省,挂载即合并;imports/exports 随 component 死(它们
+  只治理 component 可见性),跨文件同名冲突装配期直接报错。
 
 ### 4.3 简化后的心智模型
 
@@ -167,23 +168,23 @@ retriever 槽。逐 kind:
 
 | kind | 内部生产者(身份) | 今天配置面何处写 `cap://<kind>/` | 收敛后 |
 |---|---|---|---|
-| **tool** | 全部 sources(mcp/exec/http/rpc/local/vector)+ builtins(ask_user/pack_read/model_step/…),15 处构造 | 不直接写——`tools:` 用短形态;仅 include/exclude、approval rules 写模式(`cap://tool/fs/*`) | 身份保留;两个模式面改裸三段 `tool/fs/*` |
-| **skill** | skill.Build / pack.go(Domain=ns) | ① steps/tools 跨 ns 引用(唯一跨 ns 接口);② include/exclude;③ approval rules | ① 随 steps 死,共享=挂载即可见;②③ 改裸三段 |
-| **component** | namespace.go export(2 处) | `cap://component/<ns>/<name>`(imports 后可引) | **kind 整个删除** |
+| **tool** | 全部 sources(mcp/exec/http/rpc/local/vector)+ builtins(ask_user/pack_read/model_step/…),15 处构造 | 不直接写——`tools:` 用短形态 `tools/<source>/<name>`;include/exclude、approval rules 写模式(`cap://tool/fs/*`) | **全部保留**(模式语法已配置在用,不折腾) |
+| **skill** | skill.Build / pack.go(Domain=ns) | ① steps/tools 跨 ns 引用;② include/exclude;③ approval rules | ① 随 steps 死,共享=挂载即可见;②③ **保留** |
+| **component** | namespace.go export(2 处) | `cap://component/<ns>/<name>`(imports 后可引) | **kind 整个删除**(随概念死) |
 | **agent** | impl/source/a2a(远程 A2A agent) | 不写(经 sources 声明、短形态挂载);模式面可匹配 | 保留;**建议:sub-agent 声明的装配产物改挂 Kind:"agent"**(与 A2A 统一,身份语义归位) |
-| **prompt** | 无目录身份(protocol/prompt 独立 resolver,RefPrefix) | prompt 标量字段 `"cap://prompt/<source>/<name>@label"` | **保留**(可选面,版本化提示词) |
-| **store** | **无**——纯配置寻址语法(resolveStoreRef) | 7 个模块的 store 槽 | 删除:缺省后端 + 就地覆盖;kind 消亡 |
-| **retriever** | **无**——纯配置寻址(resolveRetrieverRef) | session.recall.retriever 槽 | 同上,kind 消亡 |
+| **prompt** | 无目录身份(protocol/prompt 独立 resolver,RefPrefix) | prompt 标量字段 `"cap://prompt/<source>/<name>@label"` | **保留** |
+| **store** | 无——纯配置寻址语法(resolveStoreRef) | 7 个模块的 store 槽 | **保留**(生产已铺开,共享后端的间接层有真实价值) |
+| **retriever** | 无——纯配置寻址(resolveRetrieverRef) | session.recall.retriever 槽 | **保留** |
 | (model) | 仅 observe 事件标签 CapKind:"model",非目录 Ref | 不出现 | 不变(观测命名) |
 
-store/retriever 无内部生产者这一点坐实了"纯间接层"判断:它们的
-cap:// 从来不是能力身份,只是槽位寻址——删掉零涉身份协议。
+取舍原则:**随概念死掉的删(component、steps 里的跨 ns skill 引用),
+已配置在用的不折腾**(store/retriever 槽、include/exclude、approval
+模式、prompt 引用)。改语法是纯迁移成本,没有功能收益。
 
-结果:内部身份收敛为 **tool / skill / agent** 三个 kind(目录索引、
-Match 通配、observe 命名、审批记忆键、面名派生全在其上);配置面
-仅存 `cap://prompt/`(可选)+ 裸三段模式(include/exclude/approval
-两个权力面)。推广路径配置(sources/skills/agents)**一个 cap://
-都不出现**。
+结果:内部身份 kind 剩 **tool / skill / agent**;配置面的 cap://
+收敛为四个既有用法(store/retriever 槽、两个模式面、prompt 引用),
+全部维持现状语法;推广主路径(sources/skills/agents 三节)不出现
+cap://。
 
 ## 6. 跨 namespace 暴露(开放问题,随批3 定)
 
@@ -219,9 +220,8 @@ steps 族配置键同批删除,误写报错指路 eino compose 样例文档。
 ### 批3 配置面简化
 - namespace 减负(删 imports/exports/components,可见性=挂载即可见,
   同名装配期报错);
-- store/retriever 具名实例 → 缺省后端 + 就地覆盖;
-- include/exclude、approval rules 去 `cap://` 前缀(裸三段 + 通配),
-  旧写法报错指路;
+- store/retriever 具名实例、include/exclude 与 approval 模式语法、
+  `cap://prompt/` **均不动**(已配置在用);
 - 严格 YAML 全量校验过一遍(未知键零容忍现状保持)。
 
 ### 批4 examples 迁移 + pipeline 样例
