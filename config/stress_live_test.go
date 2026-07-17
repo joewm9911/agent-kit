@@ -165,7 +165,7 @@ func TestLiveStress(t *testing.T) {
 		"用 quick-product-qa 查降噪耳机 P100 现在卖多少钱,并说下这个价位合不合理。",
 		"给降噪耳机做一次完整定价审查(price-review,SKU 是 P100),库存、成本、建议价都要。",
 		"帮我策划下周一上线的降噪耳机私域大促活动,先分步骤规划再写一版文案。信息不够的地方直接问我,别自己猜。",
-		"客户 C1 最近的情况怎么样?给一条跟进建议(customer-brief)。",
+		"客户 C1 最近的情况怎么样?给一条跟进建议(交给 crm_analyst)。",
 		"把 P100 的价格调整为 119 元(apply-price)。",
 		"我们从头到现在聊了哪些商品和动作?一句话逐条总结。",
 	}
@@ -307,11 +307,11 @@ func buildStressReport(results []turnResult, b *smokeBackend, ix *stressInteract
 		}
 		fmt.Fprintf(&sb, "| %s | %s | %s |\n", name, carrier, mark)
 	}
-	row("graph 编排 / 并行 needs", "price-review · quick-product-qa", b.searches.Load() > 0, "")
+	row("过程卡(主循环照指引执行)", "price-review · quick-product-qa", b.searches.Load() > 0, "")
 	row("digest 大结果消化 + redis 暂存", "get_inventory 超大库存 → result store", in.resultEntries > 0, "")
-	row("plan-execute + reflection", "launch-campaign", true, "")
-	row("fork 上下文继承", "customer-brief", true, "")
-	row("workflow + mutating 审批", "apply-price", ix.approves > 0, "本轮未走到")
+	row("多步策划(todo + 主循环)", "大促活动策划", true, "")
+	row("fork 上下文继承", "crm_analyst(sub-agent)", true, "")
+	row("mutating 工具审批", "apply-price 指引 → update_price", ix.approves > 0, "本轮未走到")
 	row("todo 计划外化(harness 强制)", "多步任务自动列计划", in.todoTasks > 0, "本轮模型未产出;TestTodoStoreCrossReplica 确定性覆盖")
 	row("**分布式 store 跨副本**", "副本重启续同一会话", in.sessionKeys > 0, "")
 	row("memory 长期记忆(redis 后端)", "memory_save/search → redis hash", in.memoryKeys > 0, "本轮模型未写记忆;TestRedisMemory 确定性覆盖")

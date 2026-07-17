@@ -361,16 +361,18 @@ func TestSmokeAssembly(t *testing.T) {
 		t.Fatalf("agents = %v", app.Agents)
 	}
 	mounted := app.AgentMounts["ops-manager"]
-	// 挂载目录:2 过程卡 + 3 直挂工具 + 4 sub-agent = 9
-	if got := len(mounted.List()); got != 9 {
+	// 挂载目录:3 过程卡 + 4 直挂工具 + 4 sub-agent = 11
+	if got := len(mounted.List()); got != 11 {
 		for _, m := range mounted.List() {
 			t.Log(m.Ref.String())
 		}
-		t.Fatalf("mounted entries = %d, want 9", got)
+		t.Fatalf("mounted entries = %d, want 11", got)
 	}
 	for _, ref := range []string{
 		"cap://skill/catalog/price-review",
+		"cap://skill/catalog/quick-product-qa",
 		"cap://skill/catalog/apply-price",
+		"cap://tool/shop/search_products",
 		"cap://tool/shop/get_product",
 		"cap://tool/shop/get_inventory",
 		"cap://tool/shop/update_price",

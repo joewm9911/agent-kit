@@ -37,6 +37,11 @@ sources:
 
 skills:
   # 过程卡:主循环照指引亲自执行,声明的工具直挂宿主工具面
+  - name: quick-product-qa
+    description: 快速商品问答
+    tools: ["tools/shop/search_products"]
+    prompt: "回答用户的商品问题:用 search_products 查数据后作答,报具体数字。问题:{$input}"
+
   - name: price-review
     description: 审查指定商品的定价(按步骤拉详情、看库存、给结论)
     params:

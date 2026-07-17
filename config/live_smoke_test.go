@@ -15,8 +15,8 @@ package config
 //	MINIMAX_API_KEY=$(security find-generic-password -a agent-kit -s minimax-api-key -w) \
 //	SMOKE_LIVE=1 go test ./config/ -run TestLiveSmoke -v -count=1 -timeout 30m
 //
-// 覆盖矩阵(→ 子测试):react 工具循环→01;会话记忆→02;plan-execute/graph
-// 编排 + digest→03;todo 纪律→04;长期记忆 + 召回→05;审批(interactive +
+// 覆盖矩阵(→ 子测试):react 工具循环→01;会话记忆→02;过程卡
+// + digest→03;todo 纪律→04;长期记忆 + 召回→05;审批(interactive +
 // 参数级 allow 规则 + deny 规则)→06/07;预算硬停→08;结构化输出→09;
 // 上下文压缩→10;窗外会话召回→11;HTTP gateway + A2A→12;挂起/恢复
 // (dispatcher + 假通道 + file KV)→13;副本重启(file session)→14;
@@ -189,12 +189,12 @@ func TestLiveSmoke(t *testing.T) {
 		}
 	})
 
-	// —— 03 编排 + digest:price-review(graph 编排)穿库存大结果,消化落暂存 ——
+	// —— 03 过程卡 + digest:price-review 指引穿库存大结果,消化落暂存 ——
 	t.Run("03_OrchestrationAndDigest", func(t *testing.T) {
 		before := backend.inventory.Load()
 		run(t, ops, "live-03", "用 price-review 给 P100 做一次完整定价审查,库存、成本、建议价都要覆盖。")
 		if backend.inventory.Load() == before {
-			t.Fatal("编排未触达库存后端(price-review 流程未走通)")
+			t.Fatal("过程卡未触达库存后端(price-review 指引未走通)")
 		}
 		// 库存响应 ~4800 字 > digest.over 4000:全文必须进结果暂存
 		keys, _ := recordedKV(t, "live-cache").Scan(ctxBg, "")
@@ -245,7 +245,7 @@ func TestLiveSmoke(t *testing.T) {
 			for _, as := range spec.Agents {
 				if as.Name == "ops-manager" {
 					as.Approval.Rules = []loop.ApprovalRule{
-						{Ref: "cap://skill/catalog/apply-price", Action: "deny"},
+						{Ref: "cap://tool/shop/update_price", Action: "deny"},
 					}
 				}
 			}
@@ -311,7 +311,7 @@ func TestLiveSmoke(t *testing.T) {
 		a := compApp.Agents["ops-manager"]
 		for _, q := range []string{
 			"用 quick-product-qa 查降噪耳机价格。",
-			"查询客户 C1 的情况(customer-brief)。",
+			"查询客户 C1 的情况(交给 crm_analyst)。",
 			"把上面两件事各用一句话总结。",
 			"好的,收到。请再确认一遍商品名。",
 		} {
