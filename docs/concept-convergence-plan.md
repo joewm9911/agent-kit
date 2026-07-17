@@ -1,5 +1,7 @@
 # 概念收敛方案:skill 标准化 + component 拆解 + 配置面简化
 
+> **状态:已完成(2026-07-17)**——五批全部落地,真机验证见
+> concept-convergence-test-report.md。
 > 日期:2026-07-17;前置:single-agent-mode-plan.md(已完成,mode 已移除)。
 > 一句话:把 agent-kit 收敛成 **CC 同构的 Go harness**——概念表只剩
 > agent / skill(业界标准)/ sub-agent(同构声明)/ delegate / tool,
