@@ -1,6 +1,7 @@
-# 商品域:工具(HTTP mock)+ 五种执行单元 + 四个导出 skill。
-# 覆盖:react(digest/compaction/fork 目标)、direct、rewoo、workflow、
-# graph 并行 needs、{$input}、步骤 timeout/retry、use: 入口、mutating 风险传播。
+# 商品域:工具(HTTP mock)+ 过程卡 + sub-agent。
+# 覆盖:过程卡(工具直挂、主循环亲自执行;A/B 实测质量持平子循环、
+# 模型调用 -25%)、sub-agent(fork/digest/compaction)、mutating 工具
+# 的风险与审批。
 
 sources:
   - name: shop
@@ -54,24 +55,98 @@ sources:
             warehouse: {type: string, desc: "仓库(仓A|仓B|仓C)", required: true, in: body}
             delta:     {type: number, desc: 增减数量, required: true, in: body}
 
-components:
-  # 过程卡样板(CC 语义:纯 prompt+tools 声明即过程卡,无需任何开关):
-  # 调用返回执行指引,宿主主循环亲自执行;声明的工具直挂宿主工具面
-  # ("工具不出 ns"的唯一显式豁免)。要隔离执行就声明 engine(子执行体)。
-  # A/B 实测:质量持平子循环,模型调用 -25%。
-  - name: price_check_guide
+skills:
+  # 过程卡:调用返回执行指引,主循环亲自执行;声明的工具直挂宿主工具面
+  # ("工具不出 ns"的唯一显式豁免)。要隔离执行就声明成 subagents: 条目。
+  - name: price-check
+    description: 商品比价核查(轻流程,主循环按指引直接执行)
+    tools: ["tools/shop/search_products", "tools/shop/get_product"]
     prompt: |
       商品比价核查流程(严格按步骤):
       1. 用 search_products 按关键词找到目标商品,拿到 SKU 与售价;
       2. 用 get_product 查该 SKU 的成本;
       3. 输出:售价、成本、毛利率(=(售价-成本)/售价×100%),一句话结论。
       用户诉求:{$input}
-    tools: ["tools/shop/search_products", "tools/shop/get_product"]
 
-  # react:价格分析师——工具子集 + 大结果消化 + 内部压缩,fork 的接收方
-  # 执行画像内嵌:loop(步数+压缩)、digest(大结果消化)。
+  # 卡 → sub-agent 组合:轻步骤主循环自己做,深分析交给隔离的分析师
+  - name: price-review
+    description: 审查指定商品的定价(拉详情与库存,深入判断交给分析师)
+    params:
+      sku:      {type: string, desc: 商品 SKU, required: true}
+      question: {type: string, desc: 用户关注点}
+    tools: ["tools/shop/get_product", "tools/shop/get_inventory"]
+    prompt: |
+      审查 {sku} 的定价(关注:{question}):
+      1. 用 get_product 查详情(售价/成本),用 get_inventory 看库存水位;
+      2. 若只需常规结论,直接综合作答;
+      3. 若需要深入定价分析(竞争力/弹性/清库存策略),把 SKU、关注点
+         和已查到的关键数字交给 price_analyst 执行,引用其结论作答。
+
+  - name: quick-product-qa
+    description: 快速商品问答
+    tools: ["tools/shop/search_products"]
+    prompt: "回答用户的商品问题:需要商品数据时用 search_products 查询后作答。问题:{$input}"
+
+  - name: check-inventory
+    description: 查询商品库存明细(只读):各仓可用/预留数量与近30天出入库流水
+    params:
+      sku: {type: string, desc: 商品 SKU, required: true}
+    tools: ["tools/shop/get_inventory"]
+    prompt: "用 get_inventory 查询 {sku} 的库存明细,汇总各仓可用/预留与近期流水要点。"
+
+  - name: apply-price
+    description: 应用新的商品价格(改动性操作,update_price 受审批策略约束)
+    params:
+      sku:   {type: string, desc: 商品 SKU, required: true}
+      price: {type: string, desc: 新价格, required: true}
+    tools: ["tools/shop/update_price"]
+    prompt: "用 update_price 把 {sku} 的价格调整为 {price},完成后汇报结果。"
+
+  - name: set-product-status
+    description: 商品上下架(改动性操作,受审批策略约束)
+    params:
+      sku:    {type: string, desc: 商品 SKU, required: true}
+      status: {type: string, desc: "目标状态(在售|下架|预售)", required: true}
+    tools: ["tools/shop/set_product_status"]
+    prompt: "用 set_product_status 把 {sku} 状态调整为 {status},完成后汇报结果。"
+
+  - name: restock
+    description: 给指定仓库补货(改动性操作):先核当前库存,再执行调整
+    params:
+      sku:       {type: string, desc: 商品 SKU, required: true}
+      warehouse: {type: string, desc: 仓库, required: true}
+      qty:       {type: string, desc: 补货数量, required: true}
+    tools: ["tools/shop/get_inventory", "tools/shop/adjust_stock"]
+    prompt: |
+      给 {sku} 在 {warehouse} 补货 {qty} 件(严格按步骤):
+      1. 用 get_inventory 查当前库存,记下 {warehouse} 的补货前数量;
+      2. 用 adjust_stock 执行调整(delta={qty});
+      3. 一句话汇报补货前后变化。
+
+  - name: bulk-audit
+    description: 批量盘点某品类的商品与库存
+    params:
+      category: {type: string, desc: 品类, required: true}
+    tools: ["tools/shop/search_products", "tools/shop/get_inventory"]
+    prompt: |
+      对品类「{category}」做一次批量盘点:
+      1. 用 search_products 按品类检索全部商品;
+      2. 对每个 SKU 用 get_inventory 核对库存;
+      3. 汇总:商品数、异常项(缺货/积压)、一句话结论。
+
+  - name: audit-product
+    description: 审计单个商品的数据合规性
+    params:
+      id: {type: string, desc: 商品 ID, required: true}
+    tools: ["tools/shop/get_product"]
+    prompt: "用 get_product 查 {id} 的数据,审计价格/成本/状态字段是否合规,给出一句结论。"
+
+subagents:
+  # sub-agent:隔离子循环——digest 大结果消化 + 内部压缩,fork 的接收方。
+  # 中间数据大、不想污染主对话时用它;事实要显式写进参数。
   - name: price_analyst
-    engine: react
+    description: 深度定价分析(竞争力/弹性/清库存策略;隔离执行,继承对话背景)
+    context: fork
     loop: {max_rounds: 6, compaction: {max_messages: 20, keep_recent: 8}}
     digest: {over: 3000}
     params: {sku: {type: string, required: true}, question: {type: string}}
@@ -79,122 +154,3 @@ components:
     tools:
       - "tools/shop/get_product"
       - "tools/shop/get_inventory"
-
-  # direct:商品问答——一次调用+一轮工具+收尾,无循环
-  - name: catalog_qa
-    engine: direct
-    params: {q: {type: string, required: true}}
-    prompt: "你是商品问答助手。回答用户问题:{q}。需要商品数据时调用 search_products。"
-    tools:
-      - "tools/shop/search_products"
-
-  # rewoo:批量盘点规划——一次规划并行执行,两次模型调用
-  - name: bulk_planner
-    engine: rewoo
-    engine_config: {max_plan_steps: 6}
-    params: {category: {type: string, required: true}}
-    prompt: "对品类「{category}」做一次批量盘点:检索商品并核对库存,汇总结果。"
-    tools:
-      - "tools/shop/search_products"
-      - "tools/shop/get_inventory"
-
-  # workflow:审计流——纯顺序钉死,工具 → 模型各一步
-  - name: audit_flow
-    engine: workflow
-    params:
-      id: {type: string, desc: 商品 ID, required: true}
-    steps:
-      - {name: detail, use: "tools/shop/get_product", args: '{"id":"{id}"}', retry: 1}
-      - {name: verdict, use: model, prompt: "审计商品数据「{detail}」,给出一句合规结论。"}
-
-  # graph(编排族 component):问答管道,供 skill 以 use: 整体委托
-  - name: qa_flow
-    engine: graph
-    params:
-      q: {type: string, desc: 用户问题, required: true}
-    steps:
-      - {name: answer, use: "components/catalog_qa", args: '{"q":"{q}"}'}
-
-skills:
-  # 主力编排:并行 needs 分叉汇合 + fork + {$input} + 步骤 timeout/retry + output
-  - name: price-review
-    description: 审查指定商品的定价:并行拉取详情与库存,分析师带对话背景深入分析
-    params:
-      sku:      {type: string, desc: 商品 SKU, required: true}
-      question: {type: string, desc: 用户关注点}
-    step_defaults: {timeout: 240s}   # 分析步是子循环(多次模型调用),深推理模型下 45s 必超
-    steps:
-      - {name: detail,    use: "tools/shop/get_product",  needs: [], args: '{"id":"{sku}"}', retry: 1}
-      - {name: inventory, use: "tools/shop/get_inventory", needs: [], args: '{"sku":"{sku}"}'}
-      - {name: analysis,  use: "components/price_analyst", needs: [detail, inventory],
-         args: '{"sku":"{sku}","question":"{$input}","detail":"{detail}"}', context: fork}
-      - {name: brief, use: model, needs: [analysis],
-         prompt: "把分析结论「{analysis}」压成一句话汇报。"}
-    output: brief
-
-  # inline 过程卡的导出面:调用即拿指引,主循环照做
-  - name: price-check
-    description: 商品比价核查(轻流程,主循环按指引直接执行)
-    use: "components/price_check_guide"
-
-  # use: 入口引用:skill 退化为纯接口,执行委托给私有 graph
-  - name: quick-product-qa
-    description: 快速商品问答
-    params:
-      q: {type: string, desc: 用户问题, required: true}
-    use: "components/qa_flow"
-
-  # 单步透传 mutating 工具:风险传播 → 审批策略的作用对象
-  - name: apply-price
-    description: 应用新的商品价格(改动性操作,受审批策略约束)
-    params:
-      sku:   {type: string, desc: 商品 SKU, required: true}
-      price: {type: string, desc: 新价格, required: true}
-    steps:
-      - {name: apply, use: "tools/shop/update_price", args: '{"sku":"{sku}","price":"{price}"}'}
-
-  # 只读库存查询:主循环的库存查询入口。get_inventory 是域内工具不出域,
-  # 没有这个只读技能,模型会抓 restock 这类改动性技能当查询用(实测)。
-  - name: check-inventory
-    description: 查询商品库存明细(只读):各仓可用/预留数量与近30天出入库流水
-    params:
-      sku: {type: string, desc: 商品 SKU, required: true}
-    steps:
-      - {name: detail, use: "tools/shop/get_inventory", args: '{"sku":"{sku}"}'}
-
-  # 上下架:单步透传 mutating 工具
-  - name: set-product-status
-    description: 商品上下架(改动性操作,受审批策略约束)
-    params:
-      sku:    {type: string, desc: 商品 SKU, required: true}
-      status: {type: string, desc: "目标状态(在售|下架|预售)", required: true}
-    steps:
-      - {name: set, use: "tools/shop/set_product_status", args: '{"sku":"{sku}","status":"{status}"}'}
-
-  # 补货:查库存后调整,两步编排
-  - name: restock
-    description: 给指定仓库补货(改动性操作):先核当前库存,再执行调整
-    params:
-      sku:       {type: string, desc: 商品 SKU, required: true}
-      warehouse: {type: string, desc: 仓库, required: true}
-      qty:       {type: string, desc: 补货数量, required: true}
-    steps:
-      - {name: before, use: "tools/shop/get_inventory", args: '{"sku":"{sku}"}'}
-      - {name: adjust, use: "tools/shop/adjust_stock", args: '{"sku":"{sku}","warehouse":"{warehouse}","delta":{qty}}'}
-      - {name: brief,  use: model, prompt: "补货完成:{adjust}。一句话汇报补货前后变化(补货前:见库存明细的对应仓库)。"}
-    output: brief
-
-  # rewoo 导出
-  - name: bulk-audit
-    description: 批量盘点某品类的商品与库存
-    params:
-      category: {type: string, desc: 品类, required: true}
-    steps:
-      - {name: run, use: "components/bulk_planner", args: '{"category":"{category}"}'}
-
-  # workflow 导出
-  - name: audit-product
-    description: 审计单个商品的数据合规性
-    params:
-      id: {type: string, desc: 商品 ID, required: true}
-    use: "components/audit_flow"

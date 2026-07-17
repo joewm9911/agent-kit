@@ -39,40 +39,35 @@ sources:
             id:     {type: string, desc: 订单号, required: true, in: body}
             reason: {type: string, desc: 退款原因, required: true, in: body}
 
-components:
-  # 订单诊断:查单 → 结合客户画像与售后政策给处理意见(跨 ns 引用 crm skill)
-  - name: order_auditor
-    engine: react
-    loop: {max_rounds: 6}
-    params: {task: {type: string, required: true}}
-    prompt: "你是订单专员。任务:{task}。用 list_orders/get_order 查数据;涉及客户时用 customer-brief 拉画像;给出诊断与处理建议,不要直接执行改动。数据边界:①你只有订单数据,销量趋势和库存不归你,不要推断或顺带给结论,明确留白由调用方另查;②订单工具没有时间范围过滤,涉及「最近N天」时用返回记录的 days_ago 字段逐条筛选后再计数,并在结论里注明统计口径;数出多少是多少,不要凑整。"
-    tools:
-      - "tools/oms/list_orders"
-      - "tools/oms/get_order"
-      - "cap://skill/crm/customer-brief"
-
 skills:
-  - name: order-inquiry
-    description: 订单查询与诊断:查单、找卡单、分析客户订单情况(只读)
-    params:
-      task: {type: string, desc: 查询/诊断任务描述, required: true}
-    steps:
-      - {name: audit, use: "components/order_auditor", args: '{"task":"{task}"}', context: fork}
-
   - name: ship-order
     description: 订单发货(改动性:把已支付订单推进到已发货)
     params:
       id: {type: string, desc: 订单号, required: true}
-    steps:
-      - {name: ship, use: "tools/oms/update_order_status", args: '{"id":"{id}","status":"已发货"}'}
+    tools: ["tools/oms/update_order_status"]
+    prompt: "用 update_order_status 把订单 {id} 推进到「已发货」;如后端返回非法流转错误,读错误说明并汇报原因,不要重试其他状态。"
 
   - name: process-refund
     description: 处理订单退款(改动性,受审批约束):先核订单状态,再执行退款
     params:
       id:     {type: string, desc: 订单号, required: true}
       reason: {type: string, desc: 退款原因, required: true}
-    steps:
-      - {name: check,  use: "tools/oms/get_order", args: '{"id":"{id}"}'}
-      - {name: refund, use: "tools/oms/refund_order", args: '{"id":"{id}","reason":"{reason}"}'}
-      - {name: brief,  use: model, prompt: "退款已执行:{refund}。结合订单信息「{check}」给客户一句简洁的告知话术。"}
-    output: brief
+    tools: ["tools/oms/get_order", "tools/oms/refund_order"]
+    prompt: |
+      处理订单 {id} 的退款(原因:{reason}),严格按步骤:
+      1. 用 get_order 核对订单状态(仅 已支付/已发货/已完成 可退);
+      2. 用 refund_order 执行退款;
+      3. 结合订单信息给客户一句简洁的告知话术。
+
+subagents:
+  # 订单诊断:隔离子循环(订单列表数据量大,不污染主对话)
+  - name: order-inquiry
+    description: 订单查询与诊断:查单、找卡单、分析客户订单情况(只读)
+    context: fork
+    loop: {max_rounds: 6}
+    params:
+      task: {type: string, desc: 查询/诊断任务描述, required: true}
+    prompt: "你是订单专员。任务:{task}。用 list_orders/get_order 查数据,给出诊断与处理建议,不要直接执行改动。数据边界:①你只有订单数据,销量趋势/库存/客户画像不归你,不要推断或顺带给结论,明确留白由调用方另查;②订单工具没有时间范围过滤,涉及「最近N天」时用返回记录的 days_ago 字段逐条筛选后再计数,并在结论里注明统计口径;数出多少是多少,不要凑整。"
+    tools:
+      - "tools/oms/list_orders"
+      - "tools/oms/get_order"

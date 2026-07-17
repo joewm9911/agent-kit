@@ -6,8 +6,8 @@ prompt:
     [OPS] 你是电商运营主管的助手,管理 20 个商品(6 品类:音频/键鼠外设/显示器/存储/网络设备/智能家居)、3 个仓库(仓A/仓B/仓C)、订单与客户。你对业务数据没有记忆——一切事实以工具查询结果为准。
 
     # 能力路由(按任务类型选,查询绝不用改动性能力)
-    - 查询(只读):商品搜索与问答 quick-product-qa;库存明细 check-inventory;订单查询与诊断 order-inquiry;客户画像 customer-brief
-    - 分析(只读):销售报表 sales-report;单品趋势 product-trend;滞销/下滑扫描 slow-movers;定价审查 price-review;批量盘点 bulk-audit
+    - 查询(只读):商品搜索与问答 quick-product-qa;库存明细 check-inventory;订单查询与诊断 order-inquiry(隔离执行);客户画像 customer-brief;售后政策 faq
+    - 分析(只读):销售报表 sales-report(隔离执行,报表走交付物直达);单品趋势 product-trend;滞销/下滑扫描 slow-movers;定价审查 price-review;深度定价分析 price_analyst;批量盘点 bulk-audit;开放式销售分析 sales_analyst
     - 改动(先核实、后执行、说明对象与理由):调价 apply-price;补货 restock;上下架 set-product-status;订单发货 ship-order;退款 process-refund
     - 其他:活动策划 launch-campaign;PDF 读写用 pdf 技能(传文件绝对路径);临时计算写 python 脚本交给 python 工具(用 print 输出结果)
 
@@ -17,22 +17,19 @@ prompt:
     3. 各域数据用各域工具:销量与趋势只看 sales 系能力,库存只看 check-inventory,订单只看 order-inquiry——不要拿订单数据推断销量或库存,也不要采信其他能力顺带给出的跨域结论。
     4. 工具口径覆盖不了问题口径时(例如时间范围过滤不了),如实告知口径差异并给出实际口径下的数据,不得把近似数据当精确答案。
     5. 改动性操作执行前,先用对应的只读能力核实现状,再说明操作对象与理由;用户未确认的批量改动不要自作主张。
-# 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
+# 执行画像 A 类(agent 自己这一层,兼作其 subagent 的降级源):
 loop:
   max_rounds: 20
   # tool_clear:保护窗外超长工具结果先替换为占位(零模型调用),压缩兜底
   compaction: {max_messages: 40, keep_recent: 10, tool_clear_over: 800, tool_clear_keep: 12}
-step_defaults:
-  retry: 1
 
 namespaces:
   - ../namespaces/catalog.yaml
   - ../namespaces/sales.yaml
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
-  - ../namespaces/orders.yaml   # 在 crm 之后:order_auditor 跨 ns 引用 customer-brief
+  - ../namespaces/orders.yaml
   - ../namespaces/docs.yaml
-  - ../namespaces/regions.yaml  # 统一输入模型样例:input 隔离 + {$user_input} 穿透
 
 # 全局源选品:app.yaml sources 里的 calc(python 脚本执行)直挂本 agent
 # 工具面。跑在哪由 app 级 exec: 块决定(default_sandbox),此处只做选品。
@@ -87,5 +84,5 @@ approval:                     # 治理:审批模式 + 参数级策略(合一)
   mode: interactive
   remember: true
   rules:
-    # 灰度 SKU 免批;其余调价照常审批(参数级规则)
-    - {ref: "cap://skill/catalog/apply-price", args: {sku: "CANARY-*"}, action: allow}
+    # 灰度 SKU 免批;其余调价照常审批(参数级规则;审批闸在 mutating 工具上)
+    - {ref: "cap://tool/shop/update_price", args: {sku: "CANARY-*"}, action: allow}

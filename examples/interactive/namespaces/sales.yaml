@@ -1,5 +1,6 @@
-# 销售域:销售数据查询与分析。工具两个(单品序列/全店汇总)+ 分析师
-# 组件 + 三个导出 skill(报表/单品诊断/滞销扫描)。
+# 销售域:销售数据查询与分析。工具两个(单品序列/全店汇总)+ 两张
+# 过程卡(单品诊断/滞销扫描)+ 两个 sub-agent(报表带 deliver 直达/
+# 深度分析)。
 sources:
   - name: sales
     type: http
@@ -21,10 +22,41 @@ sources:
             days:     {type: string, desc: 统计天数(1-30), in: query}
             category: {type: string, desc: 品类(可空=全店), in: query}
 
-components:
-  # 销售分析师:拿汇总找异常,再对可疑单品下钻日序列
+skills:
+  - name: product-trend
+    description: 诊断单个商品的销售趋势(上升/下滑/滞销)并给出动作建议
+    params:
+      sku: {type: string, desc: 商品 SKU, required: true}
+    tools: ["tools/sales/get_sales"]
+    prompt: "用 get_sales 查 {sku} 近 30 天序列,判断趋势(上升/平稳/下滑/滞销),量化说明,并给一条动作建议。"
+
+  - name: slow-movers
+    description: 扫描滞销与下滑商品,输出候选清单(清仓/促销/调价对象)
+    tools: ["tools/sales/sales_summary", "tools/sales/get_sales"]
+    prompt: |
+      扫描滞销与下滑商品:
+      1. 用 sales_summary 看全局(units 为 0=滞销,trend_pct 显著为负=下滑);
+      2. 对可疑商品用 get_sales 下钻确认;
+      3. 输出候选清单及严重程度(清仓/促销/调价对象)。
+
+subagents:
+  # 报表:sub-agent + deliver 直达——报表原文经交付物通道随行,终答只做导读
+  - name: sales-report
+    description: 生成销售报表:全店或指定品类近 N 天的销量/销售额/趋势分析
+    deliver: attach
+    loop: {max_rounds: 8, compaction: {max_messages: 24, keep_recent: 8}}
+    digest: {over: 3000}
+    params:
+      scope: {type: string, desc: 范围描述(如"全店"或品类名), required: true}
+      days:  {type: string, desc: 统计天数}
+    prompt: "你是销售分析师。生成 {scope} 近 {days} 天的销售报表:先用 sales_summary 看全局,对头部与异常商品用 get_sales 下钻,整理成结构化报表:总览/头部商品/风险商品/建议。"
+    tools:
+      - "tools/sales/get_sales"
+      - "tools/sales/sales_summary"
+
+  # 深度分析:开放式任务的隔离执行体(delegate 的常客)
   - name: sales_analyst
-    engine: react
+    description: 销售数据深度分析(开放式任务;中间数据大,隔离执行)
     loop: {max_rounds: 8, compaction: {max_messages: 24, keep_recent: 8}}
     digest: {over: 3000}
     params: {task: {type: string, required: true}}
@@ -32,32 +64,3 @@ components:
     tools:
       - "tools/sales/get_sales"
       - "tools/sales/sales_summary"
-
-skills:
-  - name: sales-report
-    deliver: attach   # 交付物:报表原文经直达通道随行,终答只做导读
-    description: 生成销售报表:全店或指定品类近 N 天的销量/销售额/趋势分析
-    params:
-      scope: {type: string, desc: 范围描述(如"全店"或品类名), required: true}
-      days:  {type: string, desc: 统计天数}
-    steps:
-      - {name: analysis, use: "components/sales_analyst",
-         args: '{"task":"生成 {scope} 近 {days} 天的销售报表:总量、头部与尾部商品、上升与下滑趋势"}', context: fork}
-      - {name: report, use: model,
-         prompt: "把分析「{analysis}」整理成结构化报表:总览/头部商品/风险商品/建议。"}
-    output: report
-
-  - name: product-trend
-    description: 诊断单个商品的销售趋势(上升/下滑/滞销)并给出动作建议
-    params:
-      sku: {type: string, desc: 商品 SKU, required: true}
-    steps:
-      - {name: series, use: "tools/sales/get_sales", args: '{"sku":"{sku}","days":"30"}'}
-      - {name: verdict, use: model,
-         prompt: "基于销售数据「{series}」判断该商品趋势(上升/平稳/下滑/滞销),量化说明,并给一条动作建议。"}
-
-  - name: slow-movers
-    description: 扫描滞销与下滑商品,输出候选清单(清仓/促销/调价对象)
-    steps:
-      - {name: scan, use: "components/sales_analyst",
-         args: '{"task":"找出滞销(近30天销量为0或接近0)与明显下滑(trend_pct 显著为负)的商品,输出候选清单及严重程度"}'}
