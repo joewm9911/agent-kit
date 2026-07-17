@@ -92,20 +92,26 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 			m := &countingModel{inner: loop.RetryModel(raw, retry), calls: &calls}
 			tools := newTools(&prodN, &salesN)
 
-			decl := &skill.Declaration{
-				Name: "live/price_review", Engine: engineOf(mode),
-				Description: "按标准流程完成一次定价审查",
-				Params:      map[string]capability.ParamDecl{"sku": {Type: "string", Required: true}},
-				Prompt:      prompt.Value{Literal: brief},
-			}
-			// 有效形态:缺省已切 inline(纯 prompt+tools 推断为过程卡)
+			// 概念收敛后形态由配置节决定:skills: = 过程卡(主循环执行),
+			// subagents: = 隔离子循环。A/B 两臂各建各的。
 			effInline := mode == "inline" || mode == ""
-			var deps skill.Deps
-			deps.DefaultModel = m
-			if !effInline {
-				deps.Capabilities = tools // 子循环:工具在 skill 内部
+			var card capability.Capability
+			var err error
+			if effInline {
+				card, err = skill.Build(ctx, &skill.Declaration{
+					Name:        "live/price_review",
+					Description: "按标准流程完成一次定价审查",
+					Params:      map[string]capability.ParamDecl{"sku": {Type: "string", Required: true}},
+					Prompt:      prompt.Value{Literal: brief},
+				}, skill.Deps{DefaultModel: m})
+			} else {
+				card, err = skill.BuildAgent(ctx, &skill.AgentDecl{
+					Name:        "live/price_review",
+					Description: "按标准流程完成一次定价审查",
+					Params:      map[string]capability.ParamDecl{"sku": {Type: "string", Required: true}},
+					Prompt:      prompt.Value{Literal: brief},
+				}, skill.Deps{DefaultModel: m, Capabilities: tools})
 			}
-			card, err := skill.Build(ctx, decl, deps)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,11 +167,3 @@ func TestLiveInlineProcedureAB(t *testing.T) {
 	}
 }
 
-// engineOf 把 A/B 臂名映射为声明结构(mode 键已移除,结构决定形态):
-// subloop 臂声明 engine: react;inline 臂纯 prompt+tools。
-func engineOf(arm string) string {
-	if arm == "subloop" {
-		return "react"
-	}
-	return ""
-}

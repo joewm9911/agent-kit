@@ -35,8 +35,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 		testmodel.ToolCallMsg("todo_write", `{"todos":[{"content":"组件内步骤","status":"in_progress"}]}`),
 		schema.AssistantMessage("done", nil),
 	)
-	sk, err := Build(context.Background(), &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	sk, err := BuildAgent(context.Background(), &AgentDecl{
 		Name:   "t/researcher",
 		Prompt: prompt.Value{Literal: "研究 {input}"},
 		Todo:   true,
@@ -60,8 +59,7 @@ func TestComponentTodoOptIn(t *testing.T) {
 		testmodel.ToolCallMsg("todo_read", `{}`),
 		schema.AssistantMessage("checked", nil),
 	)
-	sk2, err := Build(context.Background(), &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	sk2, err := BuildAgent(context.Background(), &AgentDecl{
 		Name:   "t/researcher2",
 		Prompt: prompt.Value{Literal: "研究 {input}"},
 		Todo:   true,
@@ -74,16 +72,16 @@ func TestComponentTodoOptIn(t *testing.T) {
 	}
 }
 
-// TestComponentTodoEngineRestriction 验证 todo 只允许 react。
-func TestComponentTodoEngineRestriction(t *testing.T) {
-	_, err := Build(context.Background(), &Declaration{
-		Name:   "t/bad",
-		Prompt: prompt.Value{Literal: "x"},
-		Engine: "plan-execute",
-		Todo:   true,
+// TestSubagentEngineRemoved 验证 engine 键硬切:sub-agent 永远标准循环。
+func TestSubagentEngineRemoved(t *testing.T) {
+	legacy := "plan-execute"
+	_, err := BuildAgent(context.Background(), &AgentDecl{
+		Name:         "t/bad",
+		Prompt:       prompt.Value{Literal: "x"},
+		EngineLegacy: &legacy,
 	}, Deps{DefaultModel: testmodel.New()})
-	if err == nil || !strings.Contains(err.Error(), "only makes sense for react") {
-		t.Fatalf("expect engine restriction, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "engine has been removed") {
+		t.Fatalf("expect engine hard-cut error, got %v", err)
 	}
 }
 
@@ -96,8 +94,7 @@ func TestComponentL1MatchesToolFace(t *testing.T) {
 		if todo {
 			name = "t/todoful"
 		}
-		sk, err := Build(context.Background(), &Declaration{
-			Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+		sk, err := BuildAgent(context.Background(), &AgentDecl{
 			Name:   name,
 			Prompt: prompt.Value{Literal: "做 {input}"},
 			Todo:   todo,

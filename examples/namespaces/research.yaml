@@ -1,4 +1,5 @@
-# namespaces/research.yaml —— 重型执行单元(plan-execute)包装为单步 skill 导出。
+# namespaces/research.yaml —— 重型任务声明为 sub-agent(同构隔离子循环):
+# 长任务的中间数据不污染主对话,终答可经 deliver 走交付物直达。
 
 sources:
   - name: weather
@@ -12,22 +13,8 @@ sources:
           params:
             city: {type: string, desc: 城市名(拼音或英文), required: true, in: path}
 
-components:
-  - name: competitor_report         # 内部是 plan-execute 循环,对外不可见
-    prompt: "cap://prompt/pp/competitor-brief"
-    engine: plan-execute
-    params:
-      company: {type: string, required: true}
-      focus: {type: string}
-    engine_config:
-      max_rounds: 3
-      step_max_rounds: 10
-      on_exhausted: summarize
-    tools:
-      - "tools/weather/get_weather"
-
-skills:
-  - name: competitor_report         # 对外接口:描述+参数;单步透传 component
+subagents:
+  - name: competitor_report
     version: "1"
     description: >
       对指定竞品生成结构化分析报告。任务耗时较长,仅在用户明确需要
@@ -35,5 +22,8 @@ skills:
     params:
       company: {type: string, desc: 竞品公司名, required: true}
       focus:   {type: string, desc: "额外关注的方面,可选"}
-    steps:
-      - {name: report, use: "components/competitor_report", args: '{"company":"{company}","focus":"{focus}"}'}
+    prompt: "cap://prompt/pp/competitor-brief"
+    tools:
+      - "tools/weather/get_weather"
+    todo: true                      # 长任务:内部挂调用级清单
+    loop: {max_rounds: 12}

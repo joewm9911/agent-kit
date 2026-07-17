@@ -56,18 +56,21 @@ func TestInlineCardBuildAndInvoke(t *testing.T) {
 	}
 }
 
-// 互斥校验:inline 与子循环专属键同时出现必须装配期报错。
-func TestInlineMutualExclusions(t *testing.T) {
-	// 结构决定形态:带子循环键 = 子执行体(照常装配,不再是互斥错误);
-	// mode 键本身已移除,误写必须报错指路。
+// 硬切校验:skill 上的子循环键一律装配期报错、文案指路 subagents:。
+func TestSkillRemovedKeys(t *testing.T) {
 	legacy := "subloop"
 	d := &Declaration{Name: "t/x", ModeLegacy: &legacy, Prompt: prompt.Value{Literal: "p"}}
 	if _, err := Build(context.Background(), d, Deps{}); err == nil || !strings.Contains(err.Error(), "mode has been removed") {
 		t.Fatalf("legacy mode key must fail fast with migration hint, got %v", err)
 	}
-	// 带 deliver 的声明自动成为子执行体(engine 缺省 react),不报互斥
-	d2 := &Declaration{Name: "t/y", Deliver: "attach", Prompt: prompt.Value{Literal: "p"}}
-	if _, err := Build(context.Background(), d2, Deps{DefaultModel: &echoInputModel{}}); err != nil {
-		t.Fatalf("deliver implies sub-executor, must assemble: %v", err)
+	deliver := "attach"
+	d2 := &Declaration{Name: "t/y", DeliverLegacy: &deliver, Prompt: prompt.Value{Literal: "p"}}
+	if _, err := Build(context.Background(), d2, Deps{}); err == nil || !strings.Contains(err.Error(), "sub-agent") {
+		t.Fatalf("deliver on a skill must fail fast pointing to subagents:, got %v", err)
+	}
+	eng := "react"
+	d3 := &Declaration{Name: "t/z", EngineLegacy: &eng, Prompt: prompt.Value{Literal: "p"}}
+	if _, err := Build(context.Background(), d3, Deps{}); err == nil || !strings.Contains(err.Error(), "engine has been removed") {
+		t.Fatalf("engine on a skill must fail fast with migration hint, got %v", err)
 	}
 }

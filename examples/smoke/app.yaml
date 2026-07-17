@@ -2,8 +2,8 @@
 # 这棵配置树刻意用满框架全部能力,是能力覆盖的活文档:
 #   3 个 namespace(catalog 商品域 / marketing 营销域 / crm 客户域)
 #   2 个 agent(ops-manager 运营主管 / support-bot 客服)
-#   8 种引擎、并行 graph、fork、{$input}、override 链、审批策略、预算、
-#   digest、会话记忆、todo……逐项由 config 包的 smoke 测试断言。
+#   过程卡、sub-agent(fork/digest/todo)、override 链、审批策略、预算、
+#   会话记忆……逐项由 config 包的 smoke 测试断言。
 #
 # 环境占位(运行前必须设置,fail fast):
 #   SMOKE_MODEL_PROVIDER  模型 provider:测试注入 smokescript,真实运行 minimax

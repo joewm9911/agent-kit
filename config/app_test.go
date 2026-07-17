@@ -96,8 +96,9 @@ sources:
   - {name: svc, type: nstest}
 skills:
   - name: lookup
-    steps:
-      - {name: s, use: "tools/svc/search"}
+    description: 查询
+    prompt: "先用 search 查询:{$input}"
+    tools: ["tools/svc/search"]
 `,
 	})
 	spec, err := LoadApp(appPath)
@@ -160,26 +161,18 @@ namespaces:
 		"agents/b.yaml": `
 namespaces: [../namespaces/plain.yaml]
 `,
-		// per-mount 覆盖压过全部 component(component 内不可写 model)
+		// per-mount 覆盖压过全部 subagent(subagent 内不可写 model)
 		"namespaces/over.yaml": `
-components:
-  - name: c
-    engine: react
+subagents:
+  - name: via-mount
     params: {q: {type: string}}
     prompt: "回答 {q}"
-skills:
-  - name: via-mount
-    steps: [{name: s, use: "components/c", args: '{"q":"x"}'}]
 `,
 		"namespaces/plain.yaml": `
-components:
-  - name: inherit
-    engine: react
+subagents:
+  - name: via-agent
     params: {q: {type: string}}
     prompt: "回答 {q}"
-skills:
-  - name: via-agent
-    steps: [{name: s, use: "components/inherit", args: '{"q":"x"}'}]
 `,
 	})
 	spec, err := LoadApp(appPath)
@@ -197,7 +190,7 @@ skills:
 		if err != nil {
 			t.Fatalf("%s/%s: %v", agentName, skillRef, err)
 		}
-		out, err := capability.Invoke(context.Background(), sk, `{}`)
+		out, err := capability.Invoke(context.Background(), sk, `{"q":"x"}`)
 		if err != nil {
 			t.Fatalf("%s/%s: %v", agentName, skillRef, err)
 		}
@@ -205,9 +198,9 @@ skills:
 			t.Fatalf("%s/%s: got %q, want %q", agentName, skillRef, out, want)
 		}
 	}
-	check("a", "cap://skill/over/via-mount", "mount-model")  // per-mount 指定最高优
-	check("a", "cap://skill/plain/via-agent", "agent-model") // 无 mount 指定 → agent 自己
-	check("b", "cap://skill/plain/via-agent", "app-model")   // 无 agent model → app
+	check("a", "cap://agent/over/via-mount", "mount-model")  // per-mount 指定最高优
+	check("a", "cap://agent/plain/via-agent", "agent-model") // 无 mount 指定 → agent 自己
+	check("b", "cap://agent/plain/via-agent", "app-model")   // 无 agent model → app
 }
 
 // TestNamespaceModelRejected 验证 namespace 不能自指 model(能力不可自指)。
@@ -223,7 +216,7 @@ agents: [agents/a.yaml]
 model: {provider: marker, config: {resp: ns-model}}
 skills:
   - name: x
-    steps: [{name: s, use: "model", prompt: "hi"}]
+    prompt: "hi"
 `,
 	})
 	spec, err := LoadApp(appPath)
@@ -251,7 +244,8 @@ sources:
   - {name: cnt, type: countsrc}
 skills:
   - name: ping
-    steps: [{name: s, use: "tools/cnt/ping"}]
+    prompt: "用 ping 工具探活"
+    tools: ["tools/cnt/ping"]
 `,
 	})
 	spec, err := LoadApp(appPath)
@@ -267,7 +261,8 @@ skills:
 	}
 }
 
-func TestStepDefaultsChain(t *testing.T) {
+// TestStepDefaultsRemoved:step_defaults 随编排族移除,误写报错指路。
+func TestStepDefaultsRemoved(t *testing.T) {
 	setupAppTestFakes()
 	appPath := writeTree(t, map[string]string{
 		"app.yaml": `
@@ -276,63 +271,14 @@ agents: [agents/a.yaml]
 `,
 		"agents/a.yaml": `
 step_defaults: {retry: 2}
-namespaces: [../namespaces/flaky.yaml]
-`,
-		"namespaces/flaky.yaml": `
-sources:
-  - {name: svc, type: flakysrc}
-skills:
-  - name: robust
-    steps: [{name: s, use: "tools/svc/wobble"}]   # 步骤未声明 retry → agent 默认 2
 `,
 	})
-	registerFlakySource()
-	flakyCalls.Store(0)
 	spec, err := LoadApp(appPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := BuildApp(context.Background(), spec, BuildOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sk, err := app.AgentMounts["a"].Get("cap://skill/flaky/robust")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := capability.Invoke(context.Background(), sk, `{}`)
-	if err != nil || out != "ok" {
-		t.Fatalf("step_retry default should retry to success, got %q %v (calls=%d)", out, err, flakyCalls.Load())
-	}
-	if flakyCalls.Load() != 3 {
-		t.Fatalf("calls = %d, want 3 (retry 2 from agent defaults)", flakyCalls.Load())
+	_, err = BuildApp(context.Background(), spec, BuildOptions{})
+	if err == nil || !strings.Contains(err.Error(), "step_defaults has been removed") {
+		t.Fatalf("expect step_defaults hard-cut error, got %v", err)
 	}
 }
-
-var (
-	registerFlaky sync.Once
-	flakyCalls    atomic.Int32
-)
-
-func registerFlakySource() {
-	registerFlaky.Do(func() {
-		source.Register("flakysrc", func(_ context.Context, name string, _ map[string]any) (source.Source, error) {
-			c := capability.New(capability.Meta{
-				Ref:  capability.Ref{Kind: "tool", Domain: name, Name: "wobble"},
-				Risk: capability.RiskReadonly,
-			}, func(_ context.Context, in string) (string, error) {
-				if flakyCalls.Add(1) < 3 {
-					return "", errTransientTest
-				}
-				return "ok", nil
-			})
-			return source.Static(name, c), nil
-		})
-	})
-}
-
-var errTransientTest = &transientTestErr{}
-
-type transientTestErr struct{}
-
-func (*transientTestErr) Error() string { return "wobble failed" }

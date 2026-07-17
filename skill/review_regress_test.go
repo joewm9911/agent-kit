@@ -17,8 +17,7 @@ import (
 // 否则内层顶着外层身份跑(系统消息里出现外层 persona)。
 func TestPersonaNotLeakedOnEmptyInput(t *testing.T) {
 	em := &echoInputModel{}
-	comp, err := Build(context.Background(), &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	comp, err := BuildAgent(context.Background(), &AgentDecl{
 		Name:   "t/inner",
 		Prompt: prompt.Value{Literal: "你是内层组件"},
 	}, Deps{DefaultModel: em})
@@ -59,8 +58,7 @@ func TestPersonaNotLeakedOnEmptyInput(t *testing.T) {
 // 让上级大脑补参重试,而不是把 {placeholder} 字面量留在 persona 里。
 func TestLoopFamilyRequiredParams(t *testing.T) {
 	em := &echoInputModel{}
-	comp, err := Build(context.Background(), &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	comp, err := BuildAgent(context.Background(), &AgentDecl{
 		Name:   "t/strict",
 		Params: map[string]capability.ParamDecl{"category": {Type: "string", Required: true}},
 		Prompt: prompt.Value{Literal: "盘点品类「{category}」"},

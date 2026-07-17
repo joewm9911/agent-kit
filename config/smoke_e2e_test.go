@@ -116,7 +116,7 @@ func call(name, args string) *schema.Message {
 
 func markers(text string) string {
 	var out []string
-	for _, m := range []string{"[ANALYST]", "[SNAP]", "[DIGESTED]", "[QA]", "[REWOO]", "[AUDIT]", "[PE]", "[REV]", "[FAQBOT]", "[CRM]", "[RESEARCH]"} {
+	for _, m := range []string{"[ANALYST]", "[SNAP]", "[DIGESTED]", "[FAQBOT]", "[CRM]", "[RESEARCH]"} {
 		if strings.Contains(text, m) {
 			out = append(out, m)
 		}
@@ -154,35 +154,7 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 		return reply("[SUM]任务与结论要点")
 	case strings.Contains(sysT, "You are a result digester"): // digest
 		return reply("[DGST]库存充足,周转正常")
-	case strings.Contains(sysT, "You are a reviewer"): // reflection reviewer
-		if strings.Contains(userT, "[REV]") {
-			return reply(`{"pass": true}`)
-		}
-		return reply(`{"pass": false, "feedback": "在文末追加[REV]标记"}`)
-	case strings.Contains(sysT, "You are a router"):
-		return reply(`{"target":"faq_bot","args":{"q":"退货政策"}}`)
-	case strings.Contains(sysT, "You are a planner"): // rewoo planner
-		return reply(`{"steps":[
-			{"id":"e1","tool":"search_products","args":{"q":"促销"}},
-			{"id":"e2","tool":"get_inventory","args":{"sku":"S1"}}]}`)
-	case strings.Contains(sysT, "You are a solver"): // rewoo solver
-		return reply("[REWOO]盘点完成")
-	case strings.Contains(sysT, "You are a task planner"): // plan-execute planner
-		return reply(`{"steps":["审查活动相关商品定价"]}`)
-	case strings.Contains(sysT, "You are a task reviewer"): // plan-execute replanner
-		return reply(`{"action":"finish","response":"[PE]活动方案已定"}`)
-	case strings.Contains(sysT, "Complete only the single step"): // plan-execute executor (react)
-		if toolMsgs == 0 && s.hasTool("price-review") {
-			return call("price-review", `{"sku":"P100","question":"活动定价"}`), nil
-		}
-		return reply("[EXEC]步骤完成:" + markers(toolT))
-	case strings.Contains(sysT, "你是文案执行者"): // reflection executor (example YAML overrides with a custom prompt)
-		if strings.Contains(userT, "Review feedback") {
-			return reply("文案v2[REV]")
-		}
-		return reply("文案v1")
-
-	// —— component 任务书(user 层识别)——
+	// —— sub-agent persona(P3 后落系统消息;input 空则降级落用户消息)——
 	case strings.Contains(briefT, "你是价格分析师"):
 		if toolMsgs == 0 {
 			return call("get_product", `{"id":"P100"}`), nil
@@ -198,18 +170,11 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 			out += "[DIGESTED]"
 		}
 		return reply(out)
-	case strings.Contains(briefT, "你是商品问答助手"):
-		if len(s.tools) > 0 && toolMsgs == 0 {
-			return call("search_products", `{"q":"降噪耳机"}`), nil
-		}
-		return reply("[QA]在售款为P100")
 	case strings.Contains(briefT, "[FAQ]"):
 		if toolMsgs == 0 { // agentic RAG:先查知识库
 			return call("search_kb", `{"query":"退货"}`), nil
 		}
 		return reply("[FAQBOT]根据知识库:" + clipStr(toolT, 40)) // 用检索结果作答
-	case strings.Contains(briefT, "[HANDOFF]"):
-		return reply("[HANDOFF]已为您转接人工")
 	case strings.Contains(briefT, "深入研究课题"):
 		if toolMsgs == 0 {
 			return call("todo_write", `{"todos":[
@@ -223,31 +188,30 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 		}
 		return reply("[RESEARCH]结论:值得投入")
 	case strings.Contains(briefT, "你是客户分析师"):
+		if toolMsgs == 0 {
+			return call("get_customer", `{"id":"C1"}`), nil
+		}
 		out := "[CRM]建议主动跟进"
 		if strings.Contains(userT, "caller's conversation") || strings.Contains(sysT, "caller's conversation") {
 			out += "[SNAP]"
 		}
 		return reply(out)
-	case strings.Contains(briefT, "审计商品数据"): // workflow 的 model 步骤
-		return reply("[AUDIT]数据合规")
-	case strings.Contains(briefT, "压成一句话汇报"): // price-review 的 brief 步骤
-		return reply("[BRIEF]" + markers(briefT))
-
-	// —— regions:统一输入模型样例(input 隔离 + {$user_input} 穿透)——
-	case strings.Contains(sysT, "[SCAN]"):
-		return reply("[RGN]区域结论")
-	case strings.Contains(briefT, "汇总三区域结论"):
-		return reply("[SCAN-DONE]")
 
 	// —— agent 主循环 ——
 	case strings.Contains(sysT, "[OPS]"):
 		switch {
 		case strings.Contains(lastUser, "审查") && toolMsgs == 0:
 			return call("price-review", `{"sku":"P100","question":"定价是否合理"}`), nil
+		case strings.Contains(lastUser, "审查") && toolMsgs == 1: // 拿到过程卡指引 → 亲自执行
+			return call("get_product", `{"id":"P100"}`), nil
+		case strings.Contains(lastUser, "审查") && toolMsgs == 2:
+			return call("get_inventory", `{"sku":"P100"}`), nil
+		case strings.Contains(lastUser, "审查"):
+			return reply("[T-DONE][BRIEF]定价合理" + markers(toolT))
 		case strings.Contains(lastUser, "灰度调价") && toolMsgs == 0:
-			return call("apply-price", `{"sku":"CANARY-1","price":"9.9"}`), nil
+			return call("update_price", `{"sku":"CANARY-1","price":"9.9"}`), nil
 		case strings.Contains(lastUser, "正式调价") && toolMsgs == 0:
-			return call("apply-price", `{"sku":"P100","price":"199"}`), nil
+			return call("update_price", `{"sku":"P100","price":"199"}`), nil
 		case strings.Contains(lastUser, "记住") && toolMsgs == 0:
 			return call("memory_save", `{"key":"汇报偏好","value":"喜欢简短汇报"}`), nil
 		case strings.Contains(lastUser, "偏好"):
@@ -263,7 +227,7 @@ func (s *smokeModel) Generate(_ context.Context, msgs []*schema.Message, _ ...ei
 
 	// —— support-bot:永远想调工具,用于预算硬停 ——
 	case strings.Contains(sysT, "[SUPPORT]"):
-		return call("quick-product-qa", fmt.Sprintf(`{"q":"第%d次查询"}`, toolMsgs+1)), nil
+		return call("faq_bot", fmt.Sprintf(`{"q":"第%d次查询"}`, toolMsgs+1)), nil
 	}
 	return reply("[GEN]ok")
 }
@@ -355,32 +319,29 @@ func skillCtx(input string) context.Context {
 
 // ---- 矩阵测试 ----
 
-// TestP3PromptToSystem:P3 角色切换——组件 prompt(任务书)与 model 步骤 prompt
-// 落到系统消息;input 空时降级作用户消息(零退化)。
+// TestP3PromptToSystem:P3 角色切换——sub-agent prompt(persona)落到系统
+// 消息;input 空时降级作用户消息(零退化)。
 func TestP3PromptToSystem(t *testing.T) {
 	setupSmokeEnv(t)
 	app := buildSmokeApp(t, BuildOptions{})
 	mounted := app.AgentMounts["ops-manager"]
 
-	// 有输入:组件 prompt 与 model 步骤 prompt 进系统消息
+	// 有输入:sub-agent prompt 进系统消息
 	resetSmokeSeen()
-	pr, err := mounted.Get("cap://skill/catalog/price-review")
+	pa, err := mounted.Get("cap://agent/catalog/price_analyst")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := capability.Invoke(skillCtx("这个价有竞争力吗"), pr, `{"sku":"P100","question":"竞争力"}`); err != nil {
+	if _, err := capability.Invoke(skillCtx("这个价有竞争力吗"), pa, `{"sku":"P100","question":"竞争力"}`); err != nil {
 		t.Fatal(err)
 	}
-	if !smokeSawSystemContaining("你是价格分析师") { // 组件 prompt → 系统
-		t.Fatal("component prompt must be in a system message (P3)")
-	}
-	if !smokeSawSystemContaining("压成一句话汇报") { // model 步骤 prompt → 系统
-		t.Fatal("model step prompt must be in a system message (P3)")
+	if !smokeSawSystemContaining("你是价格分析师") { // persona → 系统
+		t.Fatal("sub-agent prompt must be in a system message (P3)")
 	}
 
 	// 空输入:降级——prompt 落用户消息,不进系统 persona(零退化)
 	resetSmokeSeen()
-	if _, err := capability.Invoke(skillCtx(""), pr, `{"sku":"P100","question":"竞争力"}`); err != nil {
+	if _, err := capability.Invoke(skillCtx(""), pa, `{"sku":"P100","question":"竞争力"}`); err != nil {
 		t.Fatal(err)
 	}
 	if !smokeSawUserContaining("你是价格分析师") {
@@ -388,42 +349,6 @@ func TestP3PromptToSystem(t *testing.T) {
 	}
 	if smokeSawSystemContaining("你是价格分析师") {
 		t.Fatal("fallback must not also put prompt in system persona")
-	}
-}
-
-// TestUnifiedRegionScan:统一输入模型的端到端组件测试——scan-regions 图并行
-// 扇出到同一 region_report 组件,验证 input: 组件级隔离({$input} 三分支互不
-// 串扰)+ {$user_input} 穿透(原始诉求恒定)+ params 占位符透传。
-func TestUnifiedRegionScan(t *testing.T) {
-	setupSmokeEnv(t)
-	app := buildSmokeApp(t, BuildOptions{})
-	mounted := app.AgentMounts["ops-manager"]
-
-	resetSmokeSeen()
-	sk, err := mounted.Get("cap://skill/regions/scan-regions")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := capability.Invoke(skillCtx("盘点各区域音频"), sk, `{"category":"音频"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "[SCAN-DONE]") {
-		t.Fatalf("scan-regions merge output = %q", out)
-	}
-	// input: 组件级隔离——三分支各自的 {$input} 互不串扰
-	for _, r := range []string{"华东", "华南", "华北"} {
-		if !smokeSawSystemContaining("本次区域「" + r + "」") {
-			t.Fatalf("scoped input {$input}=%s missing (isolation broken)", r)
-		}
-	}
-	// {$user_input} 穿透——三分支都看到同一 loop 原始诉求
-	if !smokeSawSystemContaining("整体诉求「盘点各区域音频」") {
-		t.Fatal("{$user_input} must propagate unchanged to nested components")
-	}
-	// params 占位符透传
-	if !smokeSawSystemContaining("品类「音频」") {
-		t.Fatal("param {category} must render into the component prompt")
 	}
 }
 
@@ -436,41 +361,49 @@ func TestSmokeAssembly(t *testing.T) {
 		t.Fatalf("agents = %v", app.Agents)
 	}
 	mounted := app.AgentMounts["ops-manager"]
-	// 只有导出 skill 进挂载目录:catalog 5 + marketing 3 + crm 1 + regions 1
-	if got := len(mounted.List()); got != 10 {
+	// 挂载目录:2 过程卡 + 3 直挂工具 + 4 sub-agent = 9
+	if got := len(mounted.List()); got != 9 {
 		for _, m := range mounted.List() {
 			t.Log(m.Ref.String())
 		}
-		t.Fatalf("mounted entries = %d, want 10", got)
+		t.Fatalf("mounted entries = %d, want 9", got)
 	}
 	for _, ref := range []string{
 		"cap://skill/catalog/price-review",
-		"cap://skill/catalog/quick-product-qa",
 		"cap://skill/catalog/apply-price",
-		"cap://skill/catalog/bulk-audit",
-		"cap://skill/catalog/audit-product",
-		"cap://skill/marketing/route-inquiry",
-		"cap://skill/marketing/launch-campaign",
-		"cap://skill/marketing/deep-research",
-		"cap://skill/crm/customer-brief",
-		"cap://skill/regions/scan-regions",
+		"cap://tool/shop/get_product",
+		"cap://tool/shop/get_inventory",
+		"cap://tool/shop/update_price",
+		"cap://agent/catalog/price_analyst",
+		"cap://agent/marketing/faq_bot",
+		"cap://agent/marketing/deep_research",
+		"cap://agent/crm/crm_analyst",
 	} {
 		if _, err := mounted.Get(ref); err != nil {
 			t.Fatalf("missing %s: %v", ref, err)
 		}
 	}
-	// mutating 风险传播:update_price → apply-price skill
-	sk, _ := mounted.Get("cap://skill/catalog/apply-price")
-	if sk.Meta().Risk != capability.RiskMutating {
-		t.Fatalf("apply-price risk = %v, want mutating", sk.Meta().Risk)
+	// 过程卡只是指引 → readonly;风险在直挂的 mutating 工具上
+	card, _ := mounted.Get("cap://skill/catalog/apply-price")
+	if card.Meta().Risk != capability.RiskReadonly {
+		t.Fatalf("apply-price card risk = %v, want readonly (risk lives on the tool)", card.Meta().Risk)
+	}
+	up, _ := mounted.Get("cap://tool/shop/update_price")
+	if up.Meta().Risk != capability.RiskMutating {
+		t.Fatalf("update_price risk = %v, want mutating", up.Meta().Risk)
+	}
+	// sub-agent 风险传播:readonly 工具面 → readonly
+	pa, _ := mounted.Get("cap://agent/catalog/price_analyst")
+	if pa.Meta().Risk != capability.RiskReadonly {
+		t.Fatalf("price_analyst risk = %v, want readonly", pa.Meta().Risk)
 	}
 }
 
-// TestSmokeGraphForkDigest:并行 needs 汇合 + fork 快照 + digest 消化。
-func TestSmokeGraphForkDigest(t *testing.T) {
+// TestSmokeSubagentForkDigest:sub-agent 的 fork 快照 + digest 消化。
+func TestSmokeSubagentForkDigest(t *testing.T) {
 	setupSmokeEnv(t)
 	app := buildSmokeApp(t, BuildOptions{})
-	sk, err := app.AgentMounts["ops-manager"].Get("cap://skill/catalog/price-review")
+	pa, err := app.AgentMounts["ops-manager"].Get("cap://agent/catalog/price_analyst")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,19 +411,20 @@ func TestSmokeGraphForkDigest(t *testing.T) {
 	ctx = loop.WithConversationSnapshot(ctx, []*schema.Message{
 		schema.UserMessage("我们在筹备双十一大促"),
 	})
-	out, err := capability.Invoke(ctx, sk, `{"sku":"P100","question":"竞争力"}`)
+	out, err := capability.Invoke(ctx, pa, `{"sku":"P100","question":"竞争力"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range []string{"[BRIEF]", "[ANALYST]", "[SNAP]", "[DIGESTED]"} {
+	for _, m := range []string{"[ANALYST]", "[SNAP]", "[DIGESTED]"} {
 		if !strings.Contains(out, m) {
 			t.Fatalf("missing %s in %q", m, out)
 		}
 	}
 }
 
-// TestSmokeEngineMatrix:八种引擎逐一走通。
-func TestSmokeEngineMatrix(t *testing.T) {
+// TestSmokeFormMatrix:两种形态逐一走通——过程卡(指引渲染)与
+// sub-agent(隔离循环:RAG / 调用级 todo / fork)。
+func TestSmokeFormMatrix(t *testing.T) {
 	setupSmokeEnv(t)
 	app := buildSmokeApp(t, BuildOptions{})
 	mounted := app.AgentMounts["ops-manager"]
@@ -507,44 +441,25 @@ func TestSmokeEngineMatrix(t *testing.T) {
 		return out
 	}
 
-	// workflow + use: 入口(audit_flow)
-	if out := invoke("cap://skill/catalog/audit-product", `{"id":"P100"}`, "审计"); !strings.Contains(out, "[AUDIT]") {
-		t.Fatalf("workflow: %q", out)
+	// 过程卡:调用返回渲染后的执行指引(零模型调用)
+	if out := invoke("cap://skill/catalog/price-review", `{"sku":"P100","question":"竞争力"}`, "审查"); !strings.Contains(out, "[过程卡|price-review]") || !strings.Contains(out, "P100") {
+		t.Fatalf("card guide: %q", out)
 	}
-	// direct + graph component + use:(qa_flow → catalog_qa)
-	if out := invoke("cap://skill/catalog/quick-product-qa", `{"q":"降噪耳机怎么样"}`, "问答"); !strings.Contains(out, "[QA]") {
-		t.Fatalf("direct: %q", out)
+	// sub-agent + agentic RAG:内部查知识库后作答
+	if out := invoke("cap://agent/marketing/faq_bot", `{"q":"怎么退货"}`, "退货"); !strings.Contains(out, "[FAQBOT]") {
+		t.Fatalf("faq_bot: %q", out)
 	}
-	// rewoo:一次规划并行执行
+	// sub-agent + 调用级 todo:计划注入 + 即弃
 	resetSmokeSeen()
-	if out := invoke("cap://skill/catalog/bulk-audit", `{"category":"耳机"}`, "盘点"); !strings.Contains(out, "[REWOO]") {
-		t.Fatalf("rewoo: %q", out)
-	}
-	// 回归护栏(🔴A):组件 prompt(persona)必须抵达多阶段引擎的阶段系统消息
-	// ——P3 曾把它静默丢掉(WithPersona 只被 Modifier 消费,rewoo 绕过 Modifier),
-	// stageSystem 修复后 planner/solver 的系统消息里必须看得到组件业务指令。
-	if !smokeSawSystemContaining("做一次批量盘点") {
-		t.Fatal("component prompt must reach multi-stage engine system messages (stageSystem)")
-	}
-	// router:分诊到 faq_bot
-	if out := invoke("cap://skill/marketing/route-inquiry", `{"q":"怎么退货"}`, "退货"); !strings.Contains(out, "[FAQBOT]") {
-		t.Fatalf("router: %q", out)
-	}
-	// plan-execute(跨 ns 引用 catalog skill)+ reflection(产稿→评审→修订)
-	if out := invoke("cap://skill/marketing/launch-campaign", `{"topic":"双十一"}`, "活动"); !strings.Contains(out, "文案v2[REV]") {
-		t.Fatalf("plan-execute+reflection: %q", out)
-	}
-	// react + 调用级 todo:计划注入 + 即弃
-	resetSmokeSeen()
-	if out := invoke("cap://skill/marketing/deep-research", `{"topic":"直播带货"}`, "研究"); !strings.Contains(out, "[RESEARCH]") {
-		t.Fatalf("deep-research: %q", out)
+	if out := invoke("cap://agent/marketing/deep_research", `{"topic":"直播带货"}`, "研究"); !strings.Contains(out, "[RESEARCH]") {
+		t.Fatalf("deep_research: %q", out)
 	}
 	if !smokeSawSystemContaining("当前任务计划") {
-		t.Fatal("component todo plan was not injected into the loop")
+		t.Fatal("sub-agent todo plan was not injected into the loop")
 	}
-	// react(analyst)+ fork + crm
-	if out := invoke("cap://skill/crm/customer-brief", `{"id":"C1"}`, "客户"); !strings.Contains(out, "[CRM]") {
-		t.Fatalf("crm: %q", out)
+	// sub-agent + fork(crm)
+	if out := invoke("cap://agent/crm/crm_analyst", `{"id":"C1"}`, "客户"); !strings.Contains(out, "[CRM]") {
+		t.Fatalf("crm_analyst: %q", out)
 	}
 }
 

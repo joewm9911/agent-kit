@@ -27,10 +27,9 @@ type Profile struct {
 	Loop        LoopProfile        `yaml:"loop"`
 	Reliability ReliabilityProfile `yaml:"reliability"`
 	Digest      DigestProfile      `yaml:"digest"`
-	// StepDefaults 是编排步骤的 timeout/retry 缺省。键名 step_defaults 而非
-	// steps——后者是编排族 component 的步骤列表(结构声明),两者语义不同;
-	// 与 skill 层的 step_defaults 词汇一致。
-	StepDefaults StepDefaultsProfile `yaml:"step_defaults"`
+	// StepDefaultsLegacy 已随编排族移除(固定流程下沉宿主 eino compose),
+	// 误写装配期报错指路。
+	StepDefaultsLegacy map[string]any `yaml:"step_defaults"`
 }
 
 // LoopProfile 是执行单元的循环控制:迭代上限 + 上下文压缩。compaction 归
@@ -64,13 +63,6 @@ type DigestProfile struct {
 	DegradeKeep *int           `yaml:"degrade_keep"`
 	Store       string         `yaml:"store"`
 	StoreConfig map[string]any `yaml:"store_config"`
-}
-
-// StepDefaultsProfile 是编排步骤(有 steps 的执行单元)未声明 timeout/retry
-// 时的缺省。
-type StepDefaultsProfile struct {
-	Timeout *loop.Duration `yaml:"timeout"`
-	Retry   *int           `yaml:"retry"`
 }
 
 // merge 返回合并结果:nearer(更近/更高优层级)显式设置的键覆盖 p,其余
@@ -107,19 +99,16 @@ func (p Profile) merge(nearer Profile) Profile {
 		out.Digest.Store = nearer.Digest.Store
 		out.Digest.StoreConfig = nearer.Digest.StoreConfig
 	}
-	if nearer.StepDefaults.Timeout != nil {
-		out.StepDefaults.Timeout = nearer.StepDefaults.Timeout
-	}
-	if nearer.StepDefaults.Retry != nil {
-		out.StepDefaults.Retry = nearer.StepDefaults.Retry
-	}
 	return out
 }
 
-// rejectLegacyKeys 拦截已改名的旧配置键(fail fast 即迁移指南)。
+// rejectLegacyKeys 拦截已改名/已移除的旧配置键(fail fast 即迁移指南)。
 func (p Profile) rejectLegacyKeys(where string) error {
 	if p.Loop.MaxStepsLegacy != nil {
 		return fmt.Errorf("%s: max_steps has been renamed max_rounds (the semantics were always rounds: one round = one model decision + one batch of tools)", where)
+	}
+	if p.StepDefaultsLegacy != nil {
+		return fmt.Errorf("%s: step_defaults has been removed along with the orchestration family — fixed flows live in host code via eino compose (see examples/pipeline)", where)
 	}
 	return nil
 }
@@ -184,19 +173,6 @@ func (p Profile) degradeKeep() int {
 	return 0 // 0 = 用 loop 内置默认(24000)
 }
 
-func (p Profile) stepTimeout() loop.Duration {
-	if p.StepDefaults.Timeout != nil {
-		return *p.StepDefaults.Timeout
-	}
-	return 0
-}
-
-func (p Profile) stepRetry() int {
-	if p.StepDefaults.Retry != nil {
-		return *p.StepDefaults.Retry
-	}
-	return 0
-}
 
 // NamespaceMount 是 agent 对一个 namespace 的挂载:路径 + per-mount 覆盖画像。
 // 覆盖画像是五级链里的最高优,且只装执行画像 A 类(component 实际拥有的

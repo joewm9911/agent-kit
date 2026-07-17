@@ -31,8 +31,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 		testmodel.ToolCallMsg("write_file", `{"input":"x"}`),
 		schema.AssistantMessage("报告完成", nil),
 	)
-	decl := &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	decl := &AgentDecl{
 		Name:        "research/report",
 		Version:     "1",
 		Description: "生成报告",
@@ -43,13 +42,13 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 			Exclude []string `yaml:"exclude"`
 		}{Include: []string{"cap://tool/fs/write_file"}},
 	}
-	cap_, err := Build(context.Background(), decl, Deps{Catalog: testCatalog(t), DefaultModel: m})
+	cap_, err := BuildAgent(context.Background(), decl, Deps{Catalog: testCatalog(t), DefaultModel: m})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	meta := cap_.Meta()
-	if meta.Ref.String() != "cap://skill/research/report@1" {
+	if meta.Ref.String() != "cap://agent/research/report@1" {
 		t.Fatalf("ref = %s", meta.Ref)
 	}
 	// 风险传播:绑定了 mutating 工具,skill 整体应为 mutating
@@ -67,8 +66,7 @@ func TestSkillBuildAndInvoke(t *testing.T) {
 }
 
 func TestSkillDependencyCheck(t *testing.T) {
-	decl := &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	decl := &AgentDecl{
 		Name:   "x/y",
 		Prompt: prompt.Value{Literal: "do {input}"},
 		Capabilities: struct {
@@ -76,7 +74,7 @@ func TestSkillDependencyCheck(t *testing.T) {
 			Exclude []string `yaml:"exclude"`
 		}{Include: []string{"cap://tool/fs/not_exist"}},
 	}
-	_, err := Build(context.Background(), decl, Deps{Catalog: testCatalog(t), DefaultModel: testmodel.New()})
+	_, err := BuildAgent(context.Background(), decl, Deps{Catalog: testCatalog(t), DefaultModel: testmodel.New()})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expect dependency error, got %v", err)
 	}

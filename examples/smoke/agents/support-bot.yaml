@@ -2,7 +2,7 @@
 
 description: 售后客服机器人
 prompt:
-  system: "[SUPPORT]你是售后客服。来询用 route-inquiry 分诊,商品问题用 quick-product-qa,客户信息用 customer-brief。"
+  system: "[SUPPORT]你是售后客服。售后政策问题交给 faq_bot,客户信息交给 crm_analyst。"
 loop:
   max_rounds: 10
   compaction: {max_messages: 16, keep_recent: 4}   # 上下文压缩(归 loop)

@@ -1,6 +1,6 @@
-# 商品域:工具(HTTP mock)+ 五种执行单元 + 四个导出 skill。
-# 覆盖:react(digest/compaction/fork 目标)、direct、rewoo、workflow、
-# graph 并行 needs、{$input}、步骤 timeout/retry、use: 入口、mutating 风险传播。
+# 商品域:工具(HTTP mock)+ 过程卡 + sub-agent。
+# 覆盖:过程卡(工具直挂 + 指引渲染)、sub-agent(fork/digest/compaction
+# 目标)、mutating 工具的风险与审批。
 
 sources:
   - name: shop
@@ -35,11 +35,37 @@ sources:
             sku:   {type: string, desc: 商品 SKU, required: true, in: body}
             price: {type: string, desc: 新价格, required: true, in: body}
 
-components:
-  # react:价格分析师——工具子集 + 大结果消化 + 内部压缩,fork 的接收方
-  # 执行画像内嵌:loop(步数+压缩)、digest(大结果消化)。
+skills:
+  # 过程卡:主循环照指引亲自执行,声明的工具直挂宿主工具面
+  - name: price-review
+    description: 审查指定商品的定价(按步骤拉详情、看库存、给结论)
+    params:
+      sku:      {type: string, desc: 商品 SKU, required: true}
+      question: {type: string, desc: 用户关注点}
+    tools:
+      - "tools/shop/get_product"
+      - "tools/shop/get_inventory"
+    prompt: |
+      按步骤审查 {sku} 的定价(关注:{question}):
+      1. 用 get_product 查询商品详情(价格与成本);
+      2. 用 get_inventory 查看库存明细;
+      3. 综合给出定价结论。
+
+  # 过程卡包装 mutating 工具:卡片只是指引(readonly),审批闸在工具上
+  - name: apply-price
+    description: 应用新的商品价格(改动性操作,update_price 受审批策略约束)
+    params:
+      sku:   {type: string, desc: 商品 SKU, required: true}
+      price: {type: string, desc: 新价格, required: true}
+    tools:
+      - "tools/shop/update_price"
+    prompt: "用 update_price 把 {sku} 的价格调整为 {price},完成后汇报结果。"
+
+subagents:
+  # sub-agent:隔离子循环——digest 大结果消化 + 内部压缩,fork 的接收方
   - name: price_analyst
-    engine: react
+    description: 深度定价分析(中间数据大,隔离执行;继承对话背景)
+    context: fork
     loop: {max_rounds: 6, compaction: {max_messages: 20, keep_recent: 8}}
     digest: {over: 3000}
     params:
@@ -49,86 +75,3 @@ components:
     tools:
       - "tools/shop/get_product"
       - "tools/shop/get_inventory"
-
-  # direct:商品问答——一次调用+一轮工具+收尾,无循环
-  - name: catalog_qa
-    engine: direct
-    params: {q: {type: string, required: true}}
-    prompt: "你是商品问答助手。回答用户问题:{q}。需要商品数据时调用 search_products。"
-    tools:
-      - "tools/shop/search_products"
-
-  # rewoo:批量盘点规划——一次规划并行执行,两次模型调用
-  - name: bulk_planner
-    engine: rewoo
-    engine_config: {max_plan_steps: 6}
-    params: {category: {type: string, required: true}}
-    prompt: "对品类「{category}」做一次批量盘点:检索商品并核对库存,汇总结果。"
-    tools:
-      - "tools/shop/search_products"
-      - "tools/shop/get_inventory"
-
-  # workflow:审计流——纯顺序钉死,工具 → 模型各一步
-  - name: audit_flow
-    engine: workflow
-    params:
-      id: {type: string, desc: 商品 ID, required: true}
-    steps:
-      - {name: detail, use: "tools/shop/get_product", args: '{"id":"{id}"}', retry: 1}
-      - {name: verdict, use: model, prompt: "审计商品数据「{detail}」,给出一句合规结论。"}
-
-  # graph(编排族 component):问答管道,供 skill 以 use: 整体委托
-  - name: qa_flow
-    engine: graph
-    params:
-      q: {type: string, desc: 用户问题, required: true}
-    steps:
-      - {name: answer, use: "components/catalog_qa", args: '{"q":"{q}"}'}
-
-skills:
-  # 主力编排:并行 needs 分叉汇合 + fork + {$input} + 步骤 timeout/retry + output
-  - name: price-review
-    description: 审查指定商品的定价:并行拉取详情与库存,分析师带对话背景深入分析
-    params:
-      sku:      {type: string, desc: 商品 SKU, required: true}
-      question: {type: string, desc: 用户关注点}
-    step_defaults: {timeout: 45s}
-    steps:
-      - {name: detail,    use: "tools/shop/get_product",  needs: [], args: '{"id":"{sku}"}', retry: 1}
-      - {name: inventory, use: "tools/shop/get_inventory", needs: [], args: '{"sku":"{sku}"}'}
-      - {name: analysis,  use: "components/price_analyst", needs: [detail, inventory],
-         args: '{"sku":"{sku}","question":"{$input}","detail":"{detail}"}', context: fork}
-      - {name: brief, use: model, needs: [analysis],
-         prompt: "把分析结论「{analysis}」压成一句话汇报。"}
-    output: brief
-
-  # use: 入口引用:skill 退化为纯接口,执行委托给私有 graph
-  - name: quick-product-qa
-    description: 快速商品问答
-    params:
-      q: {type: string, desc: 用户问题, required: true}
-    use: "components/qa_flow"
-
-  # 单步透传 mutating 工具:风险传播 → 审批策略的作用对象
-  - name: apply-price
-    description: 应用新的商品价格(改动性操作,受审批策略约束)
-    params:
-      sku:   {type: string, desc: 商品 SKU, required: true}
-      price: {type: string, desc: 新价格, required: true}
-    steps:
-      - {name: apply, use: "tools/shop/update_price", args: '{"sku":"{sku}","price":"{price}"}'}
-
-  # rewoo 导出
-  - name: bulk-audit
-    description: 批量盘点某品类的商品与库存
-    params:
-      category: {type: string, desc: 品类, required: true}
-    steps:
-      - {name: run, use: "components/bulk_planner", args: '{"category":"{category}"}'}
-
-  # workflow 导出
-  - name: audit-product
-    description: 审计单个商品的数据合规性
-    params:
-      id: {type: string, desc: 商品 ID, required: true}
-    use: "components/audit_flow"

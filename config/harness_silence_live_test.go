@@ -181,11 +181,11 @@ func TestLiveHarnessSilence(t *testing.T) {
 			td := componentTodo()
 			// 照 repo 里真实 todo 组件(deep_research)的写法:显式要求先列计划,
 			// 保证 todo 机制被触发,才复现得了空壳收尾。
-			decl := &skill.Declaration{
-				Kind: "component", Name: "t/exec", Engine: "react", Todo: true,
+			decl := &skill.AgentDecl{
+				Name: "t/exec", Todo: true,
 				Prompt: promptVal("你是任务执行者。先用 todo_write 列出计划,逐项推进并更新状态,用给定工具完成用户的任务。"),
 			}
-			c, err := skill.Build(ctx, decl, skill.Deps{
+			c, err := skill.BuildAgent(ctx, decl, skill.Deps{
 				DefaultModel: loop.RetryModel(&todoCountModel{inner: raw, todo: &todo}, retry),
 				Capabilities: []capability.Capability{inv, price, refund},
 				Todo:         td,

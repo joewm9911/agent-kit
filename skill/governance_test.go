@@ -32,12 +32,11 @@ func TestSkillInternalApprovalGate(t *testing.T) {
 			testmodel.ToolCallMsg("write_file", `{"input":"x"}`),
 			schema.AssistantMessage("done", nil),
 		)
-		decl := &Declaration{
-			Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+		decl := &AgentDecl{
 			Name:   "ops/writer",
 			Prompt: prompt.Value{Literal: "写入 {input}"},
 		}
-		c, err := Build(context.Background(), decl, Deps{
+		c, err := BuildAgent(context.Background(), decl, Deps{
 			DefaultModel: m,
 			Capabilities: []capability.Capability{write}, // 预解析注入
 		})
@@ -80,12 +79,11 @@ func TestSkillInternalBudget(t *testing.T) {
 		testmodel.ToolCallMsg("read", `{}`),
 		schema.AssistantMessage("summary", nil),
 	))
-	decl := &Declaration{
-		Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+	decl := &AgentDecl{
 		Name:   "ops/reader",
 		Prompt: prompt.Value{Literal: "读取 {input}"},
 	}
-	sk, err := Build(context.Background(), decl, Deps{
+	sk, err := BuildAgent(context.Background(), decl, Deps{
 		DefaultModel: m,
 		Capabilities: []capability.Capability{read},
 	})

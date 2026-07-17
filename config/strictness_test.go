@@ -46,14 +46,10 @@ agents:
 model: {provider: marker, config: {resp: hi}}
 namespaces:
   - name: ops
-    components:
+    subagents:
       - name: c
-        engine: react
         prompt: "做事"
-    skills:
-      - name: s
         deliver: attch
-        use: "components/c"
 agents:
   - name: a
 `, "attach|always|direct"},
@@ -73,22 +69,17 @@ agents:
 	}
 }
 
-// 组件 params 的 type 词汇写错必须装配期报错(此前 int/str 静默转 string)。
+// params 的 type 词汇写错必须装配期报错(此前 int/str 静默转 string)。
 func TestParamsSchemaUnknownType(t *testing.T) {
 	err := buildFromYAML(t, `
 model: {provider: marker, config: {resp: hi}}
 namespaces:
   - name: ops
-    components:
+    subagents:
       - name: c
-        engine: react
         params:
           n: {type: int, required: true}
         prompt: "处理 {n}"
-    skills:
-      - name: s
-        steps:
-          - {name: main, use: "components/c", args: '{"n":"1"}'}
 agents:
   - name: a
 `)

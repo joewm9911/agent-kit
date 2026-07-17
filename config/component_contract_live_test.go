@@ -118,14 +118,12 @@ func TestLiveComponentReturnContract(t *testing.T) {
 		}
 		for i := 0; i < runs; i++ {
 			// 组件 prompt 刻意不含输出契约,隔离 L1 的边际效应
-			decl := &skill.Declaration{
-				Kind:   "component",
-				Name:   "t/exec",
-				Engine: "react",
-				Todo:   true,
+			decl := &skill.AgentDecl{
+				Name: "t/exec",
+				Todo: true,
 				Prompt: promptVal("你是任务执行者。用给定工具完成用户的任务。"),
 			}
-			c, err := skill.Build(ctx, decl, skill.Deps{
+			c, err := skill.BuildAgent(ctx, decl, skill.Deps{
 				DefaultModel: loop.RetryModel(raw, retry),
 				Capabilities: []capability.Capability{inv, price, refund},
 				Todo:         componentTodo(),

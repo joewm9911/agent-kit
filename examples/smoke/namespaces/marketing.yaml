@@ -1,5 +1,5 @@
-# 营销域:reflection / router / plan-execute / 调用级 todo / 跨 ns skill 引用
-# + vector 知识库(RAG = tools 层的一种工具)。
+# 营销域:vector 知识库(RAG = tools 层的一种工具)+ 两个 sub-agent
+# (agentic RAG / 调用级 todo 的研究型长循环)。
 
 sources:
   - name: kb
@@ -13,76 +13,20 @@ sources:
         - "物流政策:偏远地区加收运费,一般地区满99包邮。"
         - "会员权益:黑卡会员全场免运费,享专属客服。"
 
-components:
-  # reflection:文案执行者产稿 → 评审者挑错 → 修订,轮次代码钉死
-  - name: campaign_writer
-    engine: reflection
-    engine_config:
-      max_rounds: 3
-      executor_prompt: "你是文案执行者。为活动写一段推广文案;收到评审意见时逐条修正,输出完整新稿。"
-    params: {brief: {type: string, required: true}}
-    prompt: "为活动「{brief}」撰写推广文案。"
-
-  # router 的两个下游:无工具 direct,单次作答
-  - name: faq_bot                 # RAG:direct 引擎查知识库(agentic RAG)
-    engine: direct
+subagents:
+  # agentic RAG:sub-agent 内部查知识库后作答
+  - name: faq_bot
+    description: 售后政策问答(退货/物流/会员权益)
     params: {q: {type: string, required: true}}
     prompt: "[FAQ]你是售后FAQ助手。用户问题:{q}。查知识库后作答。"
     tools:
       - "tools/kb/search_kb"
-  - name: human_handoff
-    engine: direct
-    params: {q: {type: string, required: true}}
-    prompt: "[HANDOFF]生成一段转人工的引导话术,问题:{q}"
+    loop: {max_rounds: 3}
 
-  # router:一次分诊调用,路由到工具面上的能力
-  - name: channel_router
-    engine: router
-    engine_config: {fallback: human_handoff}
-    params: {q: {type: string, required: true}}
-    prompt: "为用户来询选择处理通道:{q}"
-    tools:
-      - "components/faq_bot"
-      - "components/human_handoff"
-
-  # plan-execute:活动策划——拆解 → 逐步执行 → 复盘;
-  # 工具面含跨 ns 的 catalog skill(跨命名空间的唯一合法引用形态)
-  - name: campaign_planner
-    engine: plan-execute
-    engine_config: {max_rounds: 2, step_max_rounds: 4, on_exhausted: summarize}
-    params: {topic: {type: string, required: true}}
-    prompt: "策划一场关于「{topic}」的促销活动,需要时审查相关商品定价。"
-    tools:
-      - "cap://skill/catalog/price-review"
-
-  # react + 调用级 todo:研究型长循环的例外通道
+  # 调用级 todo:研究型长循环的例外通道
   - name: deep_research
-    engine: react
+    description: 深入研究一个营销课题(耗时较长)
     todo: true
     loop: {max_rounds: 8}
     params: {topic: {type: string, required: true}}
     prompt: "深入研究课题:{topic}。先用 todo_write 列出研究计划,逐项推进并更新状态,最后给出研究结论。"
-
-skills:
-  - name: route-inquiry
-    description: 把用户来询分诊到合适的处理通道
-    params:
-      q: {type: string, desc: 用户来询原文, required: true}
-    steps:
-      - {name: route, use: "components/channel_router", args: '{"q":"{q}"}'}
-
-  - name: launch-campaign
-    description: 策划并产出一场促销活动的完整文案
-    params:
-      topic: {type: string, desc: 活动主题, required: true}
-    steps:
-      - {name: plan,  use: "components/campaign_planner", args: '{"topic":"{topic}"}'}
-      - {name: copy,  use: "components/campaign_writer",  args: '{"brief":"{plan}"}'}
-    output: copy
-
-  - name: deep-research
-    description: 深入研究一个营销课题(耗时较长)
-    params:
-      topic: {type: string, desc: 研究课题, required: true}
-    steps:
-      - {name: r, use: "components/deep_research", args: '{"topic":"{topic}"}'}

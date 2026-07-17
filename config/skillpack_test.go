@@ -70,18 +70,18 @@ func TestBuildWithExternalSkillEntry(t *testing.T) {
 	}
 }
 
-// TestSkillEntryMutualExclusion:use 与内部声明字段互斥。
+// TestSkillEntryMutualExclusion:from 与内联声明字段互斥。
 func TestSkillEntryMutualExclusion(t *testing.T) {
 	registerPackTestModel()
 	src := writeConfigFixturePack(t)
 	cfg := &Config{
 		Profile:    Profile{Model: &ModelConfig{Provider: "packtest"}},
-		Skills:     []*SkillEntry{{From: "file:" + src, Declaration: skill.Declaration{Engine: "react"}}},
+		Skills:     []*SkillEntry{{From: "file:" + src, Declaration: skill.Declaration{Prompt: prompt.Value{Literal: "p"}}}},
 		Skillpacks: SkillpacksConfig{Dir: t.TempDir()},
 	}
 	if _, err := Build(context.Background(), cfg, BuildOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "mutually exclusive") {
-		t.Fatalf("use+engine must fail fast, got %v", err)
+		t.Fatalf("from+prompt must fail fast, got %v", err)
 	}
 	// 旧 use 键:报错并指路 from
 	cfg.Skills = []*SkillEntry{{Use: "github.com/x/y@v1"}}

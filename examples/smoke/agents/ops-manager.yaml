@@ -1,20 +1,17 @@
 # 运营主管:挂满三个能力域,治理与记忆全开——冒烟主对象。
 
-description: 电商运营主管助手,负责定价审查、活动策划、客户跟进
+description: 电商运营主管助手,负责定价审查、深度研究、客户跟进
 prompt:
-  system: "[OPS]你是电商运营主管的助手。定价问题用 price-review,调价用 apply-price,活动用 launch-campaign,客户问题用 customer-brief。多步骤任务先列计划。"
-# 执行画像 A 类(agent 自己这一层,兼作其 component 的降级源):
+  system: "[OPS]你是电商运营主管的助手。定价审查用 price-review 指引完成,调价用 update_price,深度研究交给 deep_research,客户问题交给 crm_analyst。多步骤任务先列计划。"
+# 执行画像 A 类(agent 自己这一层,兼作其 subagent 的降级源):
 loop:
   max_rounds: 20
   compaction: {max_messages: 12, keep_recent: 4}  # 上下文压缩(归 loop)
-step_defaults:
-  retry: 1
 
 namespaces:
   - ../namespaces/catalog.yaml
   - ../namespaces/marketing.yaml
   - ../namespaces/crm.yaml
-  - ../namespaces/regions.yaml
 
 # 具名存储实例:四类内部状态各一个实例,模块块的 store 槽用
 # cap://store/<kind>/<name> 引用。分布式部署把 type 换成 redis
@@ -54,5 +51,5 @@ approval:                     # 治理:审批模式 + 参数级策略(合一)
   mode: interactive
   remember: true
   rules:
-    # 灰度 SKU 免批;其余调价照常审批(参数级规则)
-    - {ref: "cap://skill/catalog/apply-price", args: {sku: "CANARY-*"}, action: allow}
+    # 灰度 SKU 免批;其余调价照常审批(参数级规则;审批闸在 mutating 工具上)
+    - {ref: "cap://tool/shop/update_price", args: {sku: "CANARY-*"}, action: allow}

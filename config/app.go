@@ -430,19 +430,17 @@ func buildAgentFromSpec(ctx context.Context, as *AgentSpec, app *AppConfig, glob
 	}
 	packRoot := app.Skillpacks.root(app.StateDir)
 
-	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skill 落在
-	// 这里,同时充当跨 ns cap://skill 引用的解析域(按关联顺序可见)。
+	// agent 的挂载目录:本 agent 关联的 namespaces 导出的 skills 与
+	// subagents 落在这里(挂载即可见)。
 	mounted := source.NewCatalog(maxRisk, logger)
-	nsExports := newComponentExports() // 导出 component 注册表(本 agent 挂载序列共享)
 	for _, mnt := range as.Mounts {
 		nsCopy := mnt.NamespaceConfig // 按 agent 实例化,不共享装配产物
 		err := buildNamespace(ctx, &nsCopy, nsDeps{
-			exports: nsExports,
-			global:  mounted, prompts: prompts, defaultModel: defaultModel,
+			global: mounted, prompts: prompts, defaultModel: defaultModel,
 			maxRisk: maxRisk, logger: logger,
 			base:     agentProfile,      // app.merge(agent);ns 自己在 buildNamespace 内并入
 			mount:    mnt.Override,      // per-mount 覆盖(最高优)
-			appModel: app.Profile.Model, // 判断 component 是否需专属 model
+			appModel: app.Profile.Model, // 判断 subagent 是否需专属 model
 			nsPath:   mnt.Path, srcCache: srcCache,
 			packRoot: packRoot, packOpts: packOpts, execCfg: app.Exec, hubs: hubs,
 		})

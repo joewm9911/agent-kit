@@ -54,8 +54,7 @@ func TestLiveNoReAskAcrossTurns(t *testing.T) {
 		}, func(_ context.Context, args string) (string, error) {
 			return "补货完成:" + args, nil
 		})
-		sk, err := skill.Build(ctx, &skill.Declaration{
-			Engine: "react", // 结构决定形态:声明 engine = 子执行体(mode 已移除)
+		sk, err := skill.BuildAgent(ctx, &skill.AgentDecl{
 			Name:        "live/restock",
 			Description: "给指定商品补货;不知道目标仓库时先向用户确认",
 			Params: map[string]capability.ParamDecl{

@@ -12,7 +12,6 @@ import (
 	"github.com/joewm9911/agent-kit/internal/testmodel"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
 	"github.com/joewm9911/agent-kit/protocol/source"
-	"github.com/joewm9911/agent-kit/runtime/engine"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 )
 
@@ -42,33 +41,29 @@ func setupTestSource() {
 	})
 }
 
-func TestNamespaceThreeLayerAssembly(t *testing.T) {
+// TestNamespaceAssembly:sources → skills(内联卡)→ subagents 全形态装配。
+// 卡片与 sub-agent 进目录,卡片工具直挂,sub-agent 工具不可见。
+func TestNamespaceAssembly(t *testing.T) {
 	setupTestSource()
 	global := source.NewCatalog(capability.RiskMutating, nil)
-	m := testmodel.New(schema.AssistantMessage("plan-made", nil))
+	m := testmodel.New(schema.AssistantMessage("analyzed", nil))
 
 	ns := &NamespaceConfig{
 		Name:    "pipeline",
 		Sources: []SourceConfig{{Name: "svc", Type: "nstest", Required: true}},
-		Components: []ComponentConfig{{
-			Name:   "planner",
-			Engine: "react",
-			Params: map[string]capability.ParamDecl{"request": {Type: "string", Required: true}},
-			Prompt: promptVal("根据请求 {request} 制定计划"),
-			Tools:  []string{"tools/svc/search"},
-		}},
 		Skills: []NamespaceSkill{{
-			Name:        "deploy",
-			Description: "鉴权 → 计划 → 提交",
-			Params: map[string]capability.ParamDecl{
-				"token":   {Type: "string", Required: true},
-				"request": {Type: "string", Required: true},
-			},
-			Steps: []engine.Step{
-				{Name: "auth", Use: "tools/svc/auth", Args: engine.StepArgs{Literal: `{"token":"{token}"}`}},
-				{Name: "plan", Use: "components/planner", Args: engine.StepArgs{Literal: `{"request":"{request}"}`}},
-				{Name: "run", Use: "tools/svc/submit", Args: engine.StepArgs{Literal: `{"plan":"{plan}"}`}},
-			},
+			Name:        "quick-qa",
+			Description: "快速问答",
+			Params:      map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
+			Prompt:      promptVal("按步骤:先 search 再总结。问题:{q}"),
+			Tools:       []string{"tools/svc/search"},
+		}},
+		Subagents: []SubagentConfig{{
+			Name:        "analyst",
+			Description: "隔离分析",
+			Params:      map[string]capability.ParamDecl{"request": {Type: "string", Required: true}},
+			Prompt:      promptVal("根据请求 {request} 分析"),
+			Tools:       []string{"tools/svc/submit"},
 		}},
 	}
 	err := buildNamespace(context.Background(), ns, nsDeps{
@@ -78,30 +73,44 @@ func TestNamespaceThreeLayerAssembly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 只有 skill 进全局目录:component 与工具不可见
-	metas := global.List()
-	if len(metas) != 1 {
-		t.Fatalf("global catalog should contain exactly the skill, got %d entries", len(metas))
+	// 目录内容:卡片 + 直挂工具 + sub-agent,恰好三项
+	if metas := global.List(); len(metas) != 3 {
+		t.Fatalf("catalog entries = %d, want 3 (card + mounted tool + subagent)", len(metas))
 	}
-	if ref := metas[0].Ref.String(); ref != "cap://skill/pipeline/deploy" {
-		t.Fatalf("ref = %s", ref)
-	}
-	// 风险传播:submit 是 mutating → skill 也是
-	if metas[0].Risk != capability.RiskMutating {
-		t.Fatalf("risk = %v, want mutating", metas[0].Risk)
-	}
-
-	// 端到端执行:auth → planner(react,无工具调用退化单次)→ submit
-	sk, err := global.Get("cap://skill/pipeline/deploy")
+	// 卡片:调用返回执行指引
+	card, err := global.Get("cap://skill/pipeline/quick-qa")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := capability.Invoke(context.Background(), sk, `{"token":"tk","request":"发布服务"}`)
+	out, err := capability.Invoke(context.Background(), card, `{"q":"降噪耳机"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "submitted") || !strings.Contains(out, "plan-made") {
+	if !strings.Contains(out, "[过程卡|") || !strings.Contains(out, "降噪耳机") {
+		t.Fatalf("card must return the rendered guide, got %q", out)
+	}
+	// 卡片工具直挂
+	if _, err := global.Get("cap://tool/svc/search"); err != nil {
+		t.Fatalf("card tools must mount to the host catalog: %v", err)
+	}
+	// sub-agent:身份 kind=agent,风险随工具传播(submit=mutating),端到端可执行
+	sub, err := global.Get("cap://agent/pipeline/analyst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.Meta().Risk != capability.RiskMutating {
+		t.Fatalf("risk propagation failed: %v", sub.Meta().Risk)
+	}
+	out, err = capability.Invoke(context.Background(), sub, `{"request":"发布服务"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "analyzed" {
 		t.Fatalf("got %q", out)
+	}
+	// sub-agent 的工具不进目录(权限边界:submit 只在其内部工具面)
+	if _, err := global.Get("cap://tool/svc/submit"); err == nil {
+		t.Fatal("subagent tools must not mount to the host catalog")
 	}
 }
 
@@ -110,13 +119,12 @@ func TestNamespaceToolBoundary(t *testing.T) {
 	global := source.NewCatalog(capability.RiskMutating, nil)
 	m := testmodel.New()
 
-	// component 引用不存在于本 ns 的工具源 → 拒绝装配
+	// subagent 引用不存在于本 ns 的工具源 → 拒绝装配
 	ns := &NamespaceConfig{
 		Name:    "isolated",
 		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
-		Components: []ComponentConfig{{
+		Subagents: []SubagentConfig{{
 			Name:   "bad",
-			Engine: "react",
 			Prompt: promptVal("x"),
 			Tools:  []string{"tools/other/auth"},
 		}},
@@ -124,166 +132,87 @@ func TestNamespaceToolBoundary(t *testing.T) {
 	err := buildNamespace(context.Background(), ns, nsDeps{
 		global: global, defaultModel: m, maxRisk: capability.RiskMutating,
 	})
-	if err == nil || !strings.Contains(err.Error(), "no tool in this namespace") {
+	if err == nil || !strings.Contains(err.Error(), "matches no tool in namespace") {
 		t.Fatalf("expect boundary error, got %v", err)
 	}
 }
 
-// TestGraphComponentAndSkillUse 覆盖编排族 component(workflow/graph)
-// 与 skill 的 use: 入口引用形态。
-func TestGraphComponentAndSkillUse(t *testing.T) {
+// TestNamespaceRemovedKeys 覆盖概念收敛硬切:components/imports/steps/use/
+// engine/deliver 误写全部装配期报错、文案指路。
+func TestNamespaceRemovedKeys(t *testing.T) {
 	setupTestSource()
-	global := source.NewCatalog(capability.RiskMutating, nil)
-	m := testmodel.New(schema.AssistantMessage("summarized", nil))
+	m := testmodel.New()
+	build := func(ns *NamespaceConfig) error {
+		return buildNamespace(context.Background(), ns, nsDeps{
+			global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m, maxRisk: capability.RiskMutating,
+		})
+	}
 
-	ns := &NamespaceConfig{
-		Name:    "flows",
-		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
-		Components: []ComponentConfig{
-			{
-				// workflow 形态:顺序钉死的私有序列(工具 → 模型),模型只出现一次
-				Name:   "lookup",
-				Engine: "workflow",
-				Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
-				Steps: []engine.Step{
-					{Name: "data", Use: "tools/svc/search", Args: engine.StepArgs{Literal: `{"q":"{q}"}`}},
-					{Name: "say", Use: "model", Prompt: prompt.Value{Literal: "总结:{data}"}},
-				},
-			},
-			{
-				// graph 形态:并行 fan-out + 汇合,引用前面的编排族 component
-				Name:   "wide",
-				Engine: "graph",
-				Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
-				Steps: []engine.Step{
-					{Name: "a", Use: "tools/svc/search", Needs: []string{}, Args: engine.StepArgs{Literal: `{"q":"{q}"}`}},
-					{Name: "b", Use: "tools/svc/auth", Needs: []string{}, Args: engine.StepArgs{Literal: `{"q":"{q}"}`}},
-					{Name: "join", Use: "components/lookup", Needs: []string{"a", "b"}, Args: engine.StepArgs{Literal: `{"q":"{a}+{b}"}`}},
-				},
-			},
-		},
-		Skills: []NamespaceSkill{{
-			// use: 入口引用:skill 退化为纯接口,执行委托给 graph component
-			Name:        "wide-search",
-			Description: "并行检索并总结",
-			Params:      map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
-			Use:         "components/wide",
-		}},
+	if err := build(&NamespaceConfig{Name: "a",
+		ComponentsLegacy: []map[string]any{{"name": "x"}}}); err == nil ||
+		!strings.Contains(err.Error(), "components has been removed") {
+		t.Fatalf("components must fail with migration hint, got %v", err)
 	}
-	err := buildNamespace(context.Background(), ns, nsDeps{
-		global: global, defaultModel: m, maxRisk: capability.RiskMutating,
-	})
-	if err != nil {
-		t.Fatal(err)
+	if err := build(&NamespaceConfig{Name: "b",
+		ImportsLegacy: []string{"other"}}); err == nil ||
+		!strings.Contains(err.Error(), "imports has been removed") {
+		t.Fatalf("imports must fail with migration hint, got %v", err)
 	}
-	// 目录里只有导出的 skill,两个编排族 component 不可见
-	if metas := global.List(); len(metas) != 1 {
-		t.Fatalf("catalog entries = %d, want 1", len(metas))
+	if err := build(&NamespaceConfig{Name: "c",
+		Skills: []NamespaceSkill{{Name: "s", StepsLegacy: []map[string]any{{"name": "x"}}}}}); err == nil ||
+		!strings.Contains(err.Error(), "steps has been removed") {
+		t.Fatalf("steps must fail with migration hint, got %v", err)
 	}
-	sk, err := global.Get("cap://skill/flows/wide-search")
-	if err != nil {
-		t.Fatal(err)
+	use := "components/x"
+	if err := build(&NamespaceConfig{Name: "d",
+		Skills: []NamespaceSkill{{Name: "s", UseLegacy: &use}}}); err == nil ||
+		!strings.Contains(err.Error(), "use has been removed") {
+		t.Fatalf("use must fail with migration hint, got %v", err)
 	}
-	out, err := capability.Invoke(context.Background(), sk, `{"q":"pay"}`)
-	if err != nil {
-		t.Fatal(err)
+	eng := "graph"
+	if err := build(&NamespaceConfig{Name: "e",
+		Skills: []NamespaceSkill{{Name: "s", EngineLegacy: &eng}}}); err == nil ||
+		!strings.Contains(err.Error(), "engine has been removed") {
+		t.Fatalf("engine must fail with migration hint, got %v", err)
 	}
-	if out != "summarized" {
-		t.Fatalf("got %q", out)
+	deliver := "attach"
+	if err := build(&NamespaceConfig{Name: "f",
+		Skills: []NamespaceSkill{{Name: "s", DeliverLegacy: &deliver}}}); err == nil ||
+		!strings.Contains(err.Error(), "sub-agent") {
+		t.Fatalf("deliver on skill must point to subagents:, got %v", err)
+	}
+	if err := build(&NamespaceConfig{Name: "g",
+		Subagents: []SubagentConfig{{Name: "x", Prompt: promptVal("p"),
+			StepsLegacy: []map[string]any{{"name": "s"}}}}}); err == nil ||
+		!strings.Contains(err.Error(), "steps/output has been removed") {
+		t.Fatalf("subagent steps must fail, got %v", err)
+	}
+	export := true
+	if err := build(&NamespaceConfig{Name: "h",
+		Subagents: []SubagentConfig{{Name: "x", Prompt: promptVal("p"),
+			ExportLegacy: &export}}}); err == nil ||
+		!strings.Contains(err.Error(), "export has been removed") {
+		t.Fatalf("subagent export must fail, got %v", err)
 	}
 }
 
-func TestWorkflowComponentRejectsNeeds(t *testing.T) {
+// TestNamespaceCardOnlyKeys:内联卡不得声明 from 专属键(max_rounds/context)。
+func TestNamespaceCardOnlyKeys(t *testing.T) {
 	setupTestSource()
-	global := source.NewCatalog(capability.RiskMutating, nil)
-	ns := &NamespaceConfig{
-		Name:    "badflow",
-		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
-		Components: []ComponentConfig{{
-			Name:   "x",
-			Engine: "workflow",
-			Steps: []engine.Step{
-				{Name: "a", Use: "tools/svc/search"},
-				{Name: "b", Use: "tools/svc/search", Needs: []string{"a"}},
-			},
-		}},
+	m := testmodel.New()
+	build := func(sk NamespaceSkill) error {
+		return buildNamespace(context.Background(), &NamespaceConfig{Name: "z",
+			Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
+			Skills:  []NamespaceSkill{sk},
+		}, nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m, maxRisk: capability.RiskMutating})
 	}
-	err := buildNamespace(context.Background(), ns, nsDeps{
-		global: global, defaultModel: testmodel.New(), maxRisk: capability.RiskMutating,
-	})
-	if err == nil || !strings.Contains(err.Error(), "does not support needs") {
-		t.Fatalf("expect workflow needs rejection, got %v", err)
+	if err := build(NamespaceSkill{Name: "s", Prompt: promptVal("p"), MaxRounds: 5}); err == nil ||
+		!strings.Contains(err.Error(), "max_rounds only applies to from") {
+		t.Fatalf("card max_rounds must fail, got %v", err)
 	}
-}
-
-func TestGraphComponentMutuallyExclusive(t *testing.T) {
-	setupTestSource()
-	global := source.NewCatalog(capability.RiskMutating, nil)
-	ns := &NamespaceConfig{
-		Name:    "mixed",
-		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
-		Components: []ComponentConfig{{
-			Name:   "bad",
-			Engine: "react",
-			Prompt: promptVal("x"),
-			Steps:  []engine.Step{{Name: "s", Use: "tools/svc/search"}},
-		}},
-	}
-	err := buildNamespace(context.Background(), ns, nsDeps{
-		global: global, defaultModel: testmodel.New(), maxRisk: capability.RiskMutating,
-	})
-	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Fatalf("expect mutual-exclusion error, got %v", err)
-	}
-}
-
-func TestNamespaceCrossRefOnlySkill(t *testing.T) {
-	setupTestSource()
-	global := source.NewCatalog(capability.RiskMutating, nil)
-	m := testmodel.New(schema.AssistantMessage("ok", nil))
-
-	// ns1 导出一个 skill
-	ns1 := &NamespaceConfig{
-		Name:    "ns1",
-		Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
-		Skills: []NamespaceSkill{{
-			Name:  "lookup",
-			Steps: []engine.Step{{Name: "s", Use: "tools/svc/search"}},
-		}},
-	}
-	if err := buildNamespace(context.Background(), ns1, nsDeps{
-		global: global, defaultModel: m, maxRisk: capability.RiskMutating,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// ns2 经 cap://skill 引用 ns1 的 skill:允许
-	ns2 := &NamespaceConfig{
-		Name: "ns2",
-		Skills: []NamespaceSkill{{
-			Name:  "wrap",
-			Steps: []engine.Step{{Name: "s", Use: "cap://skill/ns1/lookup"}},
-		}},
-	}
-	if err := buildNamespace(context.Background(), ns2, nsDeps{
-		global: global, defaultModel: m, maxRisk: capability.RiskMutating,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// ns3 试图经 cap://tool 引用工具:拒绝(工具不出命名空间)
-	ns3 := &NamespaceConfig{
-		Name: "ns3",
-		Skills: []NamespaceSkill{{
-			Name:  "steal",
-			Steps: []engine.Step{{Name: "s", Use: "cap://tool/svc/search"}},
-		}},
-	}
-	err := buildNamespace(context.Background(), ns3, nsDeps{
-		global: global, defaultModel: m, maxRisk: capability.RiskMutating,
-	})
-	if err == nil || !strings.Contains(err.Error(), "only cap://skill") {
-		t.Fatalf("expect cross-ns tool rejection, got %v", err)
+	if err := build(NamespaceSkill{Name: "s", Prompt: promptVal("p"), Context: "fork"}); err == nil ||
+		!strings.Contains(err.Error(), "context only applies to from") {
+		t.Fatalf("card context must fail, got %v", err)
 	}
 }
 
@@ -304,110 +233,9 @@ func TestWindowMustFitSummaryView(t *testing.T) {
 	}
 }
 
-// TestComponentExportImport 覆盖跨 ns 导出 component 的完整矩阵:
-// 显式 export + 显式 imports + cap://component 全称引用可用;
-// 未导出/未 import/顺序颠倒/自依赖均装配期报错;导出 component 不进目录。
-func TestComponentExportImport(t *testing.T) {
-	setupTestSource()
-	m := testmodel.New(schema.AssistantMessage("ok", nil))
-
-	common := func() *NamespaceConfig {
-		return &NamespaceConfig{
-			Name:    "common",
-			Sources: []SourceConfig{{Name: "svc", Type: "nstest"}},
-			Components: []ComponentConfig{
-				{Name: "shared-fmt", Export: true, Engine: "workflow",
-					Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
-					Steps: []engine.Step{
-						{Name: "run", Use: "tools/svc/search", Args: engine.StepArgs{Literal: `{"q":"{q}"}`}},
-					}},
-				{Name: "private-fmt", Engine: "workflow", // 未导出
-					Params: map[string]capability.ParamDecl{"q": {Type: "string"}},
-					Steps: []engine.Step{
-						{Name: "run", Use: "tools/svc/search", Args: engine.StepArgs{Literal: `{"q":"{q}"}`}},
-					}},
-			},
-		}
-	}
-	sales := func(step engine.Step) *NamespaceConfig {
-		return &NamespaceConfig{
-			Name:    "sales",
-			Imports: []string{"common"},
-			Skills: []NamespaceSkill{{
-				Name: "report", Description: "d",
-				Params: map[string]capability.ParamDecl{"q": {Type: "string", Required: true}},
-				Steps:  []engine.Step{step},
-			}},
-		}
-	}
-
-	// 正路:export + import + 全称引用
-	global := source.NewCatalog(capability.RiskMutating, nil)
-	exp := newComponentExports()
-	deps := func() nsDeps {
-		return nsDeps{global: global, defaultModel: m, maxRisk: capability.RiskMutating, exports: exp}
-	}
-	if err := buildNamespace(context.Background(), common(), deps()); err != nil {
-		t.Fatal(err)
-	}
-	ok := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
-		Args: engine.StepArgs{Literal: `{"q":"{q}"}`}})
-	if err := buildNamespace(context.Background(), ok, deps()); err != nil {
-		t.Fatal(err)
-	}
-	sk, err := global.Get("cap://skill/sales/report")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := capability.Invoke(context.Background(), sk, `{"q":"pay"}`)
-	if err != nil || !strings.Contains(out, "pay") {
-		t.Fatalf("cross-ns component invoke: %v %q", err, out)
-	}
-	// 导出 component 不进目录(目录里只有 skill)
-	if _, err := global.Get("cap://component/common/shared-fmt"); err == nil {
-		t.Fatal("exported component must not enter the catalog")
-	}
-
-	// 未导出:引用报错且指明 export
-	bad := sales(engine.Step{Name: "fmt", Use: "cap://component/common/private-fmt",
-		Args: engine.StepArgs{Literal: `{"q":"x"}`}})
-	if err := buildNamespace(context.Background(), bad, deps()); err == nil || !strings.Contains(err.Error(), "export") {
-		t.Fatalf("unexported ref must fail with export hint, got %v", err)
-	}
-
-	// 未声明 imports:即使已导出也拒绝
-	noImp := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
-		Args: engine.StepArgs{Literal: `{"q":"x"}`}})
-	noImp.Imports = nil
-	if err := buildNamespace(context.Background(), noImp, deps()); err == nil || !strings.Contains(err.Error(), "imports") {
-		t.Fatalf("missing imports must fail, got %v", err)
-	}
-
-	// 顺序:import 尚未装配的 ns → 报错提示顺序
-	fresh := newComponentExports()
-	early := sales(engine.Step{Name: "fmt", Use: "cap://component/common/shared-fmt",
-		Args: engine.StepArgs{Literal: `{"q":"x"}`}})
-	err = buildNamespace(context.Background(), early,
-		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
-			maxRisk: capability.RiskMutating, exports: fresh})
-	if err == nil || !strings.Contains(err.Error(), "assembly/mount order") {
-		t.Fatalf("out-of-order import must fail, got %v", err)
-	}
-
-	// 自依赖
-	self := common()
-	self.Imports = []string{"common"}
-	if err := buildNamespace(context.Background(), self,
-		nsDeps{global: source.NewCatalog(capability.RiskMutating, nil), defaultModel: m,
-			maxRisk: capability.RiskMutating, exports: newComponentExports()}); err == nil ||
-		!strings.Contains(err.Error(), "cannot import itself") {
-		t.Fatalf("self import must fail, got %v", err)
-	}
-}
-
-// TestInlineComponentMountsTools:mode: inline 的 component,声明工具直挂
-// 宿主目录("工具不出 ns"的唯一显式豁免);卡片本体经导出 skill 可见。
-func TestInlineComponentMountsTools(t *testing.T) {
+// TestInlineCardMountsTools:skills: 内联卡经多文件 app 路径装配,声明工具
+// 直挂宿主目录("工具不出 ns"的唯一显式豁免)。
+func TestInlineCardMountsTools(t *testing.T) {
 	setupAppTestFakes()
 	appPath := writeTree(t, map[string]string{
 		"app.yaml": `
@@ -421,14 +249,11 @@ namespaces: [../namespaces/inlinens.yaml]
 		"namespaces/inlinens.yaml": `
 sources:
   - {name: svc, type: nstest}
-components:
-  - name: qa_card
-    prompt: "按步骤:先 search 再总结。问题:{$input}"
-    tools: ["tools/svc/search"]
 skills:
   - name: quick-qa
     description: 快速问答过程卡
-    use: "components/qa_card"
+    prompt: "按步骤:先 search 再总结。问题:{$input}"
+    tools: ["tools/svc/search"]
 `,
 	})
 	spec, err := LoadApp(appPath)
@@ -442,9 +267,9 @@ skills:
 	mounted := app.AgentMounts["helper"]
 	// 工具直挂:tools/svc/search 进了 agent 挂载目录
 	if _, err := mounted.Get("cap://tool/svc/search"); err != nil {
-		t.Fatalf("inline component tools must mount to the agent catalog: %v", err)
+		t.Fatalf("inline card tools must mount to the agent catalog: %v", err)
 	}
-	// 卡片经导出 skill 可见,调用返回执行指引
+	// 卡片可见,调用返回执行指引
 	card, err := mounted.Get("cap://skill/inlinens/quick-qa")
 	if err != nil {
 		t.Fatal(err)
@@ -454,6 +279,6 @@ skills:
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "[过程卡|") || !strings.Contains(out, "先 search") {
-		t.Fatalf("exported skill must return the guide, got %q", out)
+		t.Fatalf("card must return the guide, got %q", out)
 	}
 }

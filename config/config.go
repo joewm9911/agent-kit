@@ -202,8 +202,8 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		return nil, err
 	}
 
-	// 4. skills:装配后入目录,供 agent 选品。条目二选一:内部声明走
-	// skill.Build(确定性编排),use: 外部链接走 skillpack 全链路
+	// 4. skills:装配后入目录,供 agent 选品。条目二选一:内联卡走
+	// skill.Build(过程卡,主循环执行),from 外部链接走 skillpack 全链路
 	// (物化 → 校验 → 隔离子循环,治理与内部同源)。
 	packOpts, err := cfg.Skillpacks.options()
 	if err != nil {
@@ -212,7 +212,6 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 	packRoot := cfg.Skillpacks.root(cfg.StateDir)
 	for _, entry := range cfg.Skills {
 		skillDeps := skill.Deps{
-			Todo:    componentTodo(),
 			Catalog: catalog, Prompts: prompts, DefaultModel: defaultModel,
 			ToolTimeout: cfg.Profile.toolTimeout().Std(), Retry: cfg.Profile.retry(),
 			DigestOver: cfg.Profile.digestOver(), Truncate: cfg.Profile.digestTruncate(),
@@ -223,17 +222,30 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 		if entry.From != "" {
 			if !isExternalRef(entry.From) {
-				return nil, fmt.Errorf("skill %s: from on flat skills only supports external links (github.com/...|https://...|file:...); for internal delegation use namespaces", entry.From)
+				return nil, fmt.Errorf("skill %s: from on flat skills only supports external links (github.com/...|https://...|file:...); for internal targets use namespaces", entry.From)
 			}
-			if !entry.Prompt.IsZero() || entry.Engine != "" || len(entry.Capabilities.Include) > 0 {
-				return nil, fmt.Errorf("skill %s: from (external ref) is mutually exclusive with prompt/engine/capabilities", entry.From)
+			if !entry.Prompt.IsZero() {
+				return nil, fmt.Errorf("skill %s: from and prompt are mutually exclusive (an external pack brings its own SKILL.md body)", entry.From)
 			}
 			c, err = buildSkillpack(ctx, packRoot, packOpts,
 				skill.PackSpec{Use: entry.From, Integrity: entry.Integrity, Name: entry.Name},
-				skill.PackOverrides{Model: entry.Model, MaxSteps: entry.MaxSteps,
+				skill.PackOverrides{Model: entry.Model, MaxSteps: entry.MaxRounds,
 					Tools: entry.Tools, Context: entry.Context},
 				skillDeps, cfg.Exec, hubs)
 		} else {
+			// 内联卡:from 专属的本地覆盖键不得出现。
+			if entry.Model != nil {
+				return nil, fmt.Errorf("skill %s: model only applies to from (external skillpack) skills — a card runs on the host model; a dedicated model belongs to a sub-agent (subagents: in a namespace)", entry.Name)
+			}
+			if entry.MaxRounds != 0 {
+				return nil, fmt.Errorf("skill %s: max_rounds only applies to from (external skillpack) skills — a card has no inner loop", entry.Name)
+			}
+			if entry.Context != "" {
+				return nil, fmt.Errorf("skill %s: context only applies to from (external skillpack) skills — a card shares the host context by definition", entry.Name)
+			}
+			if len(entry.Tools) > 0 {
+				return nil, fmt.Errorf("skill %s: tools on flat skills only applies to from packs (a flat card's tools are already on the host face; namespace cards direct-mount their declared tools)", entry.Name)
+			}
 			c, err = skill.Build(ctx, &entry.Declaration, skillDeps)
 		}
 		if err != nil {
@@ -244,13 +256,11 @@ func Build(ctx context.Context, cfg *Config, opts BuildOptions) (*App, error) {
 		}
 	}
 
-	// 5b. namespaces:三层结构装配(tools → components → skills),
-	// 只有 skills 进全局目录;声明顺序决定跨 ns 引用的可见性。
-	nsExports := newComponentExports() // 导出 component 注册表(本装配序列共享)
+	// 5b. namespaces:能力清单装配(sources → skills → subagents),
+	// skills/subagents 进全局目录(声明即可见)。
 	for i := range cfg.Namespaces {
 		err := buildNamespace(ctx, &cfg.Namespaces[i], nsDeps{
-			exports: nsExports,
-			global:  catalog, prompts: prompts, defaultModel: defaultModel,
+			global: catalog, prompts: prompts, defaultModel: defaultModel,
 			maxRisk: maxRisk, base: cfg.Profile, appModel: cfg.Profile.Model, logger: logger,
 			packRoot: packRoot, packOpts: packOpts, execCfg: cfg.Exec, hubs: hubs,
 		})

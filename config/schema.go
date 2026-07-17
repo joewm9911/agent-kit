@@ -1,8 +1,8 @@
 // schema.go 收口全部配置模型定义(YAML 结构):app / agent / namespace /
-// component 的声明式 schema 都在这里;各层的“组装”逻辑分见 config.go(单
+// subagent 的声明式 schema 都在这里;各层的“组装”逻辑分见 config.go(单
 // 文件)、app.go(多文件)、agent.go(agent 装配)、namespace.go(ns 装配)。
 //
-// 执行画像(model/loop/reliability/digest/steps)是四层共用的一套 Profile
+// 执行画像(model/loop/reliability/digest)是各层共用的一套 Profile
 // (见 profile.go),各层内嵌;治理边界(approval/budget/structured_output)
 // 与会话状态(session/memory/todo)是 agent 专属、可由 app 设默认。
 package config
@@ -12,7 +12,6 @@ import (
 
 	"github.com/joewm9911/agent-kit/core/capability"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
-	"github.com/joewm9911/agent-kit/runtime/engine"
 	"github.com/joewm9911/agent-kit/runtime/loop"
 	"github.com/joewm9911/agent-kit/skill"
 )
@@ -410,86 +409,74 @@ type NamespaceFile struct {
 	NamespaceConfig `yaml:",inline"`
 }
 
-// ComponentConfig 声明一个执行单元:能力声明与能力使用分离的"声明"侧。
-// 不进全局目录、对外不可见。执行画像(loop/reliability/digest/steps)内嵌自
-// Profile(不含 model)。engine **必填**——执行形态决定成本模型与行为保证:
-//
-//	循环族(prompt + tools):engine = direct(单发:一次调用+一轮工具+
-//	  收尾,无循环)| react(自主循环)| plan-execute(规划循环)| 已注册模板;
-//	编排族(steps):engine = graph(DAG,可并行)| workflow(纯顺序,
-//	  禁 needs)。两族字段互斥。
-type ComponentConfig struct {
-	Name   string `yaml:"name"`
-	Engine string `yaml:"engine"`
-	// Export 把该 component 导出给其他 namespace(经 imports 声明后以
-	// cap://component/<ns>/<name> 全称引用)。默认私有;导出的 component
-	// 不进目录、不可挂 agent 工具面——模型可选的能力必须走 skill。
-	Export bool         `yaml:"export"`
+// SubagentConfig 声明一个 sub-agent:与主循环同构的隔离子循环
+// (persona/工具面/画像不同,harness 同一套)。对应 Claude Code 的
+// .claude/agents/*.md。执行画像(loop/reliability/digest)内嵌自
+// Profile(不含 model——能力不可自指模型,model 走画像链)。
+// 没有 engine 键:sub-agent 永远运行标准循环(同构)。
+type SubagentConfig struct {
+	Name        string                          `yaml:"name"`
+	Version     string                          `yaml:"version"`
+	Description string                          `yaml:"description"`
+	Params      map[string]capability.ParamDecl `yaml:"params"`
+	// Prompt 是 persona + 任务书模板,params 以 {name} 占位渲染。
 	Prompt prompt.Value `yaml:"prompt"`
-	// Tools 是循环族的工具面引用:tools/<source>/<name|*>(本 ns 工具)、
-	// components/<name>(本 ns 执行单元)、cap://skill 引用(跨 ns)。
-	Tools        []string       `yaml:"tools"`
-	EngineConfig map[string]any `yaml:"engine_config"`
+	// Tools 是工具面引用:tools/<source>/<name|*>(本 ns 工具)。
+	Tools []string `yaml:"tools"`
+	// Context 是起始上下文:fresh(缺省)| fork(调用方对话快照起步)。
+	// 心法:先把事实显式写进输入,写不进或写不全才 fork。
+	Context string `yaml:"context"`
+	// Deliver 是产出的交付语义(attach|always|direct,缺省=证据)。
+	Deliver string `yaml:"deliver"`
+	// Todo 给内部循环挂调用级临时清单(调用结束即弃)。默认关——
+	// sub-agent 长到需要计划通常是"该拆成结构"的信号。
+	Todo bool `yaml:"todo"`
 
-	// 执行画像 A 类(loop/reliability/digest/steps;不含 model)——component
+	// 执行画像 A 类(loop/reliability/digest;不含 model)——sub-agent
 	// 自己这一层,最近,压过 namespace/agent/app。
 	Profile `yaml:",inline"`
 
-	// ModeLegacy 已移除(形态由声明结构决定,见 skill.Declaration):
-	// prompt+tools = 过程卡;声明 engine = 子执行体。误写报错指路。
-	ModeLegacy *string `yaml:"mode"`
-	// Context 是子循环起始上下文:fresh(缺省)| fork(调用方对话快照
-	// 起步)。声明级缺省;编排步骤的同名键按使用点覆盖。
-	Context string `yaml:"context"`
-	// Todo 给内部循环挂调用级临时清单(仅 react;调用结束即弃)。
-	// 默认关——component 长到需要计划通常是"该拆成结构"的信号,
-	// 这是给确实拆不动的研究型长循环的例外通道。
-	Todo bool `yaml:"todo"`
-
-	// 编排族:私有的无脑序列/图(字段语义同 skill 的对应项)。
-	Params map[string]capability.ParamDecl `yaml:"params"`
-	Steps  []engine.Step                   `yaml:"steps"`
-	Output string                          `yaml:"output"`
-	// Deliver 是产出的交付语义(attach|always|direct,缺省=证据)。
-	Deliver string `yaml:"deliver"`
+	// ——已移除键,误写装配期报错指路——
+	EngineLegacy       *string          `yaml:"engine"`
+	EngineConfigLegacy map[string]any   `yaml:"engine_config"`
+	ModeLegacy         *string          `yaml:"mode"`
+	StepsLegacy        []map[string]any `yaml:"steps"`
+	OutputLegacy       *string          `yaml:"output"`
+	ExportLegacy       *bool            `yaml:"export"`
 }
 
-// NamespaceSkill 声明一个对外 skill:接口(描述+参数)+ 编排(steps,
-// 纯引用)。steps 的语义是 DAG,见 engine.Step。
+// NamespaceSkill 声明一个 skill(Agent Skills 标准语义),两种形态:
+//
+//	内联卡:name + description + params + prompt——SKILL.md 的配置层
+//	  等价物,主循环照指引亲自执行,tools 直挂宿主工具面;
+//	外部包:from 集成一个 SKILL.md 技能包(github.com/...@ver |
+//	  https://...zip | file:...),隔离子循环执行。
 type NamespaceSkill struct {
 	Name        string                          `yaml:"name"`
 	Version     string                          `yaml:"version"`
 	Description string                          `yaml:"description"`
 	Params      map[string]capability.ParamDecl `yaml:"params"`
-	Steps       []engine.Step                   `yaml:"steps"`
-	Output      string                          `yaml:"output"`
-	// Engine 是编排形态:graph(DAG,可并行,缺省)| workflow(严格
-	// 顺序,禁 needs)。与 component 的同名字段同一词汇;skill 允许
-	// 缺省(graph)是因为 skill 只有编排一族,不存在循环/编排歧义。
-	Engine string `yaml:"engine"`
-	// Deliver 是产出的交付语义(attach|always|direct,缺省=证据),
-	// 词汇同 skill.Declaration,装配期枚举校验。
-	Deliver string `yaml:"deliver"`
-	// From 集成一个外部 SKILL.md 技能包(github.com/...@ver |
-	// https://...zip | file:...);须显式 name,integrity/tools/context
-	// 见 SkillEntry 同名字段。与 steps/use 互斥。
-	From string `yaml:"from"`
+	// Prompt 是内联卡的任务书正文(与 from 互斥)。
+	Prompt prompt.Value `yaml:"prompt"`
+	// Tools:内联卡 = 直挂宿主的工具引用(tools/<source>/<name|*>);
+	// from 包 = 在包的 allowed-tools 之上再收紧(交集)。
+	Tools []string `yaml:"tools"`
+	// From 集成一个外部 SKILL.md 技能包;须显式 name(命名归属团队)。
+	From      string `yaml:"from"`
+	Integrity string `yaml:"integrity"`
+	// Context 是 from 包内部循环的起始上下文(fresh 缺省 | fork)。
+	Context string `yaml:"context"`
 	// MaxRounds 是 from 技能包内部循环的轮数覆盖(与平铺 SkillEntry 的
 	// max_rounds 同义;两条 skillpack 装配路径同一配置面)。
 	MaxRounds int `yaml:"max_rounds"`
-	// Use 是入口引用形态(与 steps 互斥):components/<name> 等引用,
-	// skill 退化为纯接口声明,执行整体委托给该能力,params JSON 原样
-	// 透传。外部链接已改用 from(写在这里装配期报错指路)。
-	Use       string   `yaml:"use"`
-	Integrity string   `yaml:"integrity"`
-	Tools     []string `yaml:"tools"`
-	Context   string   `yaml:"context"`
-	// StepDefaults 是本 skill 步骤未声明 timeout/retry 时的缺省
-	// (override 链的 skill 层;更下层的步骤显式声明优先)。
-	StepDefaults struct {
-		Timeout loop.Duration `yaml:"timeout"`
-		Retry   int           `yaml:"retry"`
-	} `yaml:"step_defaults"`
+
+	// ——已随编排族移除,误写装配期报错指路——
+	StepsLegacy        []map[string]any `yaml:"steps"`
+	UseLegacy          *string          `yaml:"use"`
+	EngineLegacy       *string          `yaml:"engine"`
+	OutputLegacy       *string          `yaml:"output"`
+	DeliverLegacy      *string          `yaml:"deliver"`
+	StepDefaultsLegacy map[string]any   `yaml:"step_defaults"`
 }
 
 // NamespaceConfig 是一个配置命名空间的完整声明。执行画像(loop/reliability/
@@ -503,13 +490,14 @@ type NamespaceConfig struct {
 	Sources []SourceConfig `yaml:"sources"`
 	// Tools 已废弃:源声明改用 sources(装配期报错指路)。
 	ToolsLegacy []SourceConfig `yaml:"tools"`
-	// Imports 声明依赖的 namespace(其导出 component 经
-	// cap://component/<ns>/<name> 可见)。可见性按装配/挂载顺序:被
-	// 依赖的 ns 必须先声明/先挂载,否则装配期报错——与 cap://skill
-	// 的"按关联顺序可见"同一规则。
-	Imports    []string          `yaml:"imports"`
-	Components []ComponentConfig `yaml:"components"`
-	Skills     []NamespaceSkill  `yaml:"skills"`
+	Skills []NamespaceSkill `yaml:"skills"`
+	// Subagents 是本 namespace 声明的 sub-agent(挂载即对 agent 可见,
+	// 与 skills 同一可见性规则)。
+	Subagents []SubagentConfig `yaml:"subagents"`
+
+	// ——已随概念收敛移除,误写装配期报错指路——
+	ImportsLegacy    []string         `yaml:"imports"`
+	ComponentsLegacy []map[string]any `yaml:"components"`
 }
 
 // SkillEntry 是 skills: 列表的一个条目:内部声明(内嵌 skill.Declaration)
@@ -524,5 +512,9 @@ type SkillEntry struct {
 	Use               string   `yaml:"use"`       // 已废弃:外链改用 from(装配期报错指路)
 	Integrity         string   `yaml:"integrity"` // sha256:<hex>,可选强校验
 	Tools             []string `yaml:"tools"`     // 白名单收紧(∩ allowed-tools)
-	Context           string   `yaml:"context"`   // fresh(默认)| fork
+	Context           string   `yaml:"context"`   // from 包内部循环:fresh(默认)| fork
+	// Model/MaxRounds 是 from 技能包的本地覆盖(内联卡没有内部循环,
+	// 声明它们装配期报错)。
+	Model     *skill.ModelDecl `yaml:"model"`
+	MaxRounds int              `yaml:"max_rounds"`
 }

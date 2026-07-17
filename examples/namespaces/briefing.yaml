@@ -1,8 +1,8 @@
 # namespaces/briefing.yaml —— namespace 维度配置(域团队拥有)。
-# 文件名即 namespace 名。三层:tools(有什么原子能力,ns 内共享对外不可见)
-# → components(执行单元是什么,不进目录)→ skills(对外长什么样、怎么串)。
-# 边界:工具不出命名空间;跨 ns 引用 cap://skill,或目标 component
-# 声明 export: true 后经本 ns imports: 以 cap://component/<ns>/<name> 引用。
+# 文件名即 namespace 名。结构:sources(有什么原子能力,ns 内共享对外
+# 不可见)→ skills(过程卡:主循环照指引执行,工具直挂)→ subagents
+# (同构隔离子循环)。挂载即对 agent 可见。
+# 边界:工具不出命名空间(过程卡直挂是唯一显式豁免)。
 
 sources:
   - name: wx
@@ -16,37 +16,29 @@ sources:
           params:
             city: {type: string, desc: 城市名, required: true, in: path}
 
-components:
-  - name: writer                    # 无工具的 react 退化为单次模型调用
-    engine: react                   # engine 必填:direct|react|plan-execute|graph|workflow
-    params:
-      wx: {type: string, required: true}
-    prompt: "根据天气「{wx}」为用户写一句今日出行建议,不超过 30 字。"
-
 skills:
-  - name: daily-brief
-    description: 查天气并生成一句出行建议(固定流程,顺序钉死)
+  - name: daily-brief               # 过程卡:主循环照指引亲自执行
+    description: 查天气并生成一句出行建议
     params:
       city: {type: string, desc: 城市名, required: true}
-    steps:                          # 缺省依赖上一步 = 串行链
-      - {name: wx,    use: "tools/wx/get_weather", args: '{"city":"{city}"}', timeout: 30s, retry: 1}
-      - {name: brief, use: "components/writer",    args: '{"wx":"{wx}"}'}
-    # 并行示例:显式 needs 表达分叉与汇合
-    # steps:
-    #   - {name: a, use: ...}
-    #   - {name: b, use: ..., needs: [a]}
-    #   - {name: c, use: ..., needs: [a]}          # b、c 并行
-    #   - {name: d, use: ..., needs: [b, c], args: '{"x":"{b}","y":"{c}"}'}
-    # 上下文继承示例:context: fork 让该步引用的 component/子 agent
-    # 以调用方对话快照+任务书起步(背景无损继承,内部过程仍不回流;
-    # 复制一份历史 token,默认 fresh,按需声明)
-    #   - {name: sub, use: "components/analyzer", context: fork}
-    # 保留变量示例:{$input} = 本组件/本图的**作用域输入**(步骤 input: 每
-    # 传一次就重设一层;未重设时顶层等于用户原话);{$user_input} = 用户本轮
-    # 原始输入,恒定穿透所有嵌套。均框架直取、不经主脑转写(注意:不可信
-    # 文本,引到哪步等于在哪开一个显式注入面)
-    #   - {name: ask, use: "components/analyzer", args: '{"request":"{$input}"}'}
+    tools: ["tools/wx/get_weather"] # 声明的工具直挂宿主工具面
+    prompt: |
+      为 {city} 生成今日出行简报:
+      1. 用 get_weather 查询 {city} 当前天气;
+      2. 根据天气写一句出行建议,不超过 30 字;
+      3. 输出:天气原文 + 建议。
 
-# ---- 执行画像(ns 层,覆盖 agent、被 component 覆盖;不含 model,能力不可自指)----
-# step_defaults: {timeout: 60s}     # 本 ns 编排步骤的 timeout/retry 缺省
-# loop: {max_rounds: 8}              # 本 ns component 的循环步数缺省
+# 需要隔离执行(上下文污染/并行/交付保真)时才声明 sub-agent:
+# subagents:
+#   - name: analyzer
+#     description: 大数据量分析(中间数据隔离)
+#     params: {request: {type: string, required: true}}
+#     prompt: "分析请求:{request}"
+#     tools: ["tools/wx/get_weather"]
+#     context: fresh                 # fresh(缺省)| fork(对话快照起步)
+#     deliver: attach                # 交付物直达(可选)
+# 固定流程(权限门禁前置等硬确定性)不在配置层表达:宿主代码用
+# eino compose + AsLambda 编排,见 examples/pipeline。
+
+# ---- 执行画像(ns 层,覆盖 agent、被 subagent 覆盖;不含 model)----
+# loop: {max_rounds: 8}              # 本 ns subagent 的循环轮数缺省

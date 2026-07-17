@@ -57,17 +57,18 @@ func TestExampleAppLayout(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 挂载目录里只有两个导出的 skill,component 与工具不泄漏
+	// 挂载目录:briefing 过程卡 + 其直挂工具 + research sub-agent
 	metas := mounted.List()
-	if len(metas) != 2 {
+	if len(metas) != 3 {
 		for _, m := range metas {
 			t.Log(m.Ref.String())
 		}
-		t.Fatalf("mounted entries = %d, want 2", len(metas))
+		t.Fatalf("mounted entries = %d, want 3", len(metas))
 	}
 	for _, ref := range []string{
 		"cap://skill/briefing/daily-brief",
-		"cap://skill/research/competitor_report@1",
+		"cap://tool/wx/get_weather",
+		"cap://agent/research/competitor_report@1",
 	} {
 		if _, err := mounted.Get(ref); err != nil {
 			t.Fatalf("missing %s: %v", ref, err)
