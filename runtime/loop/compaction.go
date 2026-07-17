@@ -13,6 +13,7 @@ import (
 	"github.com/joewm9911/agent-kit/core/runctx"
 	"github.com/joewm9911/agent-kit/protocol/prompt"
 	"github.com/joewm9911/agent-kit/runtime/engine"
+	"github.com/joewm9911/agent-kit/runtime/reminder"
 )
 
 // CompactionConfig 控制上下文压缩,两个阈值任一超过即触发。
@@ -253,7 +254,9 @@ func (e summaryEntry) valid(msgs []*schema.Message) bool {
 // 切割点之后的原始消息。
 func (e summaryEntry) view(msgs []*schema.Message) []*schema.Message {
 	out := make([]*schema.Message, 0, len(msgs)-e.prefixLen+2)
-	out = append(out, schema.SystemMessage("[Earlier conversation and execution summary]\n"+e.summary))
+	out = append(out, schema.SystemMessage(reminder.Wrap(reminder.SourceSummary,
+		"[Earlier conversation and execution summary]\n"+e.summary+
+			"\n(Details omitted here are preserved: session records persist in the session store, and digested tool results can be re-fetched via read_result or by re-querying the tool.)")))
 	for _, m := range msgs[:e.prefixLen] {
 		if m.Role == schema.User && m.Content != "" {
 			out = append(out, m) // 锚定:被摘要覆盖的最初任务原文常驻

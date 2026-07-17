@@ -413,10 +413,14 @@ func buildAgent(ctx context.Context, ac *AgentConfig, eff Profile, caps []capabi
 		return nil, err
 	}
 
+	// 缺省 full:写入无损、读侧压缩(读压缩定案,见 docs/context-
+	// architecture-plan.md §3)。大结果已被 digest 指针化,full 的增量
+	// 只是中小结果原文;summary(写时 300 rune 截断)保留为成本敏感
+	// 部署的显式选择。
 	record := loop.RecordMode(ac.Session.RecordTools)
 	switch record {
 	case "":
-		record = loop.RecordSummary
+		record = loop.RecordFull
 	case loop.RecordSummary, loop.RecordFull, loop.RecordOff:
 	default:
 		return nil, fmt.Errorf("agent %s: session.record_tools must be summary|full|off, got %q", ac.Name, record)

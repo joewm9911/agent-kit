@@ -145,7 +145,7 @@ func (brokenKV) Get(context.Context, string) ([]byte, bool, error) {
 func (brokenKV) Update(context.Context, string, func([]byte, bool) ([]byte, error), time.Duration) error {
 	return fmt.Errorf("redis down")
 }
-func (brokenKV) Delete(context.Context, string) error        { return fmt.Errorf("redis down") }
+func (brokenKV) Delete(context.Context, string) error { return fmt.Errorf("redis down") }
 func (brokenKV) Scan(context.Context, string) ([]string, error) {
 	return nil, fmt.Errorf("redis down")
 }

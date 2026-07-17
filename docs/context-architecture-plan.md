@@ -1,5 +1,13 @@
 # 上下文架构方案:语义信封 + 稳定前缀 + 无损存储/有损视图
 
+> **状态:已实施(2026-07-17)**——五批落地,验证见
+> context-architecture-test-report.md。实施勘误:①信封包名为
+> runtime/reminder(runtime/context 与标准库 context 撞名);②批2 大半
+> 已由既有设计满足(Memories/Plan 本就是尾部注入、压缩本就是一次性
+> 换头+缓存视图),实际增量为信封化+字节稳定断言;③批3 收窄为机制
+> 预留(NonUserPreamble):当前消息通路没有合成轮次(挂起恢复=原输入
+> 重放);④digest/tool_clear 占位与 Focus 不包信封(工具结果语义/
+> 指令级注入,见 reminder 包文档)。
 > 日期:2026-07-17;参考:Claude Code 上下文结构(逐标签盘点见 §附录A);
 > 前置:concept-convergence-plan.md(已完成)。
 > 一句话:把 agent-kit 的上下文从"散装标记 + 每轮重拼 + 写时有损"改造为

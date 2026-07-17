@@ -237,7 +237,7 @@ type digested struct {
 	inner       capability.Capability
 	degradeKeep int
 	m           model.ToolCallingChatModel
-	over  int
+	over        int
 }
 
 func (d *digested) Meta() capability.Meta { return d.inner.Meta() }

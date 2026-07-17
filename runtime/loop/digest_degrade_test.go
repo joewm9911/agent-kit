@@ -25,7 +25,7 @@ func (downKV) Get(context.Context, string) ([]byte, bool, error) {
 func (downKV) Update(context.Context, string, func([]byte, bool) ([]byte, error), time.Duration) error {
 	return fmt.Errorf("backend down")
 }
-func (downKV) Delete(context.Context, string) error        { return fmt.Errorf("down") }
+func (downKV) Delete(context.Context, string) error           { return fmt.Errorf("down") }
 func (downKV) Scan(context.Context, string) ([]string, error) { return nil, fmt.Errorf("down") }
 
 func TestDigestDegradeKeepOnStoreDown(t *testing.T) {

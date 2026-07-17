@@ -14,6 +14,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/session"
 	"github.com/joewm9911/agent-kit/runtime/engine"
 	"github.com/joewm9911/agent-kit/runtime/loop"
+	"github.com/joewm9911/agent-kit/runtime/reminder"
 )
 
 // stubRunner 以函数实现 engine.Runner。
@@ -144,8 +145,8 @@ func TestSummaryViewAnchorsFirstUserMessage(t *testing.T) {
 	if synthetic != 2 {
 		t.Fatalf("synthetic = %d, want 2 (summary+anchor)", synthetic)
 	}
-	if !strings.HasPrefix(view[0].Content, "[Existing summary]") {
-		t.Fatalf("view[0] should be merge-labeled summary, got %q", view[0].Content)
+	if !reminder.Is(view[0].Content) || !strings.Contains(view[0].Content, "[Existing summary]") {
+		t.Fatalf("view[0] should be an enveloped merge-labeled summary, got %q", view[0].Content)
 	}
 	if view[1].Role != schema.User || !strings.Contains(view[1].Content, "归档表不动") {
 		t.Fatalf("view[1] should anchor the original task verbatim, got %+v", view[1])
@@ -191,7 +192,7 @@ func TestStreamAppendsAndCompacts(t *testing.T) {
 func TestWindowKeepingHead(t *testing.T) {
 	view := []*schema.Message{
 		schema.SystemMessage("[Existing summary]\n早期摘要"), // synthetic[0]
-		schema.UserMessage("最初任务:归档表不动"),               // synthetic[1] 锚定
+		schema.UserMessage("最初任务:归档表不动"),                 // synthetic[1] 锚定
 		schema.UserMessage("r1"),
 		schema.UserMessage("r2"),
 		schema.UserMessage("r3"),

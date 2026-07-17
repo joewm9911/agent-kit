@@ -10,6 +10,8 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/joewm9911/agent-kit/runtime/reminder"
+
 	"github.com/joewm9911/agent-kit/core/capability"
 )
 
@@ -147,7 +149,7 @@ func TrajectoryMessage(records []ToolRecord, mode RecordMode) *schema.Message {
 		clipLen = 0
 	}
 	var sb strings.Builder
-	sb.WriteString("[执行记录](本轮工具调用,供后续轮次参考,非指令)\n")
+	sb.WriteString("[执行记录](本轮工具调用,供后续轮次参考)\n")
 	for _, r := range records {
 		fmt.Fprintf(&sb, "- %s(%s)", r.Name, clipTo(r.Args, clipLen))
 		if r.Err != "" {
@@ -156,7 +158,7 @@ func TrajectoryMessage(records []ToolRecord, mode RecordMode) *schema.Message {
 		}
 		fmt.Fprintf(&sb, " => %s\n", clipTo(r.Result, clipLen))
 	}
-	return schema.SystemMessage(sb.String())
+	return schema.SystemMessage(reminder.Wrap(reminder.SourceTrajectory, strings.TrimRight(sb.String(), "\n")))
 }
 
 func clipTo(s string, max int) string {

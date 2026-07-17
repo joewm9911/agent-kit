@@ -28,6 +28,7 @@ import (
 	"github.com/joewm9911/agent-kit/protocol/store"
 	"github.com/joewm9911/agent-kit/runtime/engine"
 	"github.com/joewm9911/agent-kit/runtime/loop"
+	"github.com/joewm9911/agent-kit/runtime/reminder"
 )
 
 // Agent 是可对外服务的最终产物。
@@ -187,8 +188,8 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 					turn = append(turn, tm)
 				}
 			}
-			turn = append(turn, schema.SystemMessage(fmt.Sprintf(
-				"[上一轮执行失败] 错误:%v。已执行的工具见执行记录,重试时避免重复有副作用的操作。", err)))
+			turn = append(turn, schema.SystemMessage(reminder.Wrap(reminder.SourceTurnFailure, fmt.Sprintf(
+				"[上一轮执行失败] 错误:%v。已执行的工具见执行记录,重试时避免重复有副作用的操作。", err))))
 			if aerr := a.store.Append(ctx, sessionID, turn...); aerr != nil {
 				slog.Warn("agent: append failed-turn record", "agent", a.name, "session", sessionID, "err", aerr)
 			}
@@ -209,8 +210,8 @@ func (a *Agent) Run(ctx context.Context, sessionID, input string) (string, error
 			// 下一轮可基于它修复格式,而不是整轮从零重来。
 			if a.store != nil {
 				turn := a.turnMessages(ctx, rec, input, answer)
-				turn = append(turn, schema.SystemMessage(fmt.Sprintf(
-					"[结构化输出失败] 上面的回答未能通过 schema 校验:%v。重试时修复格式即可,不要重做已完成的工作。", eerr)))
+				turn = append(turn, schema.SystemMessage(reminder.Wrap(reminder.SourceTurnFailure, fmt.Sprintf(
+					"[结构化输出失败] 上面的回答未能通过 schema 校验:%v。重试时修复格式即可,不要重做已完成的工作。", eerr))))
 				if aerr := a.store.Append(ctx, sessionID, turn...); aerr != nil {
 					slog.Warn("agent: append structured-failure record", "agent", a.name, "session", sessionID, "err", aerr)
 				}
@@ -264,7 +265,7 @@ func interactionMessage(ctx context.Context) *schema.Message {
 	for _, it := range items {
 		fmt.Fprintf(&sb, "\n- 问:%s\n  答:%s", it.Question, it.Answer)
 	}
-	return schema.SystemMessage(sb.String())
+	return schema.SystemMessage(reminder.Wrap(reminder.SourceInteractions, sb.String()))
 }
 
 // Stream 流式执行一轮对话。返回的流复制两份:一份给调用方,
@@ -510,7 +511,7 @@ func splitSummaryView(all []*schema.Message) (covered int, view []*schema.Messag
 	if lastText != "" {
 		// 存储格式带 [Conversation summary] 标签;视图侧换成归并指令识别的 [Existing summary]。
 		body := strings.TrimPrefix(lastText, "[Conversation summary]\n")
-		view = append(view, schema.SystemMessage("[Existing summary]\n"+body))
+		view = append(view, schema.SystemMessage(reminder.Wrap(reminder.SourceSummary, "[Existing summary]\n"+body)))
 		synthetic = 1
 		// 锚定:最初的任务描述已被摘要覆盖时,原文常驻视图头部——
 		// 多次归并后"最初到底要做什么"不漂移。
