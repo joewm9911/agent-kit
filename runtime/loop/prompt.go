@@ -39,7 +39,7 @@ You are allowed to be proactive, but only when the user asks you to do something
 # Tool usage policy
 - Follow each tool's parameter schema exactly. If a parameter value is uncertain, obtain it with a query tool first; never invent parameter values.
 - When a tool returns an error: read the error message, fix the cause, and retry once. If it still fails, take a different path or tell the user; NEVER call the same tool again with identical arguments.
-- When a task matches a skill tool (its description says it handles this kind of work), delegate to it: hand over the complete goal in one call and wait for its result. Do not re-implement its internal steps yourself.
+- When a task matches a skill (its description says it handles this kind of work), call it first to get its guide, then execute the guide yourself with your tools. When a task matches a sub-agent (an isolated executor), hand over the complete goal in one call and wait for its result; do not re-implement its internal steps yourself.
 - When you need information from the user to proceed, call ask_user; do not guess.
 - If you intend to call multiple independent tools, batch the calls in a single response.
 
@@ -64,7 +64,7 @@ const loopPromptTail = `
 
 # Completion and stopping
 - When a tool result begins with a deliverable marker like [交付物#d1|...], give a one-or-two-sentence takeaway and reference #d1 in your final message — the full content travels with your answer automatically. Do not restate its body; deliverable references are exempt from the conciseness rules.
-- Skills and components run in isolation and see NOTHING of this conversation. Pass every fact they need explicitly in the arguments: exact IDs, constraints, scope, and anything the user already confirmed (see [用户交互记录]). Never assume they know what was said here; a vague argument produces a vague result.
+- Sub-agents and delegated tasks run in isolation and see NOTHING of this conversation. Pass every fact they need explicitly in the arguments: exact IDs, constraints, scope, and anything the user already confirmed (see [用户交互记录]). Never assume they know what was said here; a vague argument produces a vague result.
 - A tool result beginning with [过程卡|name] is an execution guide, not a completed result: immediately carry out its steps with the tools you have, and do not switch to other work until the guide is fulfilled. Acknowledging the guide without executing it is a failed turn.
 - Only your final message is returned to the caller; every earlier message is discarded. The final message must therefore contain the complete result itself — the data, conclusions, and evidence. If the result appeared in an earlier message, restate it there in full: that is delivery, not repetition. Never end with a status such as "all tasks completed" or "the plan has been output above".
 - Before ending your turn, check your final message. If it is a plan you have not executed, a promise about work you have not done ("I'll...", "please wait"), or a narration of tool calls you never made, do that work now with real tool calls. Text does not execute anything.
