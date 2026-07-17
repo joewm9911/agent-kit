@@ -4,7 +4,44 @@
 > 前置:concept-convergence-plan.md(已完成)。
 > 一句话:把 agent-kit 的上下文从"散装标记 + 每轮重拼 + 写时有损"改造为
 > **CC 同款的三条工程纪律——语义信封(权威分级)、稳定前缀(缓存)、
-> 无损存储+有损视图(可回读)**;历史轮次压缩定为**读压缩**(§3 权衡)。
+> 无损存储+有损视图(可回读)**;历史轮次压缩定为**读压缩**(§3 权衡);
+> 落地形态遵循 harness 模块化(§0):上下文是唯一注入网关,其余模块投稿。
+
+## 0. Harness 模块化(本方案的落位框架)
+
+harness 按七个子模块看待,上下文不是平级模块而是**版面总编**——
+其余模块产内容,上下文管排版(放哪、包什么信封、何时进窗、何时压缩):
+
+```
+                  ┌─ 守卫(评审循环/goal check)──┐
+  入口            │                              │            出口
+  上下文模块 ◄──投稿── 记忆(长期+交互) 任务(todo) ──► 交付模块
+  (版面总编:信封/  │                              │ (deliver/进度/Outbound)
+   窗口/压缩/前缀) └── 治理(审批/预算/断路/超时)──┘
+                          交互(askuser/挂起/中断)
+
+  铁律:所有模块经上下文网关(Reminder API)投稿,不直接碰消息流/系统层。
+```
+
+| 模块 | 职责 | 对应现有代码 |
+|---|---|---|
+| **上下文** | 信封/窗口/压缩/前缀稳定/record 视图/fork 快照 | 从 runtime/loop 析出 PromptLayers、Reminder、Compaction、record → 新包 `runtime/context`(注意已知环:不得 import loop) |
+| **记忆** | 长期记忆(save/search/召回)+ 交互记录——只回答"召回什么" | protocol/memory + core/runctx/interactions |
+| **任务** | todo 状态机;计划状态经网关投稿 | todo/(上交 PlanSection/Nudge 的注入权) |
+| **守卫** | RepeatBreak/FinishReviewer/CheckedReviewer/goal check——质量闸,非规划阶段 | runtime/loop 的 review 族 |
+| **治理** | 审批(模式+规则+决策记忆)/预算/风险/重复断路/超时/重试 | runtime/loop 的 gates 族(留在 loop,Ring 0 主体) |
+| **交互** | ask_user/审批交互面/挂起恢复/中断插话(fail-open 不变式属它) | askuser/ + suspend/ |
+| **交付** | 交付物直达/Outbound/进度事件——出口纪律("策展权无转述权"),与入口对称 | serving 的 deliver/outbound |
+
+两处边界裁定:**会话历史属上下文不属记忆**(它就是窗口本身;记忆模块
+只管内容生产);**"计划反思"不设模块**(plan-execute/reflection 范式已
+随概念收敛删除,真实存在的反思是守卫模块的评审循环——计划是状态、
+守卫是闸,不混装)。observe 是横切面、delegate/sub-agent 属能力面,
+均不进本清单。
+
+落地方式是**析出重组,不是新造**:批1 的信封构造器即上下文模块的
+种子 API,后续批次把版面职责自然聚拢进 `runtime/context`,不设单独的
+"大重构批"。
 
 ## 1. 现状与差距
 
@@ -73,8 +110,9 @@
 ## 4. 分批实施
 
 ### 批1 语义信封统一(行为变更,需 A/B)
-- `runtime/loop` 新增 reminder 构造器:`Reminder(source, body)` →
-  `<system-reminder source=…>` 统一格式;serving/observe 按标签剥离/渲染;
+- 新包 `runtime/context` 落 reminder 构造器:`Reminder(source, body)` →
+  `<system-reminder source=…>` 统一格式(上下文模块种子 API,§0);
+  serving/observe 按标签剥离/渲染;
 - 迁移九类注入进信封:会话召回、记忆召回、`[用户交互记录]`、
   `[执行记录]`、rolling-summary、失败轮记录、fork 背景标注、
   digest 消化说明、todo 计划状态(位置迁移在批2);
