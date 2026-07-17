@@ -157,19 +157,33 @@ cap:// 有两副面孔,命运不同:
 通配)、observe 的能力命名、版本共存。它对配置作者不可见、零学习
 成本,删它等于重造一个一样的东西。**不动。**
 
-### 5.2 配置面 URI 引用——**逐个退出**
+### 5.2 逐 kind 盘点(源码核实,2026-07-17)
 
-| 用法 | 处置 | 理由 |
-|---|---|---|
-| `cap://component/<ns>/<name>` | 随 component 死 | 概念消失 |
-| `cap://skill/...`(steps 引用) | 随 steps 死 | 编排下沉 eino |
-| `cap://store/<kind>/<name>` | 改缺省后端 + 就地覆盖(§4.2) | 删间接层,DRY 不丢 |
-| `cap://retriever/<kind>/<name>` | 同上 | 同上 |
-| `cap://prompt/<source>/<name>` | **保留** | 可选面(声明了 prompt 源才用),版本化提示词的真实价值,不在推广主路径上碍眼 |
-| include/exclude、approval rules 的模式 | 改裸三段 `kind/domain/name`(支持通配不变),`cap://` 前缀报错指路 | 权力面统一去 scheme,内部仍走 Ref.Match |
+关键澄清:**工具挂载从来不写 cap://**——`tools:` 列表用短形态
+`tools/<source>/<name>`,装配层(toolPattern)内部翻译成
+`cap://tool/...` 模式去目录选品。配置面出现全称 URI 的只有五处:
+跨 ns 引用、include/exclude、approval rules、prompt 引用、store/
+retriever 槽。逐 kind:
 
-结果:推广路径上的配置(sources/skills/agents)**一个 cap:// 都
-不出现**;唯一存留的 `cap://prompt/` 是可选高级面。
+| kind | 内部生产者(身份) | 今天配置面何处写 `cap://<kind>/` | 收敛后 |
+|---|---|---|---|
+| **tool** | 全部 sources(mcp/exec/http/rpc/local/vector)+ builtins(ask_user/pack_read/model_step/…),15 处构造 | 不直接写——`tools:` 用短形态;仅 include/exclude、approval rules 写模式(`cap://tool/fs/*`) | 身份保留;两个模式面改裸三段 `tool/fs/*` |
+| **skill** | skill.Build / pack.go(Domain=ns) | ① steps/tools 跨 ns 引用(唯一跨 ns 接口);② include/exclude;③ approval rules | ① 随 steps 死,共享=挂载即可见;②③ 改裸三段 |
+| **component** | namespace.go export(2 处) | `cap://component/<ns>/<name>`(imports 后可引) | **kind 整个删除** |
+| **agent** | impl/source/a2a(远程 A2A agent) | 不写(经 sources 声明、短形态挂载);模式面可匹配 | 保留;**建议:sub-agent 声明的装配产物改挂 Kind:"agent"**(与 A2A 统一,身份语义归位) |
+| **prompt** | 无目录身份(protocol/prompt 独立 resolver,RefPrefix) | prompt 标量字段 `"cap://prompt/<source>/<name>@label"` | **保留**(可选面,版本化提示词) |
+| **store** | **无**——纯配置寻址语法(resolveStoreRef) | 7 个模块的 store 槽 | 删除:缺省后端 + 就地覆盖;kind 消亡 |
+| **retriever** | **无**——纯配置寻址(resolveRetrieverRef) | session.recall.retriever 槽 | 同上,kind 消亡 |
+| (model) | 仅 observe 事件标签 CapKind:"model",非目录 Ref | 不出现 | 不变(观测命名) |
+
+store/retriever 无内部生产者这一点坐实了"纯间接层"判断:它们的
+cap:// 从来不是能力身份,只是槽位寻址——删掉零涉身份协议。
+
+结果:内部身份收敛为 **tool / skill / agent** 三个 kind(目录索引、
+Match 通配、observe 命名、审批记忆键、面名派生全在其上);配置面
+仅存 `cap://prompt/`(可选)+ 裸三段模式(include/exclude/approval
+两个权力面)。推广路径配置(sources/skills/agents)**一个 cap://
+都不出现**。
 
 ## 6. 跨 namespace 暴露(开放问题,随批3 定)
 
